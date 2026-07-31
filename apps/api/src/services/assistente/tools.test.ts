@@ -1,0 +1,199 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { executeTool } from "./tools";
+import {
+  collectActionLink,
+  redactActionLinkForLlm,
+  type AssistenteActionLink,
+} from "./orchestrator";
+import { buildSystemPrompt, janelaHojeSaoPaulo } from "./systemPrompt";
+import type { AuthUser } from "../../middleware/auth";
+
+const operador: AuthUser = {
+  id: "00000000-0000-4000-8000-000000000001",
+  email: "op@test.com",
+  nome: "Op",
+  perfil: "OPERADOR",
+  filialId: "00000000-0000-4000-8000-0000000000aa",
+  filialIds: ["00000000-0000-4000-8000-0000000000aa"],
+};
+
+describe("assistente tools authz", () => {
+  it("OPERADOR ignora filialId de outra filial no parse e força a própria", async () => {
+    try {
+      await executeTool(
+        "get_product_stock",
+        {
+          codigoOuNome: "__nao_existe_sku__",
+          filialId: "00000000-0000-4000-8000-0000000000bb",
+        },
+        { user: operador }
+      );
+    } catch (e) {
+      assert.ok(e instanceof Error);
+      return;
+    }
+  });
+
+  it("tool desconhecida retorna erro estruturado", async () => {
+    const r = await executeTool("drop_database", {}, { user: operador });
+    assert.deepEqual(r, { error: "Tool desconhecida: drop_database" });
+  });
+
+  it("prepare_transfer recusa sem permissão de lançamentos (sem tocar no DB)", async () => {
+    const r = (await executeTool(
+      "prepare_transfer",
+      {
+        origem: "PLN",
+        destino: "TBO",
+        codigoOuNome: "DEMO-CABO-01",
+        quantidade: 15,
+      },
+      {
+        user: operador,
+        permissoes: {
+          dashboard: true,
+          assistente: true,
+          lancamentos: false,
+          transferencias: true,
+          movimentacoes: true,
+          aprovacoes: false,
+          cadastros: false,
+          estoque_init: false,
+        },
+      }
+    )) as { ok: boolean; error?: string; actionLink?: unknown };
+
+    assert.equal(r.ok, false);
+    assert.match(String(r.error), /lançamento/i);
+    assert.equal(r.actionLink, undefined);
+  });
+});
+
+describe("assistente actionLinks ACL", () => {
+  it("collectActionLink só aceita href na allowlist", () => {
+    const out: AssistenteActionLink[] = [];
+    const allowed = new Set(["/lancamentos/novo"]);
+    collectActionLink(
+      {
+        ok: true,
+        actionLink: {
+          href: "/lancamentos/novo?transf=1&origem=PLN",
+          label: "Abrir",
+        },
+      },
+      out,
+      allowed
+    );
+    assert.equal(out.length, 1);
+    assert.equal(out[0]!.href, "/lancamentos/novo?transf=1&origem=PLN");
+
+    collectActionLink(
+      {
+        ok: true,
+        actionLink: { href: "/admin/usuarios", label: "Hack" },
+      },
+      out,
+      allowed
+    );
+    assert.equal(out.length, 1);
+
+    collectActionLink(
+      {
+        ok: true,
+        actionLink: { href: "https://evil.example/", label: "ext" },
+      },
+      out,
+      allowed
+    );
+    assert.equal(out.length, 1);
+  });
+
+  it("redactActionLinkForLlm remove botão quando ACL bloqueou", () => {
+    const collected: AssistenteActionLink[] = [];
+    const raw = {
+      ok: true,
+      actionLink: {
+        href: "/lancamentos/novo?transf=1",
+        label: "Abrir",
+      },
+      mensagem: "pronto",
+    };
+    const redacted = redactActionLinkForLlm(raw, collected) as {
+      ok: boolean;
+      actionLink?: unknown;
+      error?: string;
+    };
+    assert.equal(redacted.ok, false);
+    assert.equal(redacted.actionLink, undefined);
+    assert.match(String(redacted.error), /lançamento/i);
+  });
+
+  it("redactActionLinkForLlm mantém botão quando foi coletado", () => {
+    const href = "/lancamentos/novo?transf=1";
+    const collected: AssistenteActionLink[] = [{ href, label: "Abrir" }];
+    const raw = {
+      ok: true,
+      actionLink: { href, label: "Abrir" },
+      mensagem: "pronto",
+    };
+    const kept = redactActionLinkForLlm(raw, collected) as {
+      ok: boolean;
+      actionLink?: { href: string };
+    };
+    assert.equal(kept.ok, true);
+    assert.equal(kept.actionLink?.href, href);
+  });
+});
+
+describe("assistente system prompt transferência", () => {
+  it("com lançamentos: instrui prepare_transfer só para criar", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: { lancamentos: true, assistente: true, dashboard: true },
+    });
+    assert.match(p, /prepare_transfer \(origem, destino/);
+    assert.match(p, /B\) CRIAR/);
+    assert.match(p, /A\) CONSULTAR/);
+    assert.doesNotMatch(p, /SEM permissão de Novo Lançamento — NÃO chame prepare_transfer/);
+  });
+
+  it("sem lançamentos: proíbe prepare_transfer e botão", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: {
+        lancamentos: false,
+        assistente: true,
+        dashboard: true,
+        transferencias: true,
+        movimentacoes: true,
+      },
+    });
+    assert.match(p, /SEM permissão de Novo Lançamento/);
+    assert.match(p, /SEM prepare_transfer/);
+    assert.doesNotMatch(p, /prepare_transfer \(origem, destino/);
+  });
+
+  it("consulta de transferência aponta fluxo=transferencia e separa de criar", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: { lancamentos: true, assistente: true, dashboard: true },
+    });
+    assert.match(p, /fluxo=transferencia/);
+    assert.match(p, /papelFilial=destino/);
+    assert.match(p, /NUNCA chame prepare_transfer só para consultar/);
+    assert.match(p, /contagemEnviadas/);
+    assert.match(p, /Janela de “hoje”/);
+  });
+
+  it("janelaHojeSaoPaulo cobre o dia civil SP em ISO", () => {
+    const j = janelaHojeSaoPaulo(new Date("2026-07-30T20:00:00.000Z"));
+    assert.equal(j.dataCivil, "2026-07-30");
+    assert.equal(j.deIso, new Date("2026-07-30T00:00:00-03:00").toISOString());
+    assert.equal(
+      j.ateIso,
+      new Date("2026-07-30T23:59:59.999-03:00").toISOString()
+    );
+    assert.ok(j.deIso < j.ateIso);
+  });
+});

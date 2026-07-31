@@ -1,0 +1,750 @@
+"use client";
+
+import { api, apiUpload } from "@/lib/api";
+import { resolveAssetUrl } from "@/lib/assets";
+import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
+
+type Categoria = { id: string; nome: string; ativo: boolean };
+type Produto = {
+  id: string;
+  codigo: string;
+  descricao: string;
+  precoUnitario: string | number;
+  estoqueMinimo: number;
+  estoqueMaximo: number;
+  controlaSerie?: boolean;
+  categoriaId?: string;
+  ativo: boolean;
+  fotos?: string[] | unknown;
+  categoria: Categoria;
+};
+
+type ResumoProduto = {
+  produtoId: string;
+  fornecedores: number;
+  clientes: number;
+};
+
+type ParceiroRel = {
+  clienteId: string;
+  nome: string;
+  tipo: string;
+  quantidadeTotal: number;
+  ultimaData: string;
+  movimentos: number;
+};
+
+type RelProduto = {
+  produtoId: string;
+  fornecedores: ParceiroRel[];
+  clientes: ParceiroRel[];
+};
+
+const emptyForm = {
+  codigo: "",
+  descricao: "",
+  categoriaId: "",
+  precoUnitario: "0",
+  estoqueMinimo: "0",
+  estoqueMaximo: "0",
+  controlaSerie: false,
+};
+
+function asFotos(raw: unknown): string[] {
+  return Array.isArray(raw) ? (raw as string[]) : [];
+}
+
+function formatData(iso: string) {
+  try {
+    return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(
+      new Date(iso)
+    );
+  } catch {
+    return iso;
+  }
+}
+
+function formatQty(n: number) {
+  return new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 4 }).format(n);
+}
+
+export default function ProdutosPage() {
+  const [lista, setLista] = useState<Produto[]>([]);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [busca, setBusca] = useState("");
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+  const [editId, setEditId] = useState<string | null>(null);
+  const [form, setForm] = useState(emptyForm);
+  const [fotos, setFotos] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [resumo, setResumo] = useState<Record<string, ResumoProduto>>({});
+  const [expandidoId, setExpandidoId] = useState<string | null>(null);
+  const [relCache, setRelCache] = useState<Record<string, RelProduto>>({});
+  const [loadingRel, setLoadingRel] = useState<string | null>(null);
+
+  async function load() {
+    const [p, c, resumos] = await Promise.all([
+      api<Produto[]>("/produtos?ativas=0"),
+      api<Categoria[]>("/categorias"),
+      api<ResumoProduto[]>("/produtos/relacionamentos-resumo"),
+    ]);
+    setLista(p);
+    setCategorias(c);
+    const map: Record<string, ResumoProduto> = {};
+    for (const r of resumos) map[r.produtoId] = r;
+    setResumo(map);
+    setRelCache({});
+    setExpandidoId(null);
+  }
+
+  useEffect(() => {
+    load().catch((e) => setError(e.message));
+  }, []);
+
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return lista;
+    return lista.filter(
+      (p) =>
+        p.codigo.toLowerCase().includes(q) ||
+        p.descricao.toLowerCase().includes(q) ||
+        (p.categoria?.nome || "").toLowerCase().includes(q)
+    );
+  }, [lista, busca]);
+
+  function cancelEdit() {
+    setEditId(null);
+    setForm(emptyForm);
+    setFotos([]);
+  }
+
+  function startEdit(p: Produto) {
+    setEditId(p.id);
+    setForm({
+      codigo: p.codigo,
+      descricao: p.descricao,
+      categoriaId: p.categoriaId || p.categoria?.id || "",
+      precoUnitario: String(p.precoUnitario),
+      estoqueMinimo: String(p.estoqueMinimo ?? 0),
+      estoqueMaximo: String(p.estoqueMaximo ?? 0),
+      controlaSerie: Boolean(p.controlaSerie),
+    });
+    setFotos(asFotos(p.fotos));
+    setError("");
+    setMsg("");
+  }
+
+  async function persistFotos(next: string[]) {
+    if (!editId) return;
+    await api(`/produtos/${editId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ fotos: next }),
+    });
+    setFotos(next);
+    await load();
+  }
+
+  async function onAddFoto(file: File | null) {
+    if (!file || !editId) return;
+    setUploading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("context", "produto");
+      fd.append("produtoId", editId);
+      const r = await apiUpload<{ url: string }>("/upload", fd);
+      await persistFotos([...fotos, r.url]);
+      setMsg("Foto adicionada");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro no upload");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function onRemoveFoto(url: string) {
+    if (!editId) return;
+    setError("");
+    try {
+      await persistFotos(fotos.filter((f) => f !== url));
+      setMsg("Foto removida");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
+  async function onMoveFoto(index: number, dir: -1 | 1) {
+    if (!editId) return;
+    const target = index + dir;
+    if (target < 0 || target >= fotos.length) return;
+    const next = [...fotos];
+    const [item] = next.splice(index, 1);
+    next.splice(target, 0, item);
+    setError("");
+    try {
+      await persistFotos(next);
+      setMsg(target === 0 || index === 0 ? "Capa atualizada" : "Ordem atualizada");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError("");
+    setMsg("");
+    const body = {
+      codigo: form.codigo.trim(),
+      descricao: form.descricao.trim(),
+      categoriaId: form.categoriaId,
+      precoUnitario: Number(form.precoUnitario),
+      estoqueMinimo: Number(form.estoqueMinimo),
+      estoqueMaximo: Number(form.estoqueMaximo),
+      controlaSerie: form.controlaSerie,
+      unidade: "UN",
+    };
+    try {
+      if (editId) {
+        await api(`/produtos/${editId}`, {
+          method: "PATCH",
+          body: JSON.stringify(body),
+        });
+        setMsg("Produto atualizado");
+      } else {
+        await api("/produtos", {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        setMsg("Produto cadastrado — edite para adicionar fotos");
+      }
+      cancelEdit();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
+  async function toggleAtivo(p: Produto) {
+    setError("");
+    try {
+      await api(`/produtos/${p.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ ativo: !p.ativo }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
+  async function toggleExpand(p: Produto) {
+    if (expandidoId === p.id) {
+      setExpandidoId(null);
+      return;
+    }
+    const id = p.id;
+    setExpandidoId(id);
+    if (relCache[id]) return;
+    setLoadingRel(id);
+    try {
+      const rel = await api<RelProduto>(`/produtos/${id}/relacionamentos`);
+      setRelCache((prev) => ({ ...prev, [id]: rel }));
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao carregar relacionamentos"
+      );
+      setExpandidoId((cur) => (cur === id ? null : cur));
+    } finally {
+      setLoadingRel((cur) => (cur === id ? null : cur));
+    }
+  }
+
+  function temHistorico(id: string) {
+    const r = resumo[id];
+    return !!r && r.fornecedores + r.clientes > 0;
+  }
+
+  return (
+    <>
+      <h1 className="text-2xl font-semibold">Produtos</h1>
+      <p className="mt-1 max-w-2xl text-sm text-slate-500">
+        Cadastre o item e, se ele tiver número de série físico, ative o
+        rastreio. A operação digita as séries nos lançamentos; o sistema só
+        valida se estão no estoque certo e se a movimentação é permitida.
+      </p>
+
+      <form
+        onSubmit={onSubmit}
+        className="mt-5 space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+      >
+        <div>
+          <h2 className="text-sm font-semibold text-slate-900">
+            {editId ? "Editar produto" : "Novo produto"}
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Fotos: cadastre primeiro e depois edite o produto. Estoque mín./máx.
+            = 0 desliga o alerta.
+          </p>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">
+              Categoria
+            </span>
+            <select
+              required
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              value={form.categoriaId}
+              onChange={(e) =>
+                setForm({ ...form, categoriaId: e.target.value })
+              }
+            >
+              <option value="">Selecione…</option>
+              {categorias.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">
+              Código
+            </span>
+            <input
+              required
+              autoComplete="off"
+              placeholder="Ex.: TEEP-123"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              value={form.codigo}
+              onChange={(e) => setForm({ ...form, codigo: e.target.value })}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">
+              Descrição
+            </span>
+            <input
+              required
+              autoComplete="off"
+              placeholder="Nome do produto"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              value={form.descricao}
+              onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+            />
+          </label>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3">
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">
+              Preço unitário (R$)
+            </span>
+            <input
+              type="number"
+              step="0.01"
+              min={0}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              value={form.precoUnitario}
+              onChange={(e) =>
+                setForm({ ...form, precoUnitario: e.target.value })
+              }
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">
+              Estoque máximo
+            </span>
+            <input
+              type="number"
+              min={0}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              value={form.estoqueMaximo}
+              onChange={(e) =>
+                setForm({ ...form, estoqueMaximo: e.target.value })
+              }
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              0 = sem alerta de máximo
+            </span>
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">
+              Estoque mínimo
+            </span>
+            <input
+              type="number"
+              min={0}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              value={form.estoqueMinimo}
+              onChange={(e) =>
+                setForm({ ...form, estoqueMinimo: e.target.value })
+              }
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              0 = sem alerta de mínimo
+            </span>
+          </label>
+        </div>
+
+        <div
+          className={`rounded-lg border p-4 ${
+            form.controlaSerie
+              ? "border-teal-200 bg-teal-50/60"
+              : "border-slate-200 bg-slate-50"
+          }`}
+        >
+          <label className="flex cursor-pointer items-start gap-3">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 rounded border-slate-300 text-teal-800 focus:ring-teal-700"
+              checked={form.controlaSerie}
+              onChange={(e) =>
+                setForm({ ...form, controlaSerie: e.target.checked })
+              }
+            />
+            <span>
+              <span className="block text-sm font-medium text-slate-900">
+                Exige número de série nos lançamentos
+              </span>
+              <span className="mt-1 block text-xs leading-relaxed text-slate-600">
+                A operação digita o código físico na entrada, saída e
+                transferência (1 série = 1 unidade). O sistema não gera série —
+                só valida se ela existe no estoque correto e se a movimentação
+                é permitida.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {editId && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium text-slate-800">
+                Fotos do produto
+              </p>
+              <label className="cursor-pointer rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-50">
+                {uploading ? "Enviando…" : "Adicionar foto"}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  className="hidden"
+                  disabled={uploading}
+                  onChange={(e) =>
+                    void onAddFoto(e.target.files?.[0] || null)
+                  }
+                />
+              </label>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {fotos.length === 0 && (
+                <p className="text-xs text-slate-500">Nenhuma foto ainda.</p>
+              )}
+              {fotos.map((f, i) => (
+                <div key={f} className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={resolveAssetUrl(f)!}
+                    alt=""
+                    className="h-20 w-20 rounded-lg object-cover ring-1 ring-slate-200"
+                  />
+                  {i === 0 && (
+                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">
+                      Capa
+                    </span>
+                  )}
+                  <div className="absolute -left-1 top-1/2 flex -translate-y-1/2 flex-col gap-0.5">
+                    <button
+                      type="button"
+                      className="rounded bg-white px-1 text-[10px] shadow disabled:opacity-30"
+                      disabled={i === 0}
+                      onClick={() => void onMoveFoto(i, -1)}
+                      title="Mover para cima (capa = 1ª)"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded bg-white px-1 text-[10px] shadow disabled:opacity-30"
+                      disabled={i === fotos.length - 1}
+                      onClick={() => void onMoveFoto(i, 1)}
+                      title="Mover para baixo"
+                    >
+                      ↓
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    className="absolute -right-1 -top-1 rounded-full bg-white px-1.5 text-xs text-red-600 shadow"
+                    onClick={() => void onRemoveFoto(f)}
+                    title="Remover"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+            {fotos.length > 1 && (
+              <p className="mt-2 text-xs text-slate-500">
+                A 1ª foto é a capa. Use ↑↓ para reordenar.
+              </p>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+        {msg && (
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+            {msg}
+          </p>
+        )}
+
+        <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+          <button
+            type="submit"
+            className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white"
+          >
+            {editId ? "Salvar alterações" : "Cadastrar produto"}
+          </button>
+          {editId && (
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm"
+            >
+              Cancelar
+            </button>
+          )}
+        </div>
+      </form>
+
+      <div className="mt-6">
+        <input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar código, descrição ou categoria…"
+          className="w-full rounded-lg border bg-white px-3 py-2.5"
+          autoComplete="off"
+        />
+      </div>
+
+      <div className="mt-3 overflow-x-auto rounded-xl border bg-white">
+        <table className="min-w-full text-sm">
+          <thead className="bg-slate-50 text-left">
+            <tr>
+              <th className="w-10 px-2 py-2" />
+              <th className="px-3 py-2">Capa</th>
+              <th className="px-3 py-2">Código</th>
+              <th className="px-3 py-2">Descrição</th>
+              <th className="px-3 py-2">Categoria</th>
+              <th className="px-3 py-2">Preço</th>
+              <th className="px-3 py-2">Mín.</th>
+              <th className="px-3 py-2">Máx.</th>
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2" />
+            </tr>
+          </thead>
+          <tbody>
+            {filtrados.map((p) => {
+              const capa = asFotos(p.fotos)[0];
+              const r = resumo[p.id];
+              const hist = temHistorico(p.id);
+              const aberto = expandidoId === p.id;
+              const rel = relCache[p.id];
+              const outroAberto = expandidoId !== null && !aberto;
+              const rowTone = aberto
+                ? "border-t bg-brand/[0.07]"
+                : outroAberto
+                  ? "border-t opacity-45"
+                  : "border-t";
+              return (
+                <Fragment key={p.id}>
+                  <tr
+                    className={
+                      aberto
+                        ? `${rowTone} shadow-[inset_4px_0_0_0_#5B8B83]`
+                        : rowTone
+                    }
+                  >
+                    <td className="px-2 py-2">
+                      {hist ? (
+                        <button
+                          type="button"
+                          onClick={() => void toggleExpand(p)}
+                          className={
+                            aberto
+                              ? "inline-flex h-7 w-7 items-center justify-center rounded-md border border-brand/40 bg-brand/15 text-brand"
+                              : "inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-brand hover:bg-slate-50"
+                          }
+                          title={
+                            aberto
+                              ? "Recolher fornecedores/clientes"
+                              : "Ver fornecedores e clientes do histórico"
+                          }
+                          aria-expanded={aberto}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                            className={`h-4 w-4 transition-transform ${aberto ? "rotate-90" : ""}`}
+                          >
+                            <path
+                              fillRule="evenodd"
+                              d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
+                              clipRule="evenodd"
+                            />
+                          </svg>
+                        </button>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      {resolveAssetUrl(capa) ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={resolveAssetUrl(capa)!}
+                          alt=""
+                          className="h-10 w-10 rounded object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">
+                          —
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">{p.codigo}</td>
+                    <td className="px-3 py-2">
+                      <span className={aberto ? "font-semibold text-slate-900" : undefined}>
+                        {p.descricao}
+                      </span>
+                      {p.controlaSerie ? (
+                        <span className="ml-2 rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-teal-800">
+                          Série
+                        </span>
+                      ) : null}
+                      {hist && r && (
+                        <p className="mt-0.5 text-xs text-slate-500">
+                          {r.fornecedores > 0 && (
+                            <span>
+                              {r.fornecedores} forn.
+                            </span>
+                          )}
+                          {r.fornecedores > 0 && r.clientes > 0 && " · "}
+                          {r.clientes > 0 && (
+                            <span>
+                              {r.clientes} cli.
+                            </span>
+                          )}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-3 py-2">{p.categoria?.nome}</td>
+                    <td className="px-3 py-2">
+                      {Number(p.precoUnitario).toFixed(2)}
+                    </td>
+                    <td className="px-3 py-2">{p.estoqueMinimo || "—"}</td>
+                    <td className="px-3 py-2">{p.estoqueMaximo || "—"}</td>
+                    <td className="px-3 py-2">{p.ativo ? "Ativo" : "Inativo"}</td>
+                    <td className="space-x-3 whitespace-nowrap px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => startEdit(p)}
+                        className="text-brand hover:underline"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => toggleAtivo(p)}
+                        className="text-brand hover:underline"
+                      >
+                        {p.ativo ? "Desativar" : "Ativar"}
+                      </button>
+                    </td>
+                  </tr>
+                  {aberto && (
+                    <tr className="border-t border-brand/20 bg-brand/[0.04] shadow-[inset_4px_0_0_0_#5B8B83]">
+                      <td colSpan={10} className="px-4 py-4">
+                        {loadingRel === p.id && !rel && (
+                          <p className="text-xs text-slate-400">Carregando…</p>
+                        )}
+                        {rel && (
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <RelacoesParceiros
+                              titulo="Compramos de (fornecedores)"
+                              itens={rel.fornecedores}
+                              vazio="Nenhuma compra registrada deste produto."
+                            />
+                            <RelacoesParceiros
+                              titulo="Vendemos / enviamos para (clientes)"
+                              itens={rel.clientes}
+                              vazio="Nenhuma venda/envio registrado deste produto."
+                            />
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+            {filtrados.length === 0 && (
+              <tr>
+                <td
+                  colSpan={10}
+                  className="px-3 py-6 text-center text-slate-500"
+                >
+                  Nenhum produto encontrado.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+function RelacoesParceiros({
+  titulo,
+  itens,
+  vazio,
+}: {
+  titulo: string;
+  itens: ParceiroRel[];
+  vazio: string;
+}) {
+  return (
+    <div className="rounded-lg border border-brand/20 bg-white p-3 shadow-sm">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-brand">
+        {titulo}
+      </h3>
+      {itens.length === 0 ? (
+        <p className="mt-1 text-xs text-slate-400">{vazio}</p>
+      ) : (
+        <ul className="mt-2 space-y-1.5">
+          {itens.map((c) => (
+            <li
+              key={c.clienteId}
+              className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5"
+            >
+              <div className="font-medium text-slate-900">{c.nome}</div>
+              <div className="text-xs text-slate-500">{c.tipo}</div>
+              <div className="mt-0.5 text-xs text-slate-500">
+                {formatQty(c.quantidadeTotal)} · {c.movimentos} mov. · últ.{" "}
+                {formatData(c.ultimaData)}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}

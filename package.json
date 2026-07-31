@@ -1,0 +1,20 @@
+{
+  "name": "estoque-teep",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "pnpm --filter @teep/shared build && pnpm -r --parallel --filter @teep/api --filter @teep/web --filter @teep/shared dev",
+    "dev:api": "pnpm --filter @teep/api dev",
+    "dev:web": "pnpm --filter @teep/web dev",
+    "build": "pnpm -r build",
+    "db:migrate": "pnpm --filter @teep/api db:migrate",
+    "db:seed": "pnpm --filter @teep/api db:seed",
+    "db:generate": "pnpm --filter @teep/api db:generate",
+    "test": "pnpm --filter @teep/api test",
+    "smoke:f10": "pnpm --filter @teep/api smoke:f10",
+    "smoke:extra": "pnpm --filter @teep/api exec tsx scripts/smoke-extra.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

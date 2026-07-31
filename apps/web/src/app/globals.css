@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand: #5b8b83;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+input,
+select,
+textarea,
+button {
+  @apply text-base;
+}
+
+/* Scroll quase invisível; thumb aparece ao aproximar o mouse */
+.scrollbar-ghost {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scrollbar-ghost:hover,
+.scrollbar-ghost:focus-within {
+  scrollbar-color: rgb(148 163 184 / 0.45) transparent;
+}
+.scrollbar-ghost::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.scrollbar-ghost::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-ghost::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 999px;
+}
+.scrollbar-ghost:hover::-webkit-scrollbar-thumb,
+.scrollbar-ghost:focus-within::-webkit-scrollbar-thumb {
+  background-color: rgb(148 163 184 / 0.45);
+}
+.scrollbar-ghost::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(100 116 139 / 0.65);
+}

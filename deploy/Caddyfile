@@ -1,0 +1,12 @@
+# F11 — HTTPS (Let's Encrypt automático via Caddy)
+# Variáveis WEB_HOST / API_HOST injetadas pelo compose.
+
+{$WEB_HOST} {
+	encode gzip
+	reverse_proxy web:3000
+}
+
+{$API_HOST} {
+	encode gzip
+	reverse_proxy api:4000
+}

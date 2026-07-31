@@ -1,0 +1,263 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { io, type Socket } from "socket.io-client";
+import { api, ensureAccessToken } from "@/lib/api";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+
+type Notificacao = {
+  id: string;
+  tipo: string;
+  titulo: string;
+  mensagem: string;
+  lida: boolean;
+  criadoEm: string;
+};
+
+type ToastItem = {
+  id: string;
+  titulo: string;
+  mensagem: string;
+};
+
+/** Sino + inbox + toasts Socket (F9.1) — UI Instagram (ícone + ponto vermelho). */
+export function NotificationBell() {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<Notificacao[]>([]);
+  const [naoLidas, setNaoLidas] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const r = await api<{
+        data: Notificacao[];
+        naoLidas: number;
+      }>("/notificacoes?take=20");
+      setItems(r.data);
+      setNaoLidas(r.naoLidas);
+    } catch {
+      /* sessão / rede */
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (!rootRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
+
+  useEffect(() => {
+    let socket: Socket | null = io(API_URL, {
+      path: "/socket.io",
+      transports: ["websocket", "polling"],
+      auth: (cb) => {
+        void ensureAccessToken().then((token) => {
+          if (!token) {
+            cb(new Error("Não autenticado"));
+            return;
+          }
+          cb({ token });
+        });
+      },
+    });
+
+    socket.on(
+      "alerta",
+      (payload: {
+        id?: string;
+        titulo?: string;
+        mensagem: string;
+      }) => {
+        const id =
+          payload.id ||
+          `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        setToasts((prev) => {
+          if (prev.some((t) => t.id === id)) return prev;
+          return [
+            ...prev,
+            {
+              id,
+              titulo: payload.titulo || "Alerta",
+              mensagem: payload.mensagem,
+            },
+          ];
+        });
+        window.setTimeout(() => {
+          setToasts((prev) => prev.filter((t) => t.id !== id));
+        }, 8000);
+        void load();
+      }
+    );
+
+    socket.on("connect_error", (err) => {
+      if (!/autentic|token|Não autenticado/i.test(err.message)) return;
+      void ensureAccessToken().then((token) => {
+        if (!token) socket?.disconnect();
+      });
+    });
+
+    return () => {
+      socket?.disconnect();
+      socket = null;
+    };
+  }, [load]);
+
+  async function marcarUma(id: string) {
+    try {
+      await api(`/notificacoes/${id}/lida`, { method: "PATCH", body: "{}" });
+      await load();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function marcarTodas() {
+    setLoading(true);
+    try {
+      await api("/notificacoes/marcar-todas-lidas", {
+        method: "POST",
+        body: "{}",
+      });
+      await load();
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="relative" ref={rootRef}>
+        <button
+          type="button"
+          onClick={() => {
+            setOpen((v) => !v);
+            if (!open) void load();
+          }}
+          className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-700 hover:bg-slate-100"
+          aria-label={
+            naoLidas > 0
+              ? `Notificações (${naoLidas} não lidas)`
+              : "Notificações"
+          }
+          aria-expanded={open}
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            className="h-5 w-5"
+            aria-hidden
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M15 17h5l-1.4-1.4A2 2 0 0 1 18 14.2V11a6 6 0 1 0-12 0v3.2c0 .5-.2 1-.6 1.4L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9"
+            />
+          </svg>
+          {naoLidas > 0 && (
+            <span
+              className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"
+              aria-hidden
+            />
+          )}
+        </button>
+
+        {open && (
+          <div className="absolute right-0 z-50 mt-2 w-[min(100vw-2rem,22rem)] rounded-xl border border-slate-200 bg-white shadow-lg">
+            <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+              <span className="text-sm font-semibold text-slate-800">
+                Notificações
+              </span>
+              <button
+                type="button"
+                disabled={loading || naoLidas === 0}
+                onClick={() => void marcarTodas()}
+                className="text-xs text-brand disabled:opacity-40"
+              >
+                Marcar todas lidas
+              </button>
+            </div>
+            <ul className="max-h-80 overflow-y-auto">
+              {items.length === 0 && (
+                <li className="px-3 py-6 text-center text-sm text-slate-400">
+                  Nenhuma notificação
+                </li>
+              )}
+              {items.map((n) => (
+                <li
+                  key={n.id}
+                  className={`border-b border-slate-50 px-3 py-2.5 ${
+                    n.lida ? "bg-white" : "bg-brand-light/40"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-medium text-slate-800">
+                        {n.titulo}
+                      </div>
+                      <p className="mt-0.5 text-xs text-slate-600">
+                        {n.mensagem}
+                      </p>
+                      <time className="mt-1 block text-[10px] text-slate-400">
+                        {new Date(n.criadoEm).toLocaleString("pt-BR")}
+                      </time>
+                    </div>
+                    {!n.lida && (
+                      <button
+                        type="button"
+                        className="shrink-0 text-[10px] text-brand"
+                        onClick={() => void marcarUma(n.id)}
+                      >
+                        Lida
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      {toasts.length > 0 && (
+        <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex w-[min(100vw-2rem,22rem)] flex-col gap-2">
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              className="pointer-events-auto rounded-lg border border-brand/30 bg-white px-4 py-3 shadow-lg"
+              role="status"
+            >
+              <div className="text-sm font-semibold text-brand">{t.titulo}</div>
+              <p className="mt-1 text-sm text-slate-700">{t.mensagem}</p>
+              <button
+                type="button"
+                className="mt-2 text-xs text-slate-500 hover:text-slate-800"
+                onClick={() =>
+                  setToasts((prev) => prev.filter((x) => x.id !== t.id))
+                }
+              >
+                Fechar
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
