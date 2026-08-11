@@ -25,6 +25,8 @@ pnpm --filter @teep/api db:seed
 pnpm dev
 ```
 
+O `.env.example` da API já traz `REDIS_DISABLED=1` (Redis opcional em dev). Para fila de e-mail real local, suba Redis e remova/desative essa flag.
+
 Ou use Docker Compose com Postgres/Redis/API/Web (`docker compose up --build`).
 
 - Web: http://localhost:3000 (abre em login)
@@ -32,7 +34,7 @@ Ou use Docker Compose com Postgres/Redis/API/Web (`docker compose up --build`).
 
 Login seed: `admin@teep.com.br` / `Admin@123` (ou `SEED_ADMIN_*`).
 
-**Homologação / smoke F10** — estoques PLN/TBO, usuários gerente/operador e produtos demo **só** com:
+**Homologação / smoke** — estoques PLN/TBO, usuários gerente/operador e produtos demo **só** com:
 
 ```bash
 SEED_DEMO=1 pnpm --filter @teep/api db:seed
@@ -46,23 +48,20 @@ SEED_DEMO=1 pnpm --filter @teep/api db:seed
 
 Sem `SEED_DEMO`, o seed cria admin + tipos/categorias; estoques nascem no cadastro (Admin → Estoques).
 
-## Homologação (F10)
+## Homologação / smoke
 
-Checklist: [`docs/F10-homologacao-checklist.md`](docs/F10-homologacao-checklist.md)
-
-Com a API no ar:
+Checklist completo (cadastros, inventário, cutover A/B): [`docs/INSTALACAO.md`](docs/INSTALACAO.md) §9.
 
 ```bash
+# API no ar; seed com SEED_DEMO=1 (ou PLN/TBO equivalentes)
 pnpm smoke:f10
 ```
 
-Valida health → login → produto → init → compra/venda → saldo → (se TBO) transferência PLN→TBO.  
-Requer seed com `SEED_DEMO=1` (ou PLN/TBO equivalentes). Detalhe: [`docs/F10-homologacao-checklist.md`](docs/F10-homologacao-checklist.md).
+Valida health → login → produto → init → compra/venda → saldo → (se TBO) transferência PLN→TBO.
 
-## Hardening / Go-Live (F11)
+## Hardening / Go-Live
 
-Guia de cutover: [`docs/F11-hardening-golive.md`](docs/F11-hardening-golive.md)  
-**Instalação oficial (Debian / Docker / VM):** [`docs/INSTALACAO.md`](docs/INSTALACAO.md)
+**Instalação oficial (Debian / Docker / VM), hardening, backup e cutover:** [`docs/INSTALACAO.md`](docs/INSTALACAO.md)
 
 ```bash
 cp deploy/env.production.example .env.production
@@ -75,14 +74,13 @@ Produção: `https://estoque.teep.com.br` (web) · `https://api.estoque.teep.com
 
 ## Documentação
 
-Índice da pasta: [`docs/README.md`](docs/README.md) · telas: [`docs/mapa-telas.md`](docs/mapa-telas.md)
+A documentação é a referência operacional do sistema (código = verdade).  
+Índice: [`docs/README.md`](docs/README.md) · telas: [`docs/mapa-telas.md`](docs/mapa-telas.md)
 
 | Doc | Conteúdo |
 |-----|----------|
 | [docs/mapa-telas.md](docs/mapa-telas.md) | Índice de telas → docs / permissões |
-| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Instalação oficial (Docker prod / VM) |
-| [docs/F10-homologacao-checklist.md](docs/F10-homologacao-checklist.md) | Homologação / carga inicial |
-| [docs/F11-hardening-golive.md](docs/F11-hardening-golive.md) | Cutover / hardening |
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Instalação, homologação, hardening, backup e cutover |
 | [docs/recuperacao-backup.md](docs/recuperacao-backup.md) | Restore e emergência |
 | [docs/monitoramento-basico.md](docs/monitoramento-basico.md) | `/health`, `/ready`, `check-status` |
 | [docs/senha-provisoria.md](docs/senha-provisoria.md) | Senha provisória, 1º acesso e perfil |
@@ -101,17 +99,14 @@ Sino no header · Admin → E-mail · fotos no cadastro · assistente no Dashboa
 
 ⚠️ **ATENÇÃO:** Após copiar os arquivos `.env.example`, **EDITE OS SEGREDOS** antes de rodar em produção/staging:
 
-1. Em `apps/api/.env`:
-   - `JWT_ACCESS_SECRET`: mínimo 32 caracteres aleatórios
-   - `JWT_REFRESH_SECRET`: mínimo 32 caracteres aleatórios
-   - **NUNCA** use os valores de exemplo (`change-me-...`)
+1. Em `apps/api/.env` (dev):
+   - `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET`: use valores próprios (≥ 32 chars)
+   - **NUNCA** leve `change-me-...` para staging/produção
 
-2. Em `.env.production` (produção):
-   - Todos os secrets devem ser fortes e únicos
-   - `POSTGRES_PASSWORD` deve ser forte
+2. Em `.env.production` (`NODE_ENV=production`):
+   - Secrets fortes e únicos; `POSTGRES_PASSWORD` forte
    - Configure `SMTP_*` para e-mails reais
-
-O sistema **falhará ao iniciar** se detectar secrets fracos em produção.
+   - A API **recusa subir** se JWT for fraco/`change-me` ou `CORS_ORIGIN` apontar para localhost
 
 ## Docker (dev)
 

@@ -1,4 +1,5 @@
-# Produção / staging (F11) — use com .env.production
+# Produção / staging — use com .env.production
+# Guia: docs/INSTALACAO.md
 # Uso: docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 #
 # Não publica portas de Postgres/Redis. Caddy expõe 80/443 com HTTPS.

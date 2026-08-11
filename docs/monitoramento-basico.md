@@ -59,7 +59,7 @@ Usa `docker compose -f docker-compose.prod.yml` (e `--env-file` quando houver `.
 
 Opcional: UptimeRobot (ou similar) em `https://api.…/health` a cada 5 min.
 
-Backup diário: ver [F11-hardening-golive.md](./F11-hardening-golive.md).
+Backup diário: ver cron em [INSTALACAO.md](./INSTALACAO.md) (§7.2).
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * Validação mínima de ambiente em produção (F11).
+ * Validação mínima de ambiente em produção.
  * Falha cedo se secrets padrão ou curtos forem usados no go-live.
  */
 

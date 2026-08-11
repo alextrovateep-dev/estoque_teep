@@ -9,7 +9,7 @@ Não use `pnpm`/Postgres embutido nem o `docker-compose.yml` de desenvolvimento 
 | **VM Debian no PC (ensaio)** | **Mesmo** compose de produção · hosts locais · `deploy/Caddyfile.lab` |
 | **Dev na máquina do programador** | `README.md` (pnpm ou `docker compose` sem `.prod`) — fora do escopo deste arquivo |
 
-Documento irmão: [F11-hardening-golive.md](./F11-hardening-golive.md).
+Este arquivo cobre **instalar** o stack e **homologar** (cadastros, inventário, smoke) antes do go-live.
 
 ---
 
@@ -317,8 +317,14 @@ docker compose "${ENVF[@]}" up -d --build
 ./scripts/backup-prod.sh
 ```
 
-Gera `backups/<timestamp>/` com `postgres.dump`, `uploads.tar.gz` (se houver) e `MANIFEST.txt`.  
-Cron: [F11-hardening-golive.md](./F11-hardening-golive.md).  
+Gera `backups/<timestamp>/` com `postgres.dump`, `uploads.tar.gz` (se houver) e `MANIFEST.txt`. Retenção padrão: 14 dias (`RETAIN_DAYS`).
+
+Cron diário no host (exemplo 02:30 UTC):
+
+```bash
+0 2 * * * cd /opt/estoque-teep && ./scripts/backup-prod.sh >> /var/log/teep-backup.log 2>&1
+```
+
 Restore / emergência: [recuperacao-backup.md](./recuperacao-backup.md).
 
 ```bash
@@ -340,21 +346,99 @@ Mantenha `SEED_ON_START=0` em updates.
 
 ---
 
-## 8. Checklist pós-instalação
+## 8. Hardening (já no stack de produção)
 
-- [ ] `docker compose … ps` — todos healthy / running  
+- `helmet` + `trust proxy` na API  
+- `assertProductionEnv`: rejeita JWT fraco/`change-me` e `CORS_ORIGIN` com localhost  
+- Postgres/Redis **sem** portas públicas no compose de prod  
+- Seed só com `SEED_ON_START=1` no primeiro boot; depois `0`
+
+## 9. Homologação e cutover
+
+**DoD:** stack no ar · cadastros reais · init de saldos · smoke OK · transferência se ≥2 estoques (Go-Live B).
+
+**Seed:** tipos/categorias sempre. Estoques PLN/TBO/RMA/DESC + usuários gerente/operador + produtos demo **só** com `SEED_DEMO=1` (em prod Docker o seed de boot cria o admin; demo/homolog costuma ser em dev ou seed manual). Sem demo, admin nasce sem estoque — cadastre em Admin → Estoques.
+
+### 9.1 Credenciais (SEED_DEMO=1)
+
+| E-mail | Perfil | Senha padrão | Estoque |
+|--------|--------|--------------|---------|
+| `SEED_ADMIN_EMAIL` (padrão `admin@teep.com.br`) | ADMIN | `SEED_ADMIN_PASSWORD` (padrão `Admin@123`) | PLN (+ RMA) |
+| `gerente@teep.com.br` | GERENTE | `SEED_OPS_PASSWORD` (padrão `Oper@123`) | PLN (+ RMA) |
+| `operador@teep.com.br` | OPERADOR | idem | PLN (+ RMA) |
+| `operador.tbo@teep.com.br` | OPERADOR | idem | TBO (+ RMA) |
+
+Também com demo: estoques **RMA** / **DESC** e 3 produtos + fornecedor **sem saldos** (saldo via `/estoque/init`).
+
+### 9.2 Stack no ar
+
+- [ ] `docker compose … ps` — healthy / running  
 - [ ] `curl` no `/health` da API (HTTPS)  
-- [ ] Login web com admin do seed  
-- [ ] Troca de senha obrigatória ok  
+- [ ] Login admin + troca de senha  
 - [ ] `SEED_ON_START=0` após o primeiro boot  
-- [ ] (Prod) DNS + cadeado HTTPS válido (Let's Encrypt)  
-- [ ] (Prod) Backup dry-run (`./scripts/backup-prod.sh`)  
-- [ ] Smoke: `API_URL=https://api.… pnpm smoke:f10` (de uma máquina com pnpm)  
-- [ ] Homologação: [F10-homologacao-checklist.md](./F10-homologacao-checklist.md)
+- [ ] (Prod) DNS + HTTPS válido  
+- [ ] Backup dry-run + cron (§7.2)  
+
+Em **dev** (`pnpm`), para smoke com PLN/TBO: `SEED_DEMO=1 pnpm --filter @teep/api db:seed`.
+
+### 9.3 Cadastros reais
+
+- [ ] Estoques ativos (Go-Live A: 1 · B: ≥2)  
+- [ ] Categorias, produtos (código único; série só com inventário alinhado)  
+- [ ] Clientes / fornecedores  
+- [ ] Usuários reais + preferências de alerta  
+
+### 9.4 Inventário
+
+- [ ] `/estoque/init` — saldos conferidos; séries = 1 unidade cada  
+- [ ] `confirmarReinit` só se for sobrescrever de propósito  
+- [ ] Go-Live B: init na 2ª filial **ou** carga na origem + transferência  
+
+### 9.5 Smoke
+
+```bash
+# API no ar; precisa PLN (TBO para transferência)
+pnpm smoke:f10
+API_URL=https://api.estoque.teep.com.br pnpm smoke:f10
+```
+
+Ordem do script: health → login → produto → init 50 → compra +10 → venda −5 → saldo 55 → (se TBO) transferência aguardar → conferir → TBO 8.
+
+- [ ] Exit 0  
+- [ ] (Opcional) `pnpm smoke:extra` — crédito IMEDIATO  
+- Outros `apps/api/scripts/smoke-*.ts` sob demanda  
+
+**Manual (UI):** Compra / Venda · Dashboard · (opc.) aprovação · (B) transferência imediata e aguardar · séries + filtro em Movimentações/Dashboard.
+
+### 9.6 Go-Live A vs B
+
+| Gate | Estoques | Além do stack |
+|------|----------|----------------|
+| **A** | 1 | Cadastros + init + compra/venda |
+| **B** | ≥2 | + transferência (Novo Lançamento + conferência) + alertas |
+
+- [ ] Gate A ou B definido pelo time  
+- [ ] Smoke PC + mobile  
+
+### 9.7 Pós go-live
+
+- [ ] SMTP real (opcional) + Admin → E-mail  
+- [ ] Monitorar `/health`, `/ready` e logs ([monitoramento-basico.md](./monitoramento-basico.md))  
+
+### 9.8 Assinatura
+
+| Campo | Valor |
+|-------|--------|
+| Ambiente | |
+| Data | |
+| Responsável | |
+| Gate | A / B |
+| Smoke `pnpm smoke:f10` | OK / NOK |
+| Homologação | ☐ Aprovada ☐ Reprovada |
 
 ---
 
-## 9. Problemas comuns
+## 10. Problemas comuns
 
 | Sintoma | Causa provável | Ação |
 |---------|----------------|------|
@@ -367,7 +451,7 @@ Mantenha `SEED_ON_START=0` em updates.
 
 ---
 
-## 10. Mapa rápido de arquivos
+## 11. Mapa rápido de arquivos
 
 | Arquivo | Papel |
 |---------|--------|
@@ -383,10 +467,10 @@ Mantenha `SEED_ON_START=0` em updates.
 
 ---
 
-## 11. Resumo da regra
+## 12. Resumo da regra
 
-1. Servidor ou VM de validação de instalação → **sempre** `docker-compose.prod.yml` + `.env.production`.  
+1. Servidor ou VM de validação → **sempre** `docker-compose.prod.yml` + `.env.production`.  
 2. Produção real → DNS público + `deploy/Caddyfile` (Let's Encrypt).  
 3. VM no PC → mesmos arquivos + hosts + `deploy/Caddyfile.lab`.  
-4. Configuração centralizada em **um** arquivo: `.env.production`.  
-5. Depois do primeiro boot: `SEED_ON_START=0` e backup agendado.
+4. Configuração em **um** arquivo: `.env.production`.  
+5. Depois do primeiro boot: `SEED_ON_START=0`, backup agendado e homologação (§9).

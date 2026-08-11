@@ -28,7 +28,7 @@ Auth / 1º acesso: [senha-provisoria.md](./senha-provisoria.md) · `/login` · `
 |------|------|-----------|-----|
 | Movimentações | `/movimentacoes` | `movimentacoes` | Histórico; filtro `?serie=` |
 | Aprovações | `/aprovacoes` | `aprovacoes` | [lançamento](./lancamento.md) |
-| Inventário | `/estoque/init` | `estoque_init` | Abaixo (§ Inventário) · [F10](./F10-homologacao-checklist.md) |
+| Inventário | `/estoque/init` | `estoque_init` | Abaixo (§ Inventário) · [INSTALACAO](./INSTALACAO.md) §9 |
 
 `/estoque/series` → redirect Dashboard/Movimentações (filtro série).  
 `/transferencias/nova` → redirect Novo Lançamento.
@@ -61,7 +61,7 @@ Define ou **reinicializa** saldos de um estoque (`POST /estoques/inicializacao`)
 
 - Produtos com série: quantidade = N séries informadas.
 - `confirmarReinit` obrigatório para sobrescrever carga existente.
-- Uso típico: cutover / F10 — não é lançamento do dia a dia.
+- Uso típico: cutover / homologação — não é lançamento do dia a dia.
 
 ---
 
@@ -94,9 +94,7 @@ Não há docs longos separados para cada CRUD — o comportamento está nas tela
 
 | Doc | Uso |
 |-----|-----|
-| [INSTALACAO.md](./INSTALACAO.md) | Subir stack Docker |
-| [F10](./F10-homologacao-checklist.md) | Homologação |
-| [F11](./F11-hardening-golive.md) | Cutover |
+| [INSTALACAO.md](./INSTALACAO.md) | Instalar, homologar, backup, cutover |
 | [backup](./recuperacao-backup.md) · [monitor](./monitoramento-basico.md) | Operação |
 
 Backlog: [impressão Zebra](./backlog-impressao-zebra.md).

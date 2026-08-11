@@ -1,7 +1,7 @@
 # Recuperação de backup e emergência
 
 **Regra:** scripts reais em `scripts/backup-prod.sh` e `scripts/restore-prod.sh`.  
-Instalação do stack: [INSTALACAO.md](./INSTALACAO.md). Cron e cutover: [F11-hardening-golive.md](./F11-hardening-golive.md).
+Instalação do stack: [INSTALACAO.md](./INSTALACAO.md).
 
 Todos os comandos abaixo assumem a raiz do repo com `.env.production` (ex.: `/opt/estoque-teep`).
 
@@ -106,6 +106,6 @@ docker compose -f docker-compose.prod.yml --env-file .env.production restart api
 
 | Frequência | Ação |
 |------------|------|
-| Diário | Backup via cron (F11) |
+| Diário | Backup via cron ([INSTALACAO](./INSTALACAO.md) §7.2) |
 | Mensal | Restore de teste em lab/staging |
 | Sempre | Não apagar volumes Docker sem backup |
