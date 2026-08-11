@@ -3,8 +3,27 @@
 import { AssistenteEstoque } from "@/components/AssistenteEstoque";
 import { api, apiDownload, getStoredUser, User } from "@/lib/api";
 import { userHas } from "@/lib/access";
+import { useSerieFiltro } from "@/hooks/useSerieFiltro";
+import {
+  localUnidadeSerie,
+  UNIDADE_SERIE_STATUS_LABEL,
+} from "@/lib/serieLabels";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+
+type SerieUnidade = {
+  id: string;
+  numeroSerie: string;
+  status: string;
+  produto: { id: string; codigo: string; descricao: string };
+  filial: { id: string; nome: string; sigla: string } | null;
+  cliente: { id: string; nome: string } | null;
+  emTransito?: {
+    transferenciaId: string;
+    origemSigla: string;
+    destinoSigla: string;
+  } | null;
+};
 
 type Dashboard = {
   escopo: {
@@ -45,10 +64,12 @@ type Dashboard = {
   };
   saldos: Array<{
     id: string;
+    produtoId?: string;
     codigo: string;
     descricao: string;
     categoriaId?: string;
     categoriaNome?: string;
+    filialId: string;
     filialSigla: string;
     filialNome: string;
     saldoAtual: number;
@@ -84,9 +105,23 @@ function qty(n: number) {
 export default function DashboardPage() {
   const [user, setUser] = useState<User | null>(null);
   const [filialId, setFilialId] = useState("");
-  const [busca, setBusca] = useState("");
+  const [produtoQ, setProdutoQ] = useState("");
+  const [produtoFiltro, setProdutoFiltro] = useState("");
+  const [produtoOpen, setProdutoOpen] = useState(false);
   const [categoriaId, setCategoriaId] = useState("");
+  const [filialTabelaId, setFilialTabelaId] = useState("");
   const [soAlertas, setSoAlertas] = useState(false);
+  const {
+    serieQ,
+    serieFiltro,
+    serieAtiva,
+    limparSerie,
+    onSerieChange,
+    onSerieKeyDown,
+  } = useSerieFiltro({ replacePath: "/dashboard", bootstrapFromUrl: true });
+  const [seriesMatch, setSeriesMatch] = useState<SerieUnidade[]>([]);
+  const [serieTruncado, setSerieTruncado] = useState(false);
+  const [serieLoading, setSerieLoading] = useState(false);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [data, setData] = useState<Dashboard | null>(null);
@@ -96,6 +131,7 @@ export default function DashboardPage() {
 
   const isOpsManager =
     user?.perfil === "ADMIN" || user?.perfil === "GERENTE";
+  const canMovimentacoes = Boolean(user && userHas(user, "movimentacoes"));
 
   useEffect(() => {
     setUser(getStoredUser());
@@ -105,11 +141,46 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    if (!serieAtiva) {
+      setSeriesMatch([]);
+      setSerieTruncado(false);
+      setSerieLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSerieLoading(true);
+    const params = new URLSearchParams({ q: serieFiltro.trim() });
+    const filialEscopo =
+      (isOpsManager && filialId) || filialTabelaId || "";
+    if (filialEscopo) params.set("filialId", filialEscopo);
+    api<{ data: SerieUnidade[]; truncado?: boolean }>(
+      `/series?${params}`
+    )
+      .then((r) => {
+        if (cancelled) return;
+        setSeriesMatch(r.data || []);
+        setSerieTruncado(Boolean(r.truncado));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setSeriesMatch([]);
+        setSerieTruncado(false);
+      })
+      .finally(() => {
+        if (!cancelled) setSerieLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [serieAtiva, serieFiltro, filialId, filialTabelaId, isOpsManager]);
+
+  useEffect(() => {
     if (!user) return;
     const ac = new AbortController();
     setLoading(true);
     setError("");
     setSelecionados(new Set());
+    setFilialTabelaId("");
     const params = new URLSearchParams();
     if (isOpsManager && filialId) params.set("filialId", filialId);
     api<Dashboard>(`/dashboard${params.toString() ? `?${params}` : ""}`, {
@@ -121,7 +192,7 @@ export default function DashboardPage() {
       .catch((e) => {
         if (ac.signal.aborted) return;
         if (e instanceof DOMException && e.name === "AbortError") return;
-        setError(e.message);
+        setError(e instanceof Error ? e.message : "Falha ao carregar dashboard");
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
@@ -131,20 +202,91 @@ export default function DashboardPage() {
 
   const saldosFiltrados = useMemo(() => {
     if (!data) return [];
-    const q = busca.trim().toLowerCase();
+    const q = produtoFiltro.trim().toLowerCase();
     return data.saldos.filter((s) => {
       if (categoriaId && s.categoriaId !== categoriaId) return false;
+      if (filialTabelaId && s.filialId !== filialTabelaId) return false;
       if (soAlertas && !(s.abaixoMinimo || s.acimaMaximo)) return false;
+      if (serieAtiva) {
+        if (serieLoading) return false;
+        const match = seriesMatch.some(
+          (u) =>
+            u.status === "EM_ESTOQUE" &&
+            u.filial?.id === s.filialId &&
+            (s.produtoId
+              ? u.produto.id === s.produtoId
+              : u.produto.codigo === s.codigo)
+        );
+        if (!match) return false;
+      }
       if (!q) return true;
       return (
         s.codigo.toLowerCase().includes(q) ||
-        s.descricao.toLowerCase().includes(q) ||
-        s.filialSigla.toLowerCase().includes(q) ||
-        s.filialNome.toLowerCase().includes(q) ||
-        (s.categoriaNome || "").toLowerCase().includes(q)
+        s.descricao.toLowerCase().includes(q)
       );
     });
-  }, [data, busca, soAlertas, categoriaId]);
+  }, [
+    data,
+    produtoFiltro,
+    soAlertas,
+    categoriaId,
+    filialTabelaId,
+    serieAtiva,
+    seriesMatch,
+    serieLoading,
+  ]);
+
+  /** Sugestões a partir de todos os saldos carregados (não encolhe a tabela ao digitar). */
+  const produtoSugestoes = useMemo(() => {
+    if (!data) return [];
+    const q = produtoQ.trim().toLowerCase();
+    if (!q) return [];
+    const seen = new Set<string>();
+    const out: { codigo: string; descricao: string }[] = [];
+    for (const s of data.saldos) {
+      if (categoriaId && s.categoriaId !== categoriaId) continue;
+      if (filialTabelaId && s.filialId !== filialTabelaId) continue;
+      if (soAlertas && !(s.abaixoMinimo || s.acimaMaximo)) continue;
+      if (seen.has(s.codigo)) continue;
+      const match =
+        s.codigo.toLowerCase().includes(q) ||
+        s.descricao.toLowerCase().includes(q);
+      if (!match) continue;
+      seen.add(s.codigo);
+      out.push({ codigo: s.codigo, descricao: s.descricao });
+      if (out.length >= 12) break;
+    }
+    return out;
+  }, [data, produtoQ, categoriaId, filialTabelaId, soAlertas]);
+
+  const temFiltroTabela =
+    !!produtoFiltro.trim() ||
+    !!categoriaId ||
+    !!filialTabelaId ||
+    soAlertas ||
+    serieAtiva;
+
+  const mostrarFiltroFilialTabela =
+    !!data &&
+    (data.escopo.consolidado || data.filiais.length > 1) &&
+    !(isOpsManager && filialId);
+
+  function aplicarProduto(valor: string) {
+    const v = valor.trim();
+    setProdutoQ(v);
+    setProdutoFiltro(v);
+    setProdutoOpen(false);
+  }
+
+  function selecionarProduto(codigo: string) {
+    aplicarProduto(codigo);
+  }
+
+  function limparProduto() {
+    setProdutoQ("");
+    setProdutoFiltro("");
+    setProdutoOpen(false);
+  }
 
   useEffect(() => {
     const visible = new Set(saldosFiltrados.map((s) => s.id));
@@ -190,11 +332,21 @@ export default function DashboardPage() {
     setError("");
     try {
       const params = new URLSearchParams();
-      if (isOpsManager && filialId) params.set("filialId", filialId);
+      const escopoFilial =
+        (isOpsManager && filialId) || filialTabelaId || "";
+      if (escopoFilial) params.set("filialId", escopoFilial);
+      // Com série (ou seleção), exporta exatamente as linhas da tabela filtrada
       if (selecionados.size > 0) {
         params.set("ids", [...selecionados].join(","));
+      } else if (serieAtiva) {
+        if (saldosFiltrados.length === 0) {
+          throw new Error(
+            "Nenhuma posição em estoque para exportar com este filtro de série"
+          );
+        }
+        params.set("ids", saldosFiltrados.map((s) => s.id).join(","));
       } else {
-        if (busca.trim()) params.set("q", busca.trim());
+        if (produtoFiltro.trim()) params.set("q", produtoFiltro.trim());
         if (soAlertas) params.set("soAlertas", "1");
         if (categoriaId) params.set("categoriaId", categoriaId);
       }
@@ -237,7 +389,7 @@ export default function DashboardPage() {
         {isOpsManager && data && (
           <label className="block sm:w-56">
             <span className="mb-1 block text-xs font-medium text-slate-500">
-              Filial
+              Escopo (KPIs e saldos)
             </span>
             <select
               className="w-full rounded-lg border px-3 py-2 text-sm"
@@ -332,7 +484,7 @@ export default function DashboardPage() {
           )}
 
           <section className="mt-8">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h2 className="text-lg font-semibold">Saldos</h2>
                 <p className="mt-0.5 text-xs text-slate-400">
@@ -341,55 +493,247 @@ export default function DashboardPage() {
                     : "Exporta o que estiver filtrado na tabela"}
                 </p>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                <label className="flex items-center gap-2 text-sm text-slate-600">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={!!exporting || saldosFiltrados.length === 0}
+                  onClick={() => void exportSaldos("pdf")}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
+                >
+                  {exporting === "pdf" ? "Gerando…" : "Exportar PDF"}
+                </button>
+                <button
+                  type="button"
+                  disabled={!!exporting || saldosFiltrados.length === 0}
+                  onClick={() => void exportSaldos("xlsx")}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
+                >
+                  {exporting === "xlsx" ? "Gerando…" : "Exportar Excel"}
+                </button>
+              </div>
+            </div>
+
+            <div className="sticky top-0 z-30 mt-4 grid gap-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur-sm sm:grid-cols-2 lg:grid-cols-12">
+              <div className="relative sm:col-span-2 lg:col-span-4">
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  Produto
+                </span>
+                <div className="flex gap-1">
                   <input
-                    type="checkbox"
-                    checked={soAlertas}
-                    onChange={(e) => setSoAlertas(e.target.checked)}
+                    value={produtoQ}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setProdutoQ(v);
+                      setProdutoOpen(true);
+                      // Enquanto digita, não filtra a tabela (evita “pulo” da tela).
+                      if (
+                        produtoFiltro &&
+                        v.trim().toLowerCase() !==
+                          produtoFiltro.trim().toLowerCase()
+                      ) {
+                        setProdutoFiltro("");
+                      }
+                    }}
+                    onFocus={() => setProdutoOpen(true)}
+                    onBlur={() => setTimeout(() => setProdutoOpen(false), 150)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        aplicarProduto(produtoQ);
+                      }
+                      if (e.key === "Escape") {
+                        setProdutoOpen(false);
+                      }
+                    }}
+                    placeholder="Digite e escolha um código…"
+                    className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                    autoComplete="off"
+                    aria-autocomplete="list"
+                    aria-expanded={produtoOpen && !!produtoQ.trim()}
                   />
-                  Só fora do mín./máx.
-                </label>
+                  {(produtoQ || produtoFiltro) && (
+                    <button
+                      type="button"
+                      onClick={limparProduto}
+                      className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 text-slate-500 hover:bg-slate-50"
+                      title="Limpar produto"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                {produtoOpen && produtoQ.trim() && (
+                  <ul className="absolute z-40 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                    {produtoSugestoes.length === 0 ? (
+                      <li className="px-3 py-2 text-sm text-slate-500">
+                        Nenhum código compatível nos saldos carregados
+                      </li>
+                    ) : (
+                      produtoSugestoes.map((p) => (
+                        <li key={p.codigo}>
+                          <button
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              selecionarProduto(p.codigo);
+                            }}
+                          >
+                            <span className="font-mono text-xs text-slate-800">
+                              {p.codigo}
+                            </span>
+                            <span className="mt-0.5 block truncate text-xs text-slate-500">
+                              {p.descricao}
+                            </span>
+                          </button>
+                        </li>
+                      ))
+                    )}
+                    <li className="border-t border-slate-100 px-3 py-1.5 text-[11px] text-slate-400">
+                      Clique na sugestão ou Enter para filtrar a tabela
+                    </li>
+                  </ul>
+                )}
+              </div>
+
+              <label className="block sm:col-span-1 lg:col-span-3">
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  Nº de série
+                </span>
+                <div className="flex gap-1">
+                  <input
+                    value={serieQ}
+                    onChange={(e) => onSerieChange(e.target.value)}
+                    onKeyDown={onSerieKeyDown}
+                    placeholder="Mín. 2 caracteres + Enter"
+                    className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm"
+                    autoComplete="off"
+                  />
+                  {(serieQ || serieFiltro) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        limparSerie();
+                        setSeriesMatch([]);
+                        setSerieTruncado(false);
+                      }}
+                      className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 text-slate-500 hover:bg-slate-50"
+                      title="Limpar série"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+              </label>
+
+              <label
+                className={
+                  mostrarFiltroFilialTabela
+                    ? "block lg:col-span-2"
+                    : "block lg:col-span-5"
+                }
+              >
+                <span className="mb-1 block text-xs font-medium text-slate-500">
+                  Categoria
+                </span>
                 <select
-                  className="rounded-lg border px-3 py-2 text-sm sm:w-44"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                   value={categoriaId}
                   onChange={(e) => setCategoriaId(e.target.value)}
-                  aria-label="Filtrar por categoria"
                 >
-                  <option value="">Todas as categorias</option>
+                  <option value="">Todas</option>
                   {categorias.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.nome}
                     </option>
                   ))}
                 </select>
+              </label>
+
+              {mostrarFiltroFilialTabela && (
+                <label className="block lg:col-span-3">
+                  <span className="mb-1 block text-xs font-medium text-slate-500">
+                    Filial
+                  </span>
+                  <select
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                    value={filialTabelaId}
+                    onChange={(e) => setFilialTabelaId(e.target.value)}
+                  >
+                    <option value="">Todas</option>
+                    {data.filiais.map((f) => (
+                      <option key={f.id} value={f.id}>
+                        {f.sigla} — {f.nome}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
+              <label className="flex items-center gap-2 text-sm text-slate-600 sm:col-span-2 lg:col-span-12">
                 <input
-                  value={busca}
-                  onChange={(e) => setBusca(e.target.value)}
-                  placeholder="Buscar produto, filial ou categoria…"
-                  className="rounded-lg border px-3 py-2 text-sm sm:w-56"
-                  autoComplete="off"
+                  type="checkbox"
+                  checked={soAlertas}
+                  onChange={(e) => setSoAlertas(e.target.checked)}
                 />
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    disabled={!!exporting || saldosFiltrados.length === 0}
-                    onClick={() => void exportSaldos("pdf")}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
-                  >
-                    {exporting === "pdf" ? "Gerando…" : "Exportar PDF"}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!!exporting || saldosFiltrados.length === 0}
-                    onClick={() => void exportSaldos("xlsx")}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
-                  >
-                    {exporting === "xlsx" ? "Gerando…" : "Exportar Excel"}
-                  </button>
-                </div>
-              </div>
+                Só fora do mín./máx.
+              </label>
             </div>
+
+            {serieAtiva && (
+              <div className="mt-3 rounded-xl border border-brand/20 bg-brand-light/40 px-3 py-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-slate-900">
+                    Situação da série{" "}
+                    <span className="font-mono">{serieFiltro}</span>
+                    {serieLoading ? "…" : ""}
+                  </p>
+                  {canMovimentacoes && (
+                    <Link
+                      href={`/movimentacoes?serie=${encodeURIComponent(serieFiltro.trim())}`}
+                      className="text-xs text-brand underline"
+                    >
+                      Ver histórico em Movimentações
+                    </Link>
+                  )}
+                </div>
+                {!serieLoading && seriesMatch.length === 0 && (
+                  <p className="mt-1 text-slate-600">Nenhuma série encontrada.</p>
+                )}
+                {!serieLoading && seriesMatch.length > 0 && (
+                  <ul className="mt-2 space-y-1.5">
+                    {seriesMatch.map((u) => (
+                      <li
+                        key={u.id}
+                        className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-slate-700"
+                      >
+                        <span className="font-mono text-xs">{u.numeroSerie}</span>
+                        <span className="text-xs text-slate-500">
+                          {u.produto.codigo} — {u.produto.descricao}
+                        </span>
+                        <span className="rounded bg-white/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-800">
+                          {UNIDADE_SERIE_STATUS_LABEL[u.status] || u.status}
+                        </span>
+                        <span className="text-xs">{localUnidadeSerie(u)}</span>
+                        {u.status === "EM_TRANSITO" && u.emTransito && (
+                          <Link
+                            href={`/transferencias/${u.emTransito.transferenciaId}`}
+                            className="text-xs text-brand underline"
+                          >
+                            Abrir transferência
+                          </Link>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {serieTruncado && (
+                  <p className="mt-2 text-xs text-amber-800">
+                    Mais de 50 resultados — refine o número de série.
+                  </p>
+                )}
+              </div>
+            )}
 
             {data.saldosMeta.truncado && (
               <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -397,8 +741,8 @@ export default function DashboardPage() {
                 {data.saldosMeta.total} posições (limite{" "}
                 {data.saldosMeta.limite}).
                 {data.escopo.consolidado
-                  ? " Filtre por filial para ver o restante."
-                  : " Refine a busca ou aumente o filtro na API."}
+                  ? " Use o filtro Filial abaixo para ver o restante."
+                  : " Refine os filtros ou escolha outro escopo."}
               </p>
             )}
             {soAlertas && data.saldosMeta.truncado && (
@@ -491,8 +835,24 @@ export default function DashboardPage() {
                         colSpan={9}
                         className="px-3 py-8 text-center text-slate-500"
                       >
-                        Nenhum saldo para exibir.{" "}
-                        {isOpsManager && (
+                        {serieAtiva && serieLoading
+                          ? "Buscando série…"
+                          : serieAtiva &&
+                              !serieLoading &&
+                              seriesMatch.length > 0 &&
+                              !seriesMatch.some((u) => u.status === "EM_ESTOQUE")
+                            ? "A série não está em estoque — veja a situação acima."
+                            : serieAtiva &&
+                                !serieLoading &&
+                                seriesMatch.some((u) => u.status === "EM_ESTOQUE") &&
+                                saldosFiltrados.length === 0
+                              ? "Série em estoque, mas a posição não está entre os saldos carregados (escopo/limite). Veja a situação acima."
+                              : `Nenhum saldo para exibir${
+                                  temFiltroTabela
+                                    ? " com os filtros atuais."
+                                    : "."
+                                }`}{" "}
+                        {!temFiltroTabela && isOpsManager && (
                           <Link
                             href="/estoque/init"
                             className="text-brand hover:underline"
@@ -508,7 +868,7 @@ export default function DashboardPage() {
             </div>
             <p className="mt-2 text-xs text-slate-400">
               Exibindo {saldosFiltrados.length} na tabela
-              {busca || soAlertas || categoriaId
+              {temFiltroTabela
                 ? ` (filtro sobre ${data.saldos.length} carregados)`
                 : ""}
               {selecionados.size > 0

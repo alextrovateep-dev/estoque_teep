@@ -34,8 +34,16 @@ export async function loadPermissoes(
       transferencias: false,
       movimentacoes: false,
       aprovacoes: false,
-      cadastros: false,
+      cadastros_produtos_ver: false,
+      cadastros_produtos_editar: false,
+      cadastros_clientes_ver: false,
+      cadastros_clientes_editar: false,
+      cadastros_arvore_ver: false,
+      cadastros_arvore_editar: false,
       estoque_init: false,
+      rma: false,
+      rma_cobranca: false,
+      relatorios: false,
     });
     return req.permissoesResolved;
   }

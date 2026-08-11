@@ -140,6 +140,7 @@ export default function AdminEmailPage() {
 
   useEffect(() => {
     if (!type) return;
+    previewReqId.current += 1;
     setError("");
     setMsg("");
     void loadDetail(type).catch((e) =>
@@ -153,6 +154,8 @@ export default function AdminEmailPage() {
       bodyText !== savedFriendly.current.bodyText ||
       preheader !== savedFriendly.current.preheader);
 
+  const previewReqId = useRef(0);
+
   const refreshPreview = useCallback(
     async (draft: {
       subject: string;
@@ -161,6 +164,7 @@ export default function AdminEmailPage() {
     }) => {
       if (!type) return;
       const ph = placeholdersRef.current;
+      const reqId = ++previewReqId.current;
       setPreviewBusy(true);
       try {
         const preview = await api<{
@@ -176,11 +180,13 @@ export default function AdminEmailPage() {
               friendlyToStorage(draft.preheader.trim(), ph) || null,
           }),
         });
+        if (reqId !== previewReqId.current) return;
         setDetail((prev) => (prev ? { ...prev, preview } : prev));
       } catch (err) {
+        if (reqId !== previewReqId.current) return;
         setError(err instanceof Error ? err.message : "Erro no preview");
       } finally {
-        setPreviewBusy(false);
+        if (reqId === previewReqId.current) setPreviewBusy(false);
       }
     },
     [type]
@@ -188,6 +194,12 @@ export default function AdminEmailPage() {
 
   useEffect(() => {
     if (!detail || !type) return;
+    const unchanged =
+      subject === savedFriendly.current.subject &&
+      bodyText === savedFriendly.current.bodyText &&
+      preheader === savedFriendly.current.preheader;
+    if (unchanged) return;
+
     if (previewTimer.current) clearTimeout(previewTimer.current);
     previewTimer.current = setTimeout(() => {
       void refreshPreview({ subject, bodyText, preheader });
@@ -195,7 +207,6 @@ export default function AdminEmailPage() {
     return () => {
       if (previewTimer.current) clearTimeout(previewTimer.current);
     };
-    // Só reage a texto / tipo — não à atualização do HTML da prévia.
   }, [subject, bodyText, preheader, type, detail?.type, refreshPreview]);
 
   const grupos = useMemo(() => {
@@ -360,7 +371,7 @@ export default function AdminEmailPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || (!detail.customizado && !dirty)}
               onClick={() => void onReset()}
               className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
             >
@@ -428,15 +439,38 @@ export default function AdminEmailPage() {
       {detail && (
         <div className="mt-6 grid grid-cols-1 gap-5 lg:grid-cols-5">
           <form onSubmit={onSave} className="space-y-4 lg:col-span-3">
-            <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <div>
-                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-900">
-                  Conteúdo
-                </h2>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  {detail.label}
-                  {dirty ? " · alterações não salvas" : ""}
-                </p>
+            <div
+              className={`space-y-4 rounded-xl border p-5 shadow-sm transition-colors ${
+                dirty
+                  ? "border-amber-300 bg-amber-50"
+                  : "border-slate-200 bg-white"
+              }`}
+            >
+              <div
+                className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 ${
+                  dirty
+                    ? "border-amber-300 bg-amber-100/70"
+                    : "border-slate-100 bg-slate-50"
+                }`}
+              >
+                <div>
+                  <h2
+                    className={`text-sm font-semibold ${
+                      dirty ? "text-amber-950" : "text-slate-900"
+                    }`}
+                  >
+                    {dirty ? "Editando texto" : "Conteúdo"}
+                  </h2>
+                  <p
+                    className={`mt-0.5 text-xs ${
+                      dirty ? "text-amber-900/80" : "text-slate-500"
+                    }`}
+                  >
+                    {detail.label}
+                    {detail.customizado ? " · personalizado" : " · padrão"}
+                    {dirty ? " · alterações não salvas" : ""}
+                  </p>
+                </div>
               </div>
 
               <label className="block">
@@ -556,6 +590,7 @@ export default function AdminEmailPage() {
               <iframe
                 title="Prévia do e-mail"
                 className="h-[28rem] w-full bg-white"
+                sandbox=""
                 srcDoc={detail.preview.html}
               />
             </div>

@@ -22,7 +22,7 @@ export type EmailTemplateDef = {
 
 const ALERTA_PLACEHOLDERS = [
   { key: "nome", descricao: "Nome do destinatário" },
-  { key: "titulo", descricao: "Título do evento (ex.: Estoque mínimo)" },
+  { key: "titulo", descricao: "Título do evento (ex.: Estoque mínimo · COD-123)" },
   { key: "mensagem", descricao: "Texto do alerta gerado pelo sistema" },
 ];
 
@@ -198,10 +198,26 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       appUrl,
     };
   }
+  if (
+    type === "DIVERGENCIA_TRANSFERENCIA" ||
+    type === "TRANSFERENCIA_PENDENTE_APROVACAO" ||
+    type === "TRANSFERENCIA_APROVADA" ||
+    type === "TRANSFERENCIA_REJEITADA" ||
+    type === "RMA_ABERTO" ||
+    type === "RMA_FINANCEIRO" ||
+    type === "RMA_ENCERRADO" ||
+    type === "ALERTA_RETORNO_MOVIMENTACAO"
+  ) {
+    return {
+      nome: "Usuário Teste",
+      titulo: ALERTA_EVENTO_LABELS[type],
+      mensagem: `Mensagem de exemplo para o evento ${type}.`,
+    };
+  }
   return {
     nome: "Usuário Teste",
-    titulo: ALERTA_EVENTO_LABELS[type],
-    mensagem: `Mensagem de exemplo para o evento ${type}.`,
+    titulo: `${ALERTA_EVENTO_LABELS[type]} · DEMO-PROD-01`,
+    mensagem: `Mensagem de exemplo para o evento ${type} (produto DEMO-PROD-01).`,
   };
 }
 

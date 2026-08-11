@@ -1,8 +1,11 @@
 "use client";
 
-import { api, apiUpload } from "@/lib/api";
+import { api, getStoredUser } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
-import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
+import { userCanEditCadastro } from "@/lib/access";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
 
 type Categoria = { id: string; nome: string; ativo: boolean };
 type Produto = {
@@ -40,16 +43,6 @@ type RelProduto = {
   clientes: ParceiroRel[];
 };
 
-const emptyForm = {
-  codigo: "",
-  descricao: "",
-  categoriaId: "",
-  precoUnitario: "0",
-  estoqueMinimo: "0",
-  estoqueMaximo: "0",
-  controlaSerie: false,
-};
-
 function asFotos(raw: unknown): string[] {
   return Array.isArray(raw) ? (raw as string[]) : [];
 }
@@ -69,28 +62,36 @@ function formatQty(n: number) {
 }
 
 export default function ProdutosPage() {
+  return (
+    <Suspense
+      fallback={<p className="text-sm text-slate-500">Carregando…</p>}
+    >
+      <ProdutosPageInner />
+    </Suspense>
+  );
+}
+
+function ProdutosPageInner() {
+  const searchParams = useSearchParams();
+  const canEdit = (() => {
+    const u = getStoredUser();
+    return u ? userCanEditCadastro(u, "produtos") : false;
+  })();
   const [lista, setLista] = useState<Produto[]>([]);
-  const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [busca, setBusca] = useState("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
-  const [fotos, setFotos] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [resumo, setResumo] = useState<Record<string, ResumoProduto>>({});
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [relCache, setRelCache] = useState<Record<string, RelProduto>>({});
   const [loadingRel, setLoadingRel] = useState<string | null>(null);
 
   async function load() {
-    const [p, c, resumos] = await Promise.all([
+    const [p, resumos] = await Promise.all([
       api<Produto[]>("/produtos?ativas=0"),
-      api<Categoria[]>("/categorias"),
       api<ResumoProduto[]>("/produtos/relacionamentos-resumo"),
     ]);
     setLista(p);
-    setCategorias(c);
     const map: Record<string, ResumoProduto> = {};
     for (const r of resumos) map[r.produtoId] = r;
     setResumo(map);
@@ -102,6 +103,12 @@ export default function ProdutosPage() {
     load().catch((e) => setError(e.message));
   }, []);
 
+  useEffect(() => {
+    const ok = searchParams.get("ok");
+    if (ok === "criado") setMsg("Produto cadastrado");
+    else if (ok === "atualizado") setMsg("Produto atualizado");
+  }, [searchParams]);
+
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     if (!q) return lista;
@@ -112,119 +119,6 @@ export default function ProdutosPage() {
         (p.categoria?.nome || "").toLowerCase().includes(q)
     );
   }, [lista, busca]);
-
-  function cancelEdit() {
-    setEditId(null);
-    setForm(emptyForm);
-    setFotos([]);
-  }
-
-  function startEdit(p: Produto) {
-    setEditId(p.id);
-    setForm({
-      codigo: p.codigo,
-      descricao: p.descricao,
-      categoriaId: p.categoriaId || p.categoria?.id || "",
-      precoUnitario: String(p.precoUnitario),
-      estoqueMinimo: String(p.estoqueMinimo ?? 0),
-      estoqueMaximo: String(p.estoqueMaximo ?? 0),
-      controlaSerie: Boolean(p.controlaSerie),
-    });
-    setFotos(asFotos(p.fotos));
-    setError("");
-    setMsg("");
-  }
-
-  async function persistFotos(next: string[]) {
-    if (!editId) return;
-    await api(`/produtos/${editId}`, {
-      method: "PATCH",
-      body: JSON.stringify({ fotos: next }),
-    });
-    setFotos(next);
-    await load();
-  }
-
-  async function onAddFoto(file: File | null) {
-    if (!file || !editId) return;
-    setUploading(true);
-    setError("");
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("context", "produto");
-      fd.append("produtoId", editId);
-      const r = await apiUpload<{ url: string }>("/upload", fd);
-      await persistFotos([...fotos, r.url]);
-      setMsg("Foto adicionada");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro no upload");
-    } finally {
-      setUploading(false);
-    }
-  }
-
-  async function onRemoveFoto(url: string) {
-    if (!editId) return;
-    setError("");
-    try {
-      await persistFotos(fotos.filter((f) => f !== url));
-      setMsg("Foto removida");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
-    }
-  }
-
-  async function onMoveFoto(index: number, dir: -1 | 1) {
-    if (!editId) return;
-    const target = index + dir;
-    if (target < 0 || target >= fotos.length) return;
-    const next = [...fotos];
-    const [item] = next.splice(index, 1);
-    next.splice(target, 0, item);
-    setError("");
-    try {
-      await persistFotos(next);
-      setMsg(target === 0 || index === 0 ? "Capa atualizada" : "Ordem atualizada");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
-    }
-  }
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    setMsg("");
-    const body = {
-      codigo: form.codigo.trim(),
-      descricao: form.descricao.trim(),
-      categoriaId: form.categoriaId,
-      precoUnitario: Number(form.precoUnitario),
-      estoqueMinimo: Number(form.estoqueMinimo),
-      estoqueMaximo: Number(form.estoqueMaximo),
-      controlaSerie: form.controlaSerie,
-      unidade: "UN",
-    };
-    try {
-      if (editId) {
-        await api(`/produtos/${editId}`, {
-          method: "PATCH",
-          body: JSON.stringify(body),
-        });
-        setMsg("Produto atualizado");
-      } else {
-        await api("/produtos", {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        setMsg("Produto cadastrado — edite para adicionar fotos");
-      }
-      cancelEdit();
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
-    }
-  }
 
   async function toggleAtivo(p: Produto) {
     setError("");
@@ -268,264 +162,37 @@ export default function ProdutosPage() {
 
   return (
     <>
-      <h1 className="text-2xl font-semibold">Produtos</h1>
-      <p className="mt-1 max-w-2xl text-sm text-slate-500">
-        Cadastre o item e, se ele tiver número de série físico, ative o
-        rastreio. A operação digita as séries nos lançamentos; o sistema só
-        valida se estão no estoque certo e se a movimentação é permitida.
-      </p>
-
-      <form
-        onSubmit={onSubmit}
-        className="mt-5 space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
-      >
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold text-slate-900">
-            {editId ? "Editar produto" : "Novo produto"}
-          </h2>
-          <p className="mt-0.5 text-xs text-slate-500">
-            Fotos: cadastre primeiro e depois edite o produto. Estoque mín./máx.
-            = 0 desliga o alerta.
+          <h1 className="text-2xl font-semibold">Produtos</h1>
+          <p className="mt-1 max-w-2xl text-sm text-slate-500">
+            Cadastre o item e, se ele tiver número de série físico, ative o
+            rastreio. A operação digita as séries nos lançamentos; o sistema só
+            valida se estão no estoque certo e se a movimentação é permitida.
           </p>
         </div>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-slate-700">
-              Categoria
-            </span>
-            <select
-              required
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
-              value={form.categoriaId}
-              onChange={(e) =>
-                setForm({ ...form, categoriaId: e.target.value })
-              }
-            >
-              <option value="">Selecione…</option>
-              {categorias.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nome}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-slate-700">
-              Código
-            </span>
-            <input
-              required
-              autoComplete="off"
-              placeholder="Ex.: TEEP-123"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
-              value={form.codigo}
-              onChange={(e) => setForm({ ...form, codigo: e.target.value })}
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-slate-700">
-              Descrição
-            </span>
-            <input
-              required
-              autoComplete="off"
-              placeholder="Nome do produto"
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
-              value={form.descricao}
-              onChange={(e) => setForm({ ...form, descricao: e.target.value })}
-            />
-          </label>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-slate-700">
-              Preço unitário (R$)
-            </span>
-            <input
-              type="number"
-              step="0.01"
-              min={0}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
-              value={form.precoUnitario}
-              onChange={(e) =>
-                setForm({ ...form, precoUnitario: e.target.value })
-              }
-            />
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-slate-700">
-              Estoque máximo
-            </span>
-            <input
-              type="number"
-              min={0}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
-              value={form.estoqueMaximo}
-              onChange={(e) =>
-                setForm({ ...form, estoqueMaximo: e.target.value })
-              }
-            />
-            <span className="mt-1 block text-xs text-slate-500">
-              0 = sem alerta de máximo
-            </span>
-          </label>
-          <label className="block text-sm">
-            <span className="mb-1 block font-medium text-slate-700">
-              Estoque mínimo
-            </span>
-            <input
-              type="number"
-              min={0}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
-              value={form.estoqueMinimo}
-              onChange={(e) =>
-                setForm({ ...form, estoqueMinimo: e.target.value })
-              }
-            />
-            <span className="mt-1 block text-xs text-slate-500">
-              0 = sem alerta de mínimo
-            </span>
-          </label>
-        </div>
-
-        <div
-          className={`rounded-lg border p-4 ${
-            form.controlaSerie
-              ? "border-teal-200 bg-teal-50/60"
-              : "border-slate-200 bg-slate-50"
-          }`}
-        >
-          <label className="flex cursor-pointer items-start gap-3">
-            <input
-              type="checkbox"
-              className="mt-1 h-4 w-4 rounded border-slate-300 text-teal-800 focus:ring-teal-700"
-              checked={form.controlaSerie}
-              onChange={(e) =>
-                setForm({ ...form, controlaSerie: e.target.checked })
-              }
-            />
-            <span>
-              <span className="block text-sm font-medium text-slate-900">
-                Exige número de série nos lançamentos
-              </span>
-              <span className="mt-1 block text-xs leading-relaxed text-slate-600">
-                A operação digita o código físico na entrada, saída e
-                transferência (1 série = 1 unidade). O sistema não gera série —
-                só valida se ela existe no estoque correto e se a movimentação
-                é permitida.
-              </span>
-            </span>
-          </label>
-        </div>
-
-        {editId && (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-medium text-slate-800">
-                Fotos do produto
-              </p>
-              <label className="cursor-pointer rounded-lg border bg-white px-3 py-1.5 text-sm hover:bg-slate-50">
-                {uploading ? "Enviando…" : "Adicionar foto"}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
-                  className="hidden"
-                  disabled={uploading}
-                  onChange={(e) =>
-                    void onAddFoto(e.target.files?.[0] || null)
-                  }
-                />
-              </label>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {fotos.length === 0 && (
-                <p className="text-xs text-slate-500">Nenhuma foto ainda.</p>
-              )}
-              {fotos.map((f, i) => (
-                <div key={f} className="relative">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={resolveAssetUrl(f)!}
-                    alt=""
-                    className="h-20 w-20 rounded-lg object-cover ring-1 ring-slate-200"
-                  />
-                  {i === 0 && (
-                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">
-                      Capa
-                    </span>
-                  )}
-                  <div className="absolute -left-1 top-1/2 flex -translate-y-1/2 flex-col gap-0.5">
-                    <button
-                      type="button"
-                      className="rounded bg-white px-1 text-[10px] shadow disabled:opacity-30"
-                      disabled={i === 0}
-                      onClick={() => void onMoveFoto(i, -1)}
-                      title="Mover para cima (capa = 1ª)"
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded bg-white px-1 text-[10px] shadow disabled:opacity-30"
-                      disabled={i === fotos.length - 1}
-                      onClick={() => void onMoveFoto(i, 1)}
-                      title="Mover para baixo"
-                    >
-                      ↓
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    className="absolute -right-1 -top-1 rounded-full bg-white px-1.5 text-xs text-red-600 shadow"
-                    onClick={() => void onRemoveFoto(f)}
-                    title="Remover"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-            {fotos.length > 1 && (
-              <p className="mt-2 text-xs text-slate-500">
-                A 1ª foto é a capa. Use ↑↓ para reordenar.
-              </p>
-            )}
-          </div>
-        )}
-
-        {error && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
-        )}
-        {msg && (
-          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            {msg}
-          </p>
-        )}
-
-        <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-          <button
-            type="submit"
-            className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white"
+        {canEdit && (
+          <Link
+            href="/cadastros/produtos/novo"
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white"
           >
-            {editId ? "Salvar alterações" : "Cadastrar produto"}
-          </button>
-          {editId && (
-            <button
-              type="button"
-              onClick={cancelEdit}
-              className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm"
-            >
-              Cancelar
-            </button>
-          )}
-        </div>
-      </form>
+            Cadastrar
+          </Link>
+        )}
+      </div>
 
-      <div className="mt-6">
+      {error && (
+        <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+      {msg && (
+        <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {msg}
+        </p>
+      )}
+
+      <div className="mt-4">
         <input
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
@@ -619,29 +286,29 @@ export default function ProdutosPage() {
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs">{p.codigo}</td>
-                    <td className="px-3 py-2">
-                      <span className={aberto ? "font-semibold text-slate-900" : undefined}>
-                        {p.descricao}
-                      </span>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      {p.codigo}
                       {p.controlaSerie ? (
                         <span className="ml-2 rounded bg-teal-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-teal-800">
                           Série
                         </span>
                       ) : null}
+                    </td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={
+                          aberto ? "font-semibold text-slate-900" : undefined
+                        }
+                      >
+                        {p.descricao}
+                      </span>
                       {hist && r && (
                         <p className="mt-0.5 text-xs text-slate-500">
                           {r.fornecedores > 0 && (
-                            <span>
-                              {r.fornecedores} forn.
-                            </span>
+                            <span>{r.fornecedores} forn.</span>
                           )}
                           {r.fornecedores > 0 && r.clientes > 0 && " · "}
-                          {r.clientes > 0 && (
-                            <span>
-                              {r.clientes} cli.
-                            </span>
-                          )}
+                          {r.clientes > 0 && <span>{r.clientes} cli.</span>}
                         </p>
                       )}
                     </td>
@@ -653,20 +320,21 @@ export default function ProdutosPage() {
                     <td className="px-3 py-2">{p.estoqueMaximo || "—"}</td>
                     <td className="px-3 py-2">{p.ativo ? "Ativo" : "Inativo"}</td>
                     <td className="space-x-3 whitespace-nowrap px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => startEdit(p)}
+                      <Link
+                        href={`/cadastros/produtos/${p.id}`}
                         className="text-brand hover:underline"
                       >
-                        Editar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => toggleAtivo(p)}
-                        className="text-brand hover:underline"
-                      >
-                        {p.ativo ? "Desativar" : "Ativar"}
-                      </button>
+                        {canEdit ? "Editar" : "Ver"}
+                      </Link>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => toggleAtivo(p)}
+                          className="text-brand hover:underline"
+                        >
+                          {p.ativo ? "Desativar" : "Ativar"}
+                        </button>
+                      )}
                     </td>
                   </tr>
                   {aberto && (

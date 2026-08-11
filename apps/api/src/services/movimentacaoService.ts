@@ -8,6 +8,7 @@ import {
   isAcimaMaximo,
 } from "@teep/shared";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "crypto";
 import { prisma } from "../lib/prisma";
 import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
@@ -16,13 +17,14 @@ import {
   notificarLimiaresEstoque,
   type AlertaUi,
 } from "./alertaService";
-import { aplicarSaldo } from "./estoqueService";
+import { aplicarSaldo, qtyReservadaTransferenciaPendente } from "./estoqueService";
 import {
   criarTransferencia,
   criarTransferenciaImediata,
   criarTransferenciaPendenteAprovacao,
 } from "./transferenciaService";
 import { resolveOperadorFilialId } from "../lib/filialScope";
+import { isValidRmaStoredPath } from "../lib/rmaUploads";
 import { isValidUploadPath } from "../lib/uploads";
 import {
   agendarAlertasRetorno,
@@ -43,8 +45,15 @@ import {
   aplicarSeriesSaida,
   normalizarSeries,
   validarSeriesEntradaNovas,
+  validarSeriesRetorno,
   validarSeriesSaidaDisponiveis,
 } from "./serieService";
+import {
+  aplicarConsumoMontagem,
+  assertSaldoComponentes,
+  carregarBomProduto,
+  linhasConsumoMontagem,
+} from "./montagemService";
 
 const movInclude = {
   produto: true,
@@ -156,6 +165,8 @@ export async function criarMovimentacao(
     tipoId: string;
     filialId?: string;
     filialDestinoId?: string | null;
+    /** Matéria-prima quando tipo.baixaPorArvore */
+    filialComponentesId?: string | null;
     clienteId?: string | null;
     quantidade?: number;
     series?: string[];
@@ -168,6 +179,10 @@ export async function criarMovimentacao(
     itens?: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     alertaEmails?: string[];
     movimentacaoOrigemId?: string | null;
+    /** Agrupa linhas multi-SKU (uso interno / resposta) */
+    grupoLancamentoId?: string | null;
+    /** Entrada: reativa série SAIDO (ex. equipamento que volta em RMA) */
+    permitirReativarSaido?: boolean;
     anexos?: Array<{
       tipo: "NOTA_FISCAL" | "TERMO_COMODATO" | "OUTRO";
       arquivo: string;
@@ -204,6 +219,12 @@ export async function criarMovimentacao(
         "Informe creditoDestino: IMEDIATO ou AGUARDAR_RECEBIMENTO"
       );
     }
+    if (tipo.baixaPorArvore && tipo.requerAprovacao) {
+      throw new AppError(
+        400,
+        "Transferência com baixa pela árvore não pode exigir aprovação — desative a aprovação no tipo"
+      );
+    }
     let itens = input.itens;
     if (!itens?.length) {
       if (!input.produtoId || !input.quantidade) {
@@ -222,10 +243,13 @@ export async function criarMovimentacao(
       destinoFilialId: input.filialDestinoId,
       guiaTransporte: input.guiaTransporte?.trim() || null,
       itens,
+      baixaPorArvore: tipo.baixaPorArvore === true,
     };
 
     const precisaAprovacao =
-      user.perfil === "OPERADOR" && tipo.requerAprovacao === true;
+      user.perfil === "OPERADOR" &&
+      tipo.requerAprovacao === true &&
+      !tipo.baixaPorArvore;
 
     const result = precisaAprovacao
       ? await criarTransferenciaPendenteAprovacao(
@@ -257,6 +281,189 @@ export async function criarMovimentacao(
       temDivergencia: result.temDivergencia ?? false,
     };
   }
+
+  // Normaliza itens[] (ENTRADA/SAIDA) — 1 SKU legado ou N no mesmo grupo
+  let itensLancamento = input.itens;
+  if (!itensLancamento?.length) {
+    if (!input.produtoId || input.quantidade == null) {
+      throw new AppError(400, "produtoId e quantidade obrigatórios");
+    }
+    itensLancamento = [
+      {
+        produtoId: input.produtoId,
+        quantidade: input.quantidade,
+        series: input.series,
+      },
+    ];
+  } else {
+    const ids = itensLancamento.map((i) => i.produtoId);
+    if (new Set(ids).size !== ids.length) {
+      throw new AppError(400, "Não repita o mesmo produto nos itens");
+    }
+  }
+
+  if (itensLancamento.length > 1) {
+    if (tipo.ehRetornoDeId) {
+      throw new AppError(
+        400,
+        "Retorno vinculado aceita apenas um produto por lançamento"
+      );
+    }
+    if (tipo.baixaPorArvore) {
+      throw new AppError(
+        400,
+        "Baixa pela árvore aceita apenas um produto por lançamento nesta versão"
+      );
+    }
+
+    let filialIdGrupo = input.filialId;
+    if (user.perfil === "OPERADOR") {
+      filialIdGrupo = resolveOperadorFilialId(user, input.filialId);
+    }
+    if (!filialIdGrupo) {
+      throw new AppError(400, "Estoque (filial) obrigatório");
+    }
+
+    // Pré-valida produtos/séries/saldo antes de gravar qualquer linha
+    // (as criações abaixo ainda são por item — falha no meio deixa parcial).
+    await prisma.$transaction(async (tx) => {
+      for (const item of itensLancamento) {
+        const prod = await tx.produto.findFirst({
+          where: { id: item.produtoId, ativo: true },
+        });
+        if (!prod) {
+          throw new AppError(400, `Produto inválido: ${item.produtoId}`);
+        }
+        const qtdItem = Number(item.quantidade);
+        if (!Number.isFinite(qtdItem) || qtdItem <= 0) {
+          throw new AppError(
+            400,
+            `Produto ${prod.codigo}: quantidade inválida`
+          );
+        }
+        if (prod.controlaSerie) {
+          const seriesNorm = normalizarSeries(item.series);
+          if (seriesNorm.length === 0) {
+            throw new AppError(
+              400,
+              `Produto ${prod.codigo} exige números de série`
+            );
+          }
+          if (seriesNorm.length !== qtdItem) {
+            throw new AppError(
+              400,
+              `Produto ${prod.codigo}: informe ${qtdItem} série(s)`
+            );
+          }
+          if (tipo.operacao === "SAIDA") {
+            await validarSeriesSaidaDisponiveis(tx, {
+              produtoId: item.produtoId,
+              filialId: filialIdGrupo,
+              series: seriesNorm,
+              quantidade: seriesNorm.length,
+            });
+          } else if (tipo.operacao === "ENTRADA") {
+            await validarSeriesEntradaNovas(tx, {
+              produtoId: item.produtoId,
+              series: seriesNorm,
+              quantidade: seriesNorm.length,
+              permitirReativarSaido: input.permitirReativarSaido === true,
+            });
+          }
+        } else if (tipo.operacao === "SAIDA") {
+          const estoque = await tx.estoque.findUnique({
+            where: {
+              uniq_produto_filial: {
+                produtoId: item.produtoId,
+                filialId: filialIdGrupo,
+              },
+            },
+          });
+          const saldo = Number(estoque?.saldoAtual ?? 0);
+          const reservada = await qtyReservadaTransferenciaPendente(
+            tx,
+            item.produtoId,
+            filialIdGrupo
+          );
+          const disponivel = saldo - reservada;
+          if (qtdItem > disponivel + 1e-9) {
+            throw new AppError(
+              400,
+              `Produto ${prod.codigo}: saldo insuficiente (disponível: ${disponivel})`
+            );
+          }
+        }
+      }
+    });
+
+    const grupoId = input.grupoLancamentoId || randomUUID();
+    const resultados: Array<{
+      movimentacao?: { id?: string; status?: string } | null;
+      alertas?: AlertaUi[];
+      alertaEstoqueMinimo?: boolean;
+      alertaEstoqueMaximo?: boolean;
+    }> = [];
+    const alertasAll: AlertaUi[] = [];
+    let alertaMin = false;
+    let alertaMax = false;
+
+    for (let i = 0; i < itensLancamento.length; i++) {
+      const item = itensLancamento[i]!;
+      try {
+        const r = await criarMovimentacao(user, {
+          ...input,
+          produtoId: item.produtoId,
+          quantidade: item.quantidade,
+          series: item.series,
+          itens: undefined,
+          grupoLancamentoId: grupoId,
+          // NF/termo: só na 1ª linha evita anexos duplicados idênticos
+          anexos: i === 0 ? input.anexos : [],
+          notaFiscalArquivo: i === 0 ? input.notaFiscalArquivo : null,
+        });
+        resultados.push(r);
+        if ("alertas" in r && Array.isArray(r.alertas)) {
+          alertasAll.push(...(r.alertas as AlertaUi[]));
+        }
+        if ("alertaEstoqueMinimo" in r && r.alertaEstoqueMinimo) alertaMin = true;
+        if ("alertaEstoqueMaximo" in r && r.alertaEstoqueMaximo) alertaMax = true;
+      } catch (e) {
+        const msg = e instanceof AppError ? e.message : "erro ao gravar item";
+        const gravadas = resultados.length;
+        if (gravadas > 0) {
+          throw new AppError(
+            409,
+            `Falha no item ${i + 1}: ${msg}. Já foram gravadas ${gravadas} linha(s) do grupo ${grupoId} — confira em Movimentações.`
+          );
+        }
+        throw e;
+      }
+    }
+
+    const movs = resultados
+      .map((r) => r.movimentacao ?? null)
+      .filter(Boolean);
+
+    return {
+      fluxo: "LANCAMENTO_GRUPO" as const,
+      grupoLancamentoId: grupoId,
+      movimentacoes: movs,
+      /** Compat UI — primeira linha */
+      movimentacao: movs[0],
+      alertaEstoqueMinimo: alertaMin,
+      alertaEstoqueMaximo: alertaMax,
+      alertas: alertasAll,
+    };
+  }
+
+  // Single SKU
+  input = {
+    ...input,
+    produtoId: itensLancamento[0]!.produtoId,
+    quantidade: itensLancamento[0]!.quantidade,
+    series: itensLancamento[0]!.series,
+    itens: undefined,
+  };
 
   if (!input.produtoId || input.quantidade == null) {
     throw new AppError(400, "produtoId e quantidade obrigatórios");
@@ -308,7 +515,8 @@ export async function criarMovimentacao(
     if (
       notaFiscalArquivo &&
       !isValidUploadPath(notaFiscalArquivo, "nota-fiscal", user.id) &&
-      !isValidUploadPath(notaFiscalArquivo, "documento", user.id)
+      !isValidUploadPath(notaFiscalArquivo, "documento", user.id) &&
+      !isValidRmaStoredPath(notaFiscalArquivo, { userId: user.id })
     ) {
       throw new AppError(400, "Arquivo de nota fiscal inválido");
     }
@@ -318,7 +526,8 @@ export async function criarMovimentacao(
   for (const a of anexos) {
     const okDoc = isValidUploadPath(a.arquivo, "documento", user.id);
     const okNf = isValidUploadPath(a.arquivo, "nota-fiscal", user.id);
-    if (!okDoc && !okNf) {
+    const okRma = isValidRmaStoredPath(a.arquivo, { userId: user.id });
+    if (!okDoc && !okNf && !okRma) {
       throw new AppError(400, `Anexo inválido (${a.tipo})`);
     }
   }
@@ -344,7 +553,8 @@ export async function criarMovimentacao(
       throw new AppError(400, "Anexe o arquivo da NF de retorno");
     }
     if (
-      !isValidUploadPath(input.notaFiscalArquivo, "nota-fiscal", user.id)
+      !isValidUploadPath(input.notaFiscalArquivo, "nota-fiscal", user.id) &&
+      !isValidRmaStoredPath(input.notaFiscalArquivo, { userId: user.id })
     ) {
       throw new AppError(400, "Arquivo de nota fiscal inválido");
     }
@@ -361,6 +571,12 @@ export async function criarMovimentacao(
 
   const pendente =
     user.perfil === "OPERADOR" && tipo.requerAprovacao === true;
+  if (tipo.baixaPorArvore && pendente) {
+    throw new AppError(
+      400,
+      "Baixa pela árvore não pode ficar pendente de aprovação — desative a aprovação no tipo ou use perfil Gerente/Admin"
+    );
+  }
   const status = pendente ? "PENDENTE" : "CONCLUIDO";
   const operacao = tipo.operacao as "ENTRADA" | "SAIDA";
 
@@ -376,6 +592,47 @@ export async function criarMovimentacao(
     quantidade = seriesNorm.length;
   } else {
     seriesNorm = [];
+  }
+
+  /** Componentes saem do mesmo estoque da SAIDA. */
+  let filialComponentesId: string | null = null;
+  if (tipo.baixaPorArvore) {
+    if (operacao !== "SAIDA") {
+      throw new AppError(
+        400,
+        "Baixa pela árvore só se aplica a tipos de Saída ou Transferência"
+      );
+    }
+    if (tipo.ehRetornoDeId) {
+      throw new AppError(
+        400,
+        "Tipo com baixa pela árvore não pode ser retorno vinculado"
+      );
+    }
+    if (produto.controlaSerie) {
+      throw new AppError(
+        400,
+        "Produto com série ainda não pode usar baixa pela árvore — use um produto sem série"
+      );
+    }
+    const bom = await carregarBomProduto(prisma, input.produtoId!);
+    const consumo = linhasConsumoMontagem(bom, quantidade);
+    if (consumo.length === 0) {
+      throw new AppError(
+        400,
+        "Árvore sem componentes que baixem estoque (só fantasmas). Inclua ao menos um componente não-fantasma."
+      );
+    }
+    filialComponentesId = filialId;
+    await assertSaldoComponentes(prisma, {
+      filialComponentesId,
+      consumo,
+    });
+  } else if (input.filialComponentesId) {
+    throw new AppError(
+      400,
+      "filialComponentesId não é aceito neste tipo de lançamento"
+    );
   }
 
   const result = await prisma.$transaction(async (tx) => {
@@ -427,12 +684,12 @@ export async function criarMovimentacao(
           quantidade,
         });
       } else if (movimentacaoOrigemId) {
-        // retorno: valida na aprovação / na aplicação
-        await validarSeriesEntradaNovas(tx, {
+        await validarSeriesRetorno(tx, {
           produtoId: input.produtoId!,
           series: seriesNorm,
           quantidade,
-          permitirReativarSaido: true,
+          movimentacaoOrigemId,
+          clienteId: input.clienteId,
         });
       } else {
         await validarSeriesEntradaNovas(tx, {
@@ -444,7 +701,7 @@ export async function criarMovimentacao(
       }
     }
 
-    if (status === "CONCLUIDO") {
+    if (status === "CONCLUIDO" && !(tipo.baixaPorArvore && operacao === "SAIDA")) {
       const saldo = await aplicarEfeitoSaldo(tx, {
         produtoId: input.produtoId!,
         filialId,
@@ -465,6 +722,7 @@ export async function criarMovimentacao(
         clienteId: input.clienteId || null,
         filialId,
         filialDestinoId: null,
+        filialComponentesId,
         quantidade,
         precoUnitario: preco,
         operacao,
@@ -477,6 +735,7 @@ export async function criarMovimentacao(
             ? (seriesNorm as Prisma.InputJsonValue)
             : ([] as Prisma.InputJsonValue),
         movimentacaoOrigemId,
+        grupoLancamentoId: input.grupoLancamentoId || null,
         status,
         anexos:
           anexos.length > 0
@@ -510,7 +769,7 @@ export async function criarMovimentacao(
           filialId,
           series: seriesNorm,
           quantidade,
-          permitirReativarSaido: false,
+          permitirReativarSaido: input.permitirReativarSaido === true,
         });
       } else {
         await aplicarSeriesSaida(tx, {
@@ -521,6 +780,27 @@ export async function criarMovimentacao(
           quantidade,
           clienteId: input.clienteId,
         });
+      }
+    }
+
+    if (
+      tipo.baixaPorArvore &&
+      status === "CONCLUIDO" &&
+      operacao === "SAIDA"
+    ) {
+      if (filialComponentesId) {
+        await aplicarConsumoMontagem(tx, {
+          montagemMovimentacaoId: mov.id,
+          usuarioId: user.id,
+          filialComponentesId,
+          quantidadeMontada: quantidade,
+          produtoPaiId: input.produtoId!,
+          observacao: input.observacao,
+        });
+      } else {
+        // BOM só fantasma: valida árvore mesmo sem consumo
+        const bom = await carregarBomProduto(tx, input.produtoId!);
+        linhasConsumoMontagem(bom, quantidade);
       }
     }
 
@@ -627,13 +907,16 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
       }
     }
 
-    const saldo = await aplicarEfeitoSaldo(tx, mov);
+    const saidaArvore = mov.tipo.baixaPorArvore && mov.operacao === "SAIDA";
+    const saldo = saidaArvore
+      ? { abaixoMinimo: false, acimaMaximo: false, saldoAtual: 0 }
+      : await aplicarEfeitoSaldo(tx, mov);
 
     const seriesPend = Array.isArray(mov.seriesInformadas)
       ? (mov.seriesInformadas as string[])
       : [];
 
-    if (mov.produto.controlaSerie) {
+    if (mov.produto.controlaSerie && !saidaArvore) {
       const qtd = Number(mov.quantidade);
       if (mov.movimentacaoOrigemId) {
         await aplicarSeriesRetorno(tx, {
@@ -665,6 +948,17 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
           excludeMovimentacaoId: mov.id,
         });
       }
+    }
+
+    if (saidaArvore) {
+      await aplicarConsumoMontagem(tx, {
+        montagemMovimentacaoId: mov.id,
+        usuarioId: user.id,
+        filialComponentesId: mov.filialId,
+        quantidadeMontada: Number(mov.quantidade),
+        produtoPaiId: mov.produtoId,
+        observacao: mov.observacao,
+      });
     }
 
     const updated = await tx.movimentacao.update({
@@ -766,9 +1060,12 @@ export async function rejeitarMovimentacao(
 export async function estornarMovimentacao(
   user: AuthUser,
   id: string,
-  observacao?: string | null
+  observacao?: string | null,
+  opts?: { bypassPerfil?: boolean }
 ) {
-  requireGerenteOuAdmin(user);
+  if (!opts?.bypassPerfil) {
+    requireGerenteOuAdmin(user);
+  }
 
   const tipoEstorno = await prisma.tipoMovimentacao.findUnique({
     where: { nome: TIPO_ESTORNO },
@@ -782,6 +1079,7 @@ export async function estornarMovimentacao(
       include: {
         estornos: true,
         produto: true,
+        tipo: true,
       },
     });
     if (!mov) throw new AppError(404, "Movimentação não encontrada");
@@ -794,6 +1092,13 @@ export async function estornarMovimentacao(
     }
     if (mov.estornos.length > 0) {
       throw new AppError(400, "Movimentação já possui estorno");
+    }
+
+    if (mov.movimentacaoMontagemId) {
+      throw new AppError(
+        400,
+        "Esta baixa de componente faz parte de uma árvore. Estorne a saída ou cancele a transferência que a originou."
+      );
     }
 
     // D28 + F8: movimentos de transferência só revertem pelo fluxo da carga (cancelar)
@@ -817,7 +1122,47 @@ export async function estornarMovimentacao(
       await tx.$queryRaw`SELECT id FROM movimentacoes WHERE id = ${mov.movimentacaoOrigemId}::uuid FOR UPDATE`;
     }
 
-    const saldo = await aplicarEfeitoSaldo(tx, mov, true);
+    // Baixa por árvore: primeiro devolve componentes ao estoque de origem
+    const consumos = await tx.movimentacao.findMany({
+      where: {
+        movimentacaoMontagemId: mov.id,
+        status: "CONCLUIDO",
+        estornoDeId: null,
+      },
+      include: { produto: true, estornos: true },
+    });
+    for (const cons of consumos) {
+      if (cons.estornos.length > 0) continue;
+      await aplicarEfeitoSaldo(tx, cons, true);
+      await tx.movimentacao.create({
+        data: {
+          produtoId: cons.produtoId,
+          tipoId: tipoEstorno.id,
+          usuarioId: user.id,
+          filialId: cons.filialId,
+          quantidade: cons.quantidade,
+          precoUnitario: cons.precoUnitario,
+          operacao: "ENTRADA",
+          status: "CONCLUIDO",
+          estornoDeId: cons.id,
+          movimentacaoMontagemId: mov.id,
+          observacao: `Estorno — devolve componente da árvore ${cons.id.slice(0, 8)}`,
+        },
+      });
+      await tx.movimentacao.update({
+        where: { id: cons.id },
+        data: { status: "ESTORNADO" },
+      });
+    }
+
+    // SAIDA com árvore não debitou o pai — só reverte componentes (acima).
+    // Usa a flag do tipo (não a qtd de consumos): BOM só-fantasma também não debita o pai.
+    const saidaSoArvore =
+      mov.operacao === "SAIDA" && mov.tipo.baixaPorArvore === true;
+
+    const saldo = saidaSoArvore
+      ? { abaixoMinimo: false, acimaMaximo: false, saldoAtual: 0 }
+      : await aplicarEfeitoSaldo(tx, mov, true);
 
     let operacaoEstorno: string;
     if (mov.operacao === "TRANSFERENCIA") {
@@ -847,7 +1192,11 @@ export async function estornarMovimentacao(
       include: movInclude,
     });
 
-    if (mov.produto.controlaSerie && (mov.operacao === "ENTRADA" || mov.operacao === "SAIDA")) {
+    if (
+      !saidaSoArvore &&
+      mov.produto.controlaSerie &&
+      (mov.operacao === "ENTRADA" || mov.operacao === "SAIDA")
+    ) {
       await aplicarSeriesEstorno(tx, {
         movimentacaoOriginalId: mov.id,
         estornoId: estorno.id,
@@ -1159,28 +1508,28 @@ export async function listarSaidasAbertas(opts: {
       ? { in: opts.filialIdsPermitidas }
       : undefined);
 
-  const rows = await prisma.movimentacao.findMany({
-    where: {
-      tipoId: opts.tipoOrigemId,
-      clienteId: opts.clienteId,
-      status: "CONCLUIDO",
-      operacao: "SAIDA",
-      ...(filialFilter ? { filialId: filialFilter } : {}),
-    },
-    include: {
-      produto: { select: { id: true, codigo: true, descricao: true } },
-      filial: { select: { id: true, sigla: true, nome: true } },
-      tipo: { select: { id: true, nome: true } },
-      cliente: { select: { id: true, nome: true } },
-    },
-    orderBy: { dataMovimento: "desc" },
-    take: 100,
-  });
+  const where = {
+    tipoId: opts.tipoOrigemId,
+    clienteId: opts.clienteId,
+    status: "CONCLUIDO" as const,
+    operacao: "SAIDA" as const,
+    ...(filialFilter ? { filialId: filialFilter } : {}),
+  };
 
-  const ocupadaMap = await mapaQtyOcupadaPorSaidas(
-    prisma,
-    rows.map((r) => r.id)
-  );
+  const include = {
+    produto: {
+      select: {
+        id: true,
+        codigo: true,
+        descricao: true,
+        controlaSerie: true,
+        precoUnitario: true,
+      },
+    },
+    filial: { select: { id: true, sigla: true, nome: true } },
+    tipo: { select: { id: true, nome: true } },
+    cliente: { select: { id: true, nome: true } },
+  };
 
   const abertas: Array<{
     id: string;
@@ -1188,28 +1537,58 @@ export async function listarSaidasAbertas(opts: {
     quantidade: number;
     qtyRestante: number;
     notaFiscalNumero: string | null;
-    produto: (typeof rows)[0]["produto"];
-    filial: (typeof rows)[0]["filial"];
-    tipo: (typeof rows)[0]["tipo"];
-    cliente: (typeof rows)[0]["cliente"];
+    produto: {
+      id: string;
+      codigo: string;
+      descricao: string;
+      controlaSerie: boolean;
+      precoUnitario: Prisma.Decimal;
+    };
+    filial: { id: string; sigla: string; nome: string };
+    tipo: { id: string; nome: string };
+    cliente: { id: string; nome: string } | null;
   }> = [];
 
-  for (const r of rows) {
-    const qty = Number(r.quantidade);
-    const qtyRestante = Math.max(0, qty - (ocupadaMap.get(r.id) || 0));
-    if (qtyRestante <= 1e-9) continue;
-    abertas.push({
-      id: r.id,
-      dataMovimento: r.dataMovimento,
-      quantidade: qty,
-      qtyRestante,
-      notaFiscalNumero: r.notaFiscalNumero,
-      produto: r.produto,
-      filial: r.filial,
-      tipo: r.tipo,
-      cliente: r.cliente,
+  const PAGE = 200;
+  const MAX_ABERTAS = 100;
+  const MAX_SCAN = 2000;
+  let skip = 0;
+
+  while (abertas.length < MAX_ABERTAS && skip < MAX_SCAN) {
+    const rows = await prisma.movimentacao.findMany({
+      where,
+      include,
+      orderBy: { dataMovimento: "desc" },
+      take: PAGE,
+      skip,
     });
-    if (abertas.length >= 50) break;
+    if (rows.length === 0) break;
+
+    const ocupadaMap = await mapaQtyOcupadaPorSaidas(
+      prisma,
+      rows.map((r) => r.id)
+    );
+
+    for (const r of rows) {
+      const qty = Number(r.quantidade);
+      const qtyRestante = Math.max(0, qty - (ocupadaMap.get(r.id) || 0));
+      if (qtyRestante <= 1e-9) continue;
+      abertas.push({
+        id: r.id,
+        dataMovimento: r.dataMovimento,
+        quantidade: qty,
+        qtyRestante,
+        notaFiscalNumero: r.notaFiscalNumero,
+        produto: r.produto,
+        filial: r.filial,
+        tipo: r.tipo,
+        cliente: r.cliente,
+      });
+      if (abertas.length >= MAX_ABERTAS) break;
+    }
+
+    skip += rows.length;
+    if (rows.length < PAGE) break;
   }
 
   return abertas;

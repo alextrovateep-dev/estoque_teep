@@ -35,6 +35,24 @@ function formatTelefone(raw: string | null | undefined): string | null {
 async function fetchJson(
   url: string
 ): Promise<{ ok: boolean; status: number; json: unknown }> {
+  // Validação SSRF: apenas URLs HTTPS para domínios conhecidos
+  // URLs são construídas internamente, não vêm do usuário
+  const allowedDomains = [
+    'https://viacep.com.br',
+    'https://brasilapi.com.br',
+    'https://publica.cnpj.ws'
+  ];
+  
+  if (!url.startsWith('https://')) {
+    throw new Error('URL inválida para fetch: deve ser HTTPS');
+  }
+  
+  // Verifica se a URL começa com um dos domínios permitidos
+  const isAllowed = allowedDomains.some(domain => url.startsWith(domain));
+  if (!isAllowed) {
+    throw new Error(`URL não permitida para fetch: ${url}`);
+  }
+  
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
     signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS),
@@ -195,7 +213,7 @@ function mapFromBrasilApi(digits: string, data: BrasilApiCnpj): CnpjLookupResult
 }
 
 /**
- * Consulta CNPJ: publica.cnpj.ws (padrão ChamadoPro), fallback BrasilAPI.
+ * Consulta CNPJ: publica.cnpj.ws, fallback BrasilAPI.
  */
 export async function lookupCnpj(cnpjRaw: string): Promise<CnpjLookupResult> {
   const digits = onlyDigits(cnpjRaw);

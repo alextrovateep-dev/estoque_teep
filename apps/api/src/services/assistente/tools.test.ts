@@ -6,7 +6,8 @@ import {
   redactActionLinkForLlm,
   type AssistenteActionLink,
 } from "./orchestrator";
-import { buildSystemPrompt, janelaHojeSaoPaulo } from "./systemPrompt";
+import { buildSystemPrompt, janelaHojeSaoPaulo, janelaMesSaoPaulo } from "./systemPrompt";
+import { parseAssistenteDateBound } from "./tools";
 import type { AuthUser } from "../../middleware/auth";
 
 const operador: AuthUser = {
@@ -186,6 +187,43 @@ describe("assistente system prompt transferência", () => {
     assert.match(p, /Janela de “hoje”/);
   });
 
+  it("pede tom conversacional e proíbe fechamento de call-center", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: { lancamentos: true, assistente: true, dashboard: true },
+    });
+    assert.match(p, /Tom e estilo/);
+    assert.match(p, /estou à disposição/);
+    assert.match(p, /Filial no TEEP = estoque/);
+  });
+
+  it("instrui ranking de saídas com periodo e proíbe somenteAbertos", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: { lancamentos: true, assistente: true, dashboard: true },
+    });
+    assert.match(p, /rank_product_movements/);
+    assert.match(p, /periodo=mes_atual/);
+    assert.match(p, /Janela “este mês”/);
+    assert.match(p, /PROIBIDO usar somenteAbertos=true/);
+    assert.match(p, /list_stock_movements NÃO substitui o ranking/);
+    assert.match(p, /empatadosNoTopo/);
+    assert.doesNotMatch(
+      p,
+      /ou list_stock_movements com operacao=SAIDA/
+    );
+  });
+
+  it("instrui papel fornecedor em compra vs cliente em venda", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: { lancamentos: true, assistente: true, dashboard: true },
+    });
+    assert.match(p, /PAPEL DO PARCEIRO/);
+    assert.match(p, /Compra \/ ENTRADA/);
+    assert.match(p, /PROIBIDO dizer “cliente” só porque/);
+  });
+
   it("janelaHojeSaoPaulo cobre o dia civil SP em ISO", () => {
     const j = janelaHojeSaoPaulo(new Date("2026-07-30T20:00:00.000Z"));
     assert.equal(j.dataCivil, "2026-07-30");
@@ -195,5 +233,30 @@ describe("assistente system prompt transferência", () => {
       new Date("2026-07-30T23:59:59.999-03:00").toISOString()
     );
     assert.ok(j.deIso < j.ateIso);
+  });
+
+  it("janelaMesSaoPaulo cobre agosto/julho 2026", () => {
+    const agora = new Date("2026-08-10T18:00:00.000Z");
+    const atual = janelaMesSaoPaulo(0, agora);
+    assert.equal(atual.label, "08/2026");
+    assert.equal(atual.deIso, new Date("2026-08-01T00:00:00-03:00").toISOString());
+    const passado = janelaMesSaoPaulo(-1, agora);
+    assert.equal(passado.label, "07/2026");
+    assert.ok(passado.ateIso < atual.deIso);
+  });
+});
+
+describe("assistente parse de datas", () => {
+  it("rejeita dd/mm/aaaa", () => {
+    const r = parseAssistenteDateBound("01/08/2026", "start");
+    assert.equal(r.ok, false);
+  });
+
+  it("aceita YYYY-MM-DD como dia civil SP", () => {
+    const r = parseAssistenteDateBound("2026-08-01", "start");
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.date.toISOString(), new Date("2026-08-01T00:00:00-03:00").toISOString());
+    }
   });
 });

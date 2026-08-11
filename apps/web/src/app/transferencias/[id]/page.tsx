@@ -4,7 +4,7 @@ import { api, getStoredUser, User, userFilialIds } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type ItemSerie = {
   id: string;
@@ -45,6 +45,29 @@ const STATUS_LABEL: Record<string, string> = {
   REJEITADO: "Rejeitado",
 };
 
+function formatQty(n: number) {
+  return n.toLocaleString("pt-BR", { maximumFractionDigits: 4 });
+}
+
+function applyFormState(t: Transferencia) {
+  const r: Record<string, string> = {};
+  const sr: Record<string, string[]> = {};
+  for (const i of t.itens) {
+    r[i.id] = String(i.qtdRecebida ?? i.qtdEnviada);
+    if (i.produto.controlaSerie) {
+      // Na conferência, inicia com todas marcadas; no pós-conferência, usa recebido.
+      if (t.status === "EM_TRANSITO") {
+        sr[i.id] = (i.series || []).map((s) => s.unidadeSerie.numeroSerie);
+      } else {
+        sr[i.id] = (i.series || [])
+          .filter((s) => s.recebido === true)
+          .map((s) => s.unidadeSerie.numeroSerie);
+      }
+    }
+  }
+  return { recebidas: r, seriesRec: sr };
+}
+
 export default function TransferenciaDetalhePage() {
   const params = useParams();
   const id = String(params.id);
@@ -56,25 +79,38 @@ export default function TransferenciaDetalhePage() {
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(true);
+  const submitting = useRef(false);
 
   async function load() {
     const t = await api<Transferencia>(`/transferencias/${id}`);
     setData(t);
-    const r: Record<string, string> = {};
-    const sr: Record<string, string[]> = {};
-    for (const i of t.itens) {
-      r[i.id] = String(i.qtdRecebida ?? i.qtdEnviada);
-      if (i.produto.controlaSerie) {
-        sr[i.id] = (i.series || []).map((s) => s.unidadeSerie.numeroSerie);
-      }
-    }
-    setRecebidas(r);
-    setSeriesRec(sr);
+    const form = applyFormState(t);
+    setRecebidas(form.recebidas);
+    setSeriesRec(form.seriesRec);
+    setJustifs({});
+    return t;
   }
 
   useEffect(() => {
     setUser(getStoredUser());
-    load().catch((e) => setError(e.message));
+    let cancelled = false;
+    setPageLoading(true);
+    setError("");
+    load()
+      .catch((e) => {
+        if (!cancelled) {
+          setError(
+            e instanceof Error ? e.message : "Falha ao carregar a carga"
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const canConferir =
@@ -82,6 +118,11 @@ export default function TransferenciaDetalhePage() {
     user &&
     (user.perfil !== "OPERADOR" ||
       userFilialIds(user).includes(data.destinoFilialId));
+
+  const bloqueadoPorFilial =
+    data?.status === "EM_TRANSITO" &&
+    user?.perfil === "OPERADOR" &&
+    !userFilialIds(user).includes(data.destinoFilialId);
 
   const canCancel =
     (data?.status === "EM_TRANSITO" ||
@@ -102,11 +143,38 @@ export default function TransferenciaDetalhePage() {
 
   async function onConferir(e: FormEvent) {
     e.preventDefault();
-    if (!data) return;
+    if (!data || loading || submitting.current) return;
+    submitting.current = true;
     setLoading(true);
     setError("");
     setMsg("");
     try {
+      for (const i of data.itens) {
+        const enviada = Number(i.qtdEnviada);
+        const controla = Boolean(i.produto.controlaSerie);
+        const qtdRecebida = controla
+          ? (seriesRec[i.id] || []).length
+          : Number(recebidas[i.id]);
+        if (!Number.isFinite(qtdRecebida) || qtdRecebida < 0) {
+          setError(`Quantidade inválida em ${i.produto.codigo}`);
+          return;
+        }
+        if (qtdRecebida > enviada + 1e-9) {
+          setError(
+            `Recebido não pode ser maior que enviado (${i.produto.codigo})`
+          );
+          return;
+        }
+        const divergiu =
+          Math.round(qtdRecebida * 10000) !== Math.round(enviada * 10000);
+        if (divergiu && !justifs[i.id]?.trim()) {
+          setError(
+            `Informe a justificativa da divergência em ${i.produto.codigo}`
+          );
+          return;
+        }
+      }
+
       const itens = data.itens.map((i) => {
         const controla = Boolean(i.produto.controlaSerie);
         const seriesRecebidas = controla ? seriesRec[i.id] || [] : undefined;
@@ -133,24 +201,31 @@ export default function TransferenciaDetalhePage() {
         body: JSON.stringify({ itens }),
       });
       setData(result.transferencia);
+      const form = applyFormState(result.transferencia);
+      setRecebidas(form.recebidas);
+      setSeriesRec(form.seriesRec);
+      setJustifs({});
       const extras = result.alertas?.map((a) => a.mensagem).join(" · ");
       setMsg(
         (result.temDivergencia
-          ? "Conferência parcial registrada (com divergência)."
+          ? "Conferência parcial registrada — qty não recebida voltou à origem."
           : "Conferência concluída — carga recebida.") +
           (extras ? ` · ${extras}` : "")
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
+      setError(err instanceof Error ? err.message : "Erro na conferência");
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   }
 
   async function onCancelar() {
+    if (loading || submitting.current) return;
     if (!confirm("Cancelar esta transferência e devolver o saldo à origem?")) {
       return;
     }
+    submitting.current = true;
     setLoading(true);
     setError("");
     try {
@@ -161,13 +236,14 @@ export default function TransferenciaDetalhePage() {
       setData(result.transferencia);
       setMsg("Transferência cancelada.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
+      setError(err instanceof Error ? err.message : "Erro ao cancelar");
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   }
 
-  if (!data && !error) {
+  if (pageLoading && !data && !error) {
     return <p className="text-sm text-slate-500">Carregando…</p>;
   }
 
@@ -177,7 +253,7 @@ export default function TransferenciaDetalhePage() {
         <div>
           <Link
             href="/transferencias"
-            className="text-sm text-teal-800 hover:underline"
+            className="text-sm text-brand hover:underline"
           >
             ← Transferências
           </Link>
@@ -203,6 +279,26 @@ export default function TransferenciaDetalhePage() {
         </p>
       )}
 
+      {bloqueadoPorFilial && (
+        <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Somente a filial de destino ({data!.destinoFilial.sigla}) pode
+          confirmar o recebimento desta carga.
+        </p>
+      )}
+
+      {data?.status === "PENDENTE_APROVACAO" && (
+        <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Esta carga ainda aguarda aprovação do Gerente.{" "}
+          {user && userHas(user, "aprovacoes") ? (
+            <Link href="/aprovacoes" className="font-medium underline">
+              Ir para Aprovações
+            </Link>
+          ) : (
+            "Peça ao Gerente para aprovar antes da conferência."
+          )}
+        </p>
+      )}
+
       {data && (
         <div className="space-y-4">
           <div className="rounded-xl border bg-white p-4 text-sm">
@@ -218,6 +314,10 @@ export default function TransferenciaDetalhePage() {
               <span className="text-slate-500">Criado por:</span>{" "}
               {data.criadoPor.nome}
             </p>
+            <p>
+              <span className="text-slate-500">Em:</span>{" "}
+              {new Date(data.criadoEm).toLocaleString("pt-BR")}
+            </p>
             {data.guiaTransporte ? (
               <p>
                 <span className="text-slate-500">Guia:</span>{" "}
@@ -232,7 +332,11 @@ export default function TransferenciaDetalhePage() {
           </div>
 
           {canConferir ? (
-            <form onSubmit={onConferir} className="space-y-4">
+            <form onSubmit={(e) => void onConferir(e)} className="space-y-4">
+              <p className="text-sm text-slate-500">
+                Quantidade não recebida (ou séries não marcadas) volta
+                automaticamente ao estoque de origem.
+              </p>
               {data.itens.map((i) => {
                 const enviada = Number(i.qtdEnviada);
                 const controla = Boolean(i.produto.controlaSerie);
@@ -245,14 +349,14 @@ export default function TransferenciaDetalhePage() {
                 return (
                   <div
                     key={i.id}
-                    className="rounded-xl border bg-white p-4 space-y-3"
+                    className="space-y-3 rounded-xl border bg-white p-4"
                   >
                     <div>
                       <p className="font-medium">
                         {i.produto.codigo} — {i.produto.descricao}
                       </p>
                       <p className="text-sm text-slate-500">
-                        Enviado: {enviada}
+                        Enviado: {formatQty(enviada)}
                         {controla ? " (por série)" : ""}
                       </p>
                     </div>
@@ -262,31 +366,47 @@ export default function TransferenciaDetalhePage() {
                         <p className="text-sm font-medium">
                           Confirmar séries recebidas ({rec}/{enviada})
                         </p>
-                        <ul className="space-y-1">
-                          {(i.series || []).map((s) => {
-                            const num = s.unidadeSerie.numeroSerie;
-                            const checked = (seriesRec[i.id] || []).includes(
-                              num
-                            );
-                            return (
-                              <li key={s.id}>
-                                <label className="flex items-center gap-2 text-sm">
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={(e) =>
-                                      toggleSerie(i.id, num, e.target.checked)
-                                    }
-                                  />
-                                  <span className="font-mono">{num}</span>
-                                </label>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                        <p className="text-xs text-slate-500">
-                          Séries não marcadas voltam automaticamente à origem.
-                        </p>
+                        {(i.series || []).length === 0 ? (
+                          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                            Nenhuma série vinculada a este item na carga. Não é
+                            possível confirmar unidades serializadas — cancele
+                            ou revise o envio.
+                          </p>
+                        ) : (
+                          <>
+                            <ul className="space-y-1">
+                              {(i.series || []).map((s) => {
+                                const num = s.unidadeSerie.numeroSerie;
+                                const checked = (
+                                  seriesRec[i.id] || []
+                                ).includes(num);
+                                return (
+                                  <li key={s.id}>
+                                    <label className="flex items-center gap-2 text-sm">
+                                      <input
+                                        type="checkbox"
+                                        checked={checked}
+                                        disabled={loading}
+                                        onChange={(e) =>
+                                          toggleSerie(
+                                            i.id,
+                                            num,
+                                            e.target.checked
+                                          )
+                                        }
+                                      />
+                                      <span className="font-mono">{num}</span>
+                                    </label>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                            <p className="text-xs text-slate-500">
+                              Séries não marcadas voltam automaticamente à
+                              origem.
+                            </p>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <label className="block text-sm">
@@ -294,8 +414,10 @@ export default function TransferenciaDetalhePage() {
                         <input
                           type="number"
                           min={0}
+                          max={enviada}
                           step="any"
-                          className="mt-1 w-full rounded-lg border px-3 py-2"
+                          disabled={loading}
+                          className="mt-1 w-full rounded-lg border px-3 py-2 disabled:bg-slate-50"
                           value={recebidas[i.id] ?? ""}
                           onChange={(e) =>
                             setRecebidas({
@@ -304,6 +426,10 @@ export default function TransferenciaDetalhePage() {
                             })
                           }
                         />
+                        <span className="mt-1 block text-xs text-slate-500">
+                          Máximo {formatQty(enviada)}. O que faltar volta à
+                          origem.
+                        </span>
                       </label>
                     )}
 
@@ -312,7 +438,8 @@ export default function TransferenciaDetalhePage() {
                         Justificativa da divergência
                         <textarea
                           required
-                          className="mt-1 w-full rounded-lg border px-3 py-2"
+                          disabled={loading}
+                          className="mt-1 w-full rounded-lg border px-3 py-2 disabled:bg-slate-50"
                           rows={2}
                           value={justifs[i.id] || ""}
                           onChange={(e) =>
@@ -330,39 +457,77 @@ export default function TransferenciaDetalhePage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="rounded-lg bg-teal-800 px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
               >
                 {loading ? "Salvando…" : "Confirmar recebimento"}
               </button>
             </form>
           ) : (
-            <div className="rounded-xl border bg-white overflow-x-auto">
+            <div className="overflow-x-auto rounded-xl border bg-white">
               <table className="min-w-full text-sm">
                 <thead className="bg-slate-50 text-left">
                   <tr>
                     <th className="px-3 py-2">Produto</th>
                     <th className="px-3 py-2">Enviado</th>
                     <th className="px-3 py-2">Recebido</th>
-                    <th className="px-3 py-2">Séries</th>
+                    <th className="px-3 py-2">Séries / justificativa</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.itens.map((i) => (
-                    <tr key={i.id} className="border-t">
-                      <td className="px-3 py-2">
-                        {i.produto.codigo} — {i.produto.descricao}
-                      </td>
-                      <td className="px-3 py-2">{String(i.qtdEnviada)}</td>
-                      <td className="px-3 py-2">
-                        {i.qtdRecebida != null ? String(i.qtdRecebida) : "—"}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs">
-                        {(i.series || [])
-                          .map((s) => s.unidadeSerie.numeroSerie)
-                          .join(", ") || "—"}
-                      </td>
-                    </tr>
-                  ))}
+                  {data.itens.map((i) => {
+                    const series = i.series || [];
+                    const ok = series.filter((s) => s.recebido === true);
+                    const nao = series.filter((s) => s.recebido === false);
+                    return (
+                      <tr key={i.id} className="border-t align-top">
+                        <td className="px-3 py-2">
+                          {i.produto.codigo} — {i.produto.descricao}
+                        </td>
+                        <td className="px-3 py-2">
+                          {formatQty(Number(i.qtdEnviada))}
+                        </td>
+                        <td className="px-3 py-2">
+                          {i.qtdRecebida != null
+                            ? formatQty(Number(i.qtdRecebida))
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {series.length > 0 ? (
+                            <div className="space-y-1 font-mono">
+                              {ok.length > 0 && (
+                                <p className="text-emerald-800">
+                                  Recebidas:{" "}
+                                  {ok
+                                    .map((s) => s.unidadeSerie.numeroSerie)
+                                    .join(", ")}
+                                </p>
+                              )}
+                              {nao.length > 0 && (
+                                <p className="text-amber-800">
+                                  Voltaram à origem:{" "}
+                                  {nao
+                                    .map((s) => s.unidadeSerie.numeroSerie)
+                                    .join(", ")}
+                                </p>
+                              )}
+                              {ok.length === 0 &&
+                                nao.length === 0 &&
+                                series
+                                  .map((s) => s.unidadeSerie.numeroSerie)
+                                  .join(", ")}
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                          {i.justificativaDivergencia ? (
+                            <p className="mt-1 text-slate-600">
+                              Justificativa: {i.justificativaDivergencia}
+                            </p>
+                          ) : null}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

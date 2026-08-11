@@ -15,6 +15,22 @@ import {
 import { mapaQtyOcupadaPorSaidas } from "../retornoVinculoHelper";
 import { gerarExportDossieProduto } from "./assistenteExportService";
 import { putAssistenteExport } from "./assistenteExportTokenStore";
+import {
+  exportarSaldosExcel,
+  exportarSaldosPdf,
+} from "../saldosExportService";
+import {
+  exportarProdutosExcel,
+  exportarProdutosPdf,
+} from "../produtosExportService";
+import {
+  exportarArvoreExcel,
+  exportarArvorePdf,
+} from "../arvoreExportService";
+import {
+  janelaHojeSaoPaulo,
+  janelaMesSaoPaulo,
+} from "./systemPrompt";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,6 +42,23 @@ export type ToolContext = {
   /** Overrides de ACL do usuário (já resolvidos ou raw do banco) */
   permissoes?: PermissoesUsuario | Partial<Record<string, boolean>> | null;
 };
+
+/**
+ * Papel do parceiro na movimentação (não o rótulo do cadastro).
+ * Compra/ENTRADA → fornecedor; Venda/SAIDA → cliente; transferência → null.
+ */
+function papelParceiroNaMovimentacao(opts: {
+  operacao: string;
+  tipoNome: string;
+  temParceiro: boolean;
+  temDestinoEstoque?: boolean;
+}): "fornecedor" | "cliente" | null {
+  if (!opts.temParceiro) return null;
+  if (opts.temDestinoEstoque || /transfer/i.test(opts.tipoNome)) return null;
+  if (opts.operacao === "ENTRADA") return "fornecedor";
+  if (opts.operacao === "SAIDA") return "cliente";
+  return null;
+}
 
 function resolveFilialId(
   user: AuthUser,
@@ -74,6 +107,18 @@ const listProductsArgs = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(10),
 });
 
+/** Produtos pai com BOM (árvore de componentes, 1 nível). */
+const listProductTreesArgs = z.object({
+  q: z.string().min(1).max(80).optional().nullable(),
+  limit: z.coerce.number().int().min(1).max(50).optional().default(30),
+  /** true = inclui filhos (qtd, fantasma, preço) de cada pai */
+  incluirComponentes: z.boolean().optional().default(false),
+});
+
+const getProductTreeArgs = z.object({
+  codigoOuNome: z.string().min(1).max(120),
+});
+
 const getProductStockArgs = z.object({
   codigoOuNome: z.string().min(1).max(120),
   filialId: z.string().uuid().optional().nullable(),
@@ -97,6 +142,11 @@ const listMovementsArgs = z.object({
   de: z.string().min(4).max(40).optional().nullable(),
   ate: z.string().min(4).max(40).optional().nullable(),
   limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+  /** Filtra pela operação gravada na movimentação (badge da tela). */
+  operacao: z
+    .enum(["SAIDA", "ENTRADA", "TRANSFERENCIA"])
+    .optional()
+    .nullable(),
   /** comodato | demo | alerta_retorno | retorno | transferencia */
   fluxo: z
     .enum([
@@ -109,10 +159,35 @@ const listMovementsArgs = z.object({
     .optional()
     .nullable(),
   /**
-   * true = só saídas CONCLUIDAS ainda abertas (qty não totalmente retornada)
-   * Use com fluxo comodato/demo/alerta_retorno para “itens em comodato/demo”.
+   * true = só saídas CONCLUIDAS ainda abertas (qty não totalmente retornada).
+   * APENAS para demo/comodato ainda fora — NÃO use para “saídas do mês”.
    */
   somenteAbertos: z.boolean().optional().default(false),
+});
+
+const rankMovementsArgs = z.object({
+  /**
+   * Preferir periodo (datas calculadas no servidor) em vez de de/ate manuais.
+   */
+  periodo: z
+    .enum(["mes_atual", "mes_passado", "hoje", "custom"])
+    .optional()
+    .default("mes_atual"),
+  de: z.string().min(4).max(40).optional().nullable(),
+  ate: z.string().min(4).max(40).optional().nullable(),
+  /**
+   * saida = badge SAÍDA (venda/entrega…; sem transferência nem tipo sistema)
+   * entrada = badge ENT. (compra…; sem transferência recebida)
+   * transferencia = só Transferência Enviada (conta 1× por envio)
+   * qualquer = tudo no período
+   */
+  sentido: z
+    .enum(["saida", "entrada", "transferencia", "qualquer"])
+    .optional()
+    .default("saida"),
+  filialId: z.string().uuid().optional().nullable(),
+  filialSigla: z.string().min(1).max(80).optional().nullable(),
+  limit: z.coerce.number().int().min(1).max(30).optional().default(10),
 });
 
 const balanceArgs = z.object({
@@ -143,6 +218,27 @@ const exportProductReportArgs = z.object({
   codigoOuNome: z.string().min(1).max(120),
   format: z.enum(["pdf", "xlsx"]),
   filialId: z.string().uuid().optional().nullable(),
+});
+
+const exportProdutosReportArgs = z.object({
+  format: z.enum(["pdf", "xlsx"]),
+  q: z.string().min(1).max(80).optional().nullable(),
+  categoriaId: z.string().uuid().optional().nullable(),
+  ativo: z.boolean().optional().nullable(),
+});
+
+const exportSaldosReportArgs = z.object({
+  format: z.enum(["pdf", "xlsx"]),
+  filialId: z.string().uuid().optional().nullable(),
+  q: z.string().min(1).max(80).optional().nullable(),
+  categoriaId: z.string().uuid().optional().nullable(),
+  alerta: z.enum(["min", "max", "qualquer"]).optional().nullable(),
+});
+
+const exportArvoreReportArgs = z.object({
+  format: z.enum(["pdf", "xlsx"]),
+  q: z.string().min(1).max(80).optional().nullable(),
+  codigoOuNome: z.string().min(1).max(120).optional().nullable(),
 });
 
 const prepareTransferArgs = z.object({
@@ -205,6 +301,41 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "list_product_trees",
+    description:
+      "Lista produtos PAI que possuem árvore de componentes (BOM, 1 nível). Use para 'quais itens têm árvore', 'produtos com BOM', 'árvore de produto'. Opcionalmente inclui os componentes (quantidade, fantasma, preço).",
+    parameters: {
+      type: "object",
+      properties: {
+        q: {
+          type: "string",
+          description: "Filtro opcional por código/descrição do produto pai",
+        },
+        limit: { type: "integer", minimum: 1, maximum: 50 },
+        incluirComponentes: {
+          type: "boolean",
+          description:
+            "true = retorna também os filhos de cada árvore (qtd, fantasma, preço)",
+        },
+      },
+    },
+  },
+  {
+    name: "get_product_tree",
+    description:
+      "Detalha a árvore (BOM) de UM produto pai: componentes, quantidade, fantasma e preços. Use para 'componentes do SKU X', 'árvore do produto Y'. Se o produto não tiver árvore, retorna temArvore=false.",
+    parameters: {
+      type: "object",
+      properties: {
+        codigoOuNome: {
+          type: "string",
+          description: "Código ou nome do produto pai",
+        },
+      },
+      required: ["codigoOuNome"],
+    },
+  },
+  {
     name: "search_products",
     description:
       "Busca produtos ativos por código ou descrição (inclui preço de tabela). Use quando o usuário citar um SKU ou nome parcial.",
@@ -236,7 +367,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "list_stock_movements",
     description:
-      "Lista movimentações (máx. 50). CONSULTAR transferência: fluxo=transferencia (+ filialSigla + papelFilial=destino|origem; de/ate = janela de ‘hoje’ do system prompt). Resposta traz contagemEnviadas (use ao contar). NÃO use fluxo=retorno. Comodato/demo: fluxo=comodato|demo|alerta_retorno|retorno; somenteAbertos=true para itens ainda fora.",
+      "Lista movimentações (máx. 50). NÃO use para 'produto com mais saída no mês' — use rank_product_movements. CONSULTAR transferência: fluxo=transferencia. operacao=SAIDA filtra o campo operacao do ledger (inclui Transferência Enviada; NÃO é o badge SAÍDA da tela). NÃO use somenteAbertos para saídas do mês. Datas: ISO ou YYYY-MM-DD — nunca dd/mm/aaaa.",
     parameters: {
       type: "object",
       properties: {
@@ -259,10 +390,19 @@ export const TOOL_DEFINITIONS = [
         de: {
           type: "string",
           description:
-            "ISO início (ex. início do dia SP: 2026-07-30T03:00:00.000Z para 30/07)",
+            "ISO ou YYYY-MM-DD (início). Nunca dd/mm/aaaa. Prefira janelas do system prompt.",
         },
-        ate: { type: "string", description: "ISO fim" },
+        ate: {
+          type: "string",
+          description: "ISO ou YYYY-MM-DD (fim). Nunca dd/mm/aaaa.",
+        },
         limit: { type: "integer", minimum: 1, maximum: 50 },
+        operacao: {
+          type: "string",
+          enum: ["SAIDA", "ENTRADA", "TRANSFERENCIA"],
+          description:
+            "Campo operacao no ledger. SAIDA inclui Venda/Entrega E Transferência Enviada. Para ranking de badge SAÍDA da tela use rank_product_movements.",
+        },
         fluxo: {
           type: "string",
           enum: [
@@ -278,8 +418,40 @@ export const TOOL_DEFINITIONS = [
         somenteAbertos: {
           type: "boolean",
           description:
-            "true = só saídas concluídas ainda abertas (falta retornar). Ideal para 'temos itens em comodato/demo?'",
+            "true = só demo/comodato ainda fora (falta retornar). NÃO use para 'saídas do mês'.",
         },
+      },
+    },
+  },
+  {
+    name: "rank_product_movements",
+    description:
+      "Ranking de produtos por quantidade no período. USE para 'qual produto teve mais saída esse mês/mês passado/hoje'. periodo=mes_atual|mes_passado|hoje (datas no servidor). sentido=saida = badge SAÍDA (exclui transferência e tipo sistema). Se empateNoTopo=true, cite os empatados — não invente um único campeão.",
+    parameters: {
+      type: "object",
+      properties: {
+        periodo: {
+          type: "string",
+          enum: ["mes_atual", "mes_passado", "hoje", "custom"],
+          description: "Preferir mes_atual / mes_passado / hoje",
+        },
+        de: {
+          type: "string",
+          description: "Só se periodo=custom — ISO ou YYYY-MM-DD",
+        },
+        ate: {
+          type: "string",
+          description: "Só se periodo=custom — ISO ou YYYY-MM-DD",
+        },
+        sentido: {
+          type: "string",
+          enum: ["saida", "entrada", "transferencia", "qualquer"],
+          description:
+            "saida (padrão) = vendas/entregas; transferencia = só enviadas; entrada = compras etc.",
+        },
+        filialId: { type: "string" },
+        filialSigla: { type: "string" },
+        limit: { type: "integer", minimum: 1, maximum: 30 },
       },
     },
   },
@@ -350,9 +522,65 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "export_produtos_report",
+    description:
+      "Gera relatório PDF/Excel do CADÁSTRO de produtos (lista com preços). Use para 'relatório de produtos', 'exportar lista de produtos'. Exige permissão Relatórios. Também pode sugerir actionLink /relatorios?aba=produtos.",
+    parameters: {
+      type: "object",
+      properties: {
+        format: { type: "string", enum: ["pdf", "xlsx"] },
+        q: { type: "string", description: "Filtro opcional código/descrição" },
+        categoriaId: { type: "string" },
+        ativo: {
+          type: "boolean",
+          description: "true = só ativos; false = só inativos; omitir = todos",
+        },
+      },
+      required: ["format"],
+    },
+  },
+  {
+    name: "export_saldos_report",
+    description:
+      "Gera relatório PDF/Excel de ESTOQUE/saldos. Use para 'relatório de estoque', 'abaixo do mínimo', 'acima do máximo'. alerta=min|max|qualquer. Exige permissão Relatórios.",
+    parameters: {
+      type: "object",
+      properties: {
+        format: { type: "string", enum: ["pdf", "xlsx"] },
+        filialId: { type: "string" },
+        q: { type: "string" },
+        categoriaId: { type: "string" },
+        alerta: {
+          type: "string",
+          enum: ["min", "max", "qualquer"],
+          description:
+            "min = abaixo do mínimo; max = acima do máximo; qualquer = fora da faixa",
+        },
+      },
+      required: ["format"],
+    },
+  },
+  {
+    name: "export_arvore_report",
+    description:
+      "Gera relatório PDF/Excel da ÁRVORE de produto (BOM). Use para 'relatório da árvore', 'exportar BOM'. codigoOuNome filtra um pai; omitir = todas as árvores. Exige permissão Relatórios.",
+    parameters: {
+      type: "object",
+      properties: {
+        format: { type: "string", enum: ["pdf", "xlsx"] },
+        q: { type: "string", description: "Filtro por código/descrição do pai" },
+        codigoOuNome: {
+          type: "string",
+          description: "Produto pai específico (código ou nome)",
+        },
+      },
+      required: ["format"],
+    },
+  },
+  {
     name: "prepare_transfer",
     description:
-      "Só para CRIAR intenção de transferência (usuário quer transferir agora). NÃO use para consultar histórico (‘teve transferência?’). quantidade = número EXATO pedido pelo usuário (se pediu 20, passe 20 — nunca o saldo). Prepara atalho Novo Lançamento. NÃO diga Confirmar Recebimento para criar. Retorna actionLink + saldo. Usuário ainda confirma.",
+      "Só para CRIAR intenção de transferência (usuário quer transferir agora). NÃO use para consultar histórico (‘teve transferência?’). quantidade = número EXATO pedido pelo usuário (se pediu 20, passe 20 — nunca o saldo). Prepara atalho Novo Lançamento. NÃO diga Transferências para criar. Retorna actionLink + saldo. Usuário ainda confirma.",
     parameters: {
       type: "object",
       properties: {
@@ -391,12 +619,18 @@ export async function executeTool(
       return listStockByValue(stockValueArgs.parse(rawArgs), ctx);
     case "list_products":
       return listProducts(listProductsArgs.parse(rawArgs));
+    case "list_product_trees":
+      return listProductTrees(listProductTreesArgs.parse(rawArgs));
+    case "get_product_tree":
+      return getProductTree(getProductTreeArgs.parse(rawArgs));
     case "search_products":
       return searchProducts(searchProductsArgs.parse(rawArgs));
     case "get_product_stock":
       return getProductStock(getProductStockArgs.parse(rawArgs), ctx);
     case "list_stock_movements":
       return listStockMovements(listMovementsArgs.parse(rawArgs), ctx);
+    case "rank_product_movements":
+      return rankProductMovements(rankMovementsArgs.parse(rawArgs), ctx);
     case "get_inventory_balance":
       return getInventoryBalance(balanceArgs.parse(rawArgs), ctx);
     case "get_partner_products":
@@ -405,6 +639,12 @@ export async function executeTool(
       return getProductPartners(productPartnersArgs.parse(rawArgs));
     case "export_product_report":
       return exportProductReport(exportProductReportArgs.parse(rawArgs), ctx);
+    case "export_produtos_report":
+      return exportProdutosReport(exportProdutosReportArgs.parse(rawArgs), ctx);
+    case "export_saldos_report":
+      return exportSaldosReport(exportSaldosReportArgs.parse(rawArgs), ctx);
+    case "export_arvore_report":
+      return exportArvoreReport(exportArvoreReportArgs.parse(rawArgs), ctx);
     case "prepare_transfer":
       return prepareTransfer(prepareTransferArgs.parse(rawArgs), ctx);
     default:
@@ -537,7 +777,7 @@ async function prepareTransfer(
   return {
     ok: true,
     mensagem:
-      "Atalho pronto. Avise o usuário para clicar no botão abaixo — a tela Novo Lançamento abre com a transferência preenchida. Ele ainda precisa confirmar o lançamento. Confirmar Recebimento é só para conferir o que já chegou.",
+      "Atalho pronto. Avise o usuário para clicar no botão abaixo — a tela Novo Lançamento abre com a transferência preenchida. Ele ainda precisa confirmar o lançamento. Transferências é só para acompanhar/conferir o que já saiu.",
     actionLink: { href, label },
     resumo: {
       produtoCodigo: produto.codigo,
@@ -553,6 +793,18 @@ async function prepareTransfer(
       saldoApos: Math.max(0, disponivel - qtd),
     },
   };
+}
+
+function assertPermRelatorios(ctx: ToolContext) {
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  if (!hasPermissao(ctx.user.perfil, perms, "relatorios")) {
+    return {
+      ok: false as const,
+      error:
+        "Usuário sem permissão de Relatórios. Oriente pedir acesso ao Admin ou abrir a tela se tiver acesso.",
+    };
+  }
+  return null;
 }
 
 async function exportProductReport(
@@ -600,6 +852,171 @@ async function exportProductReport(
     return {
       ok: false,
       error: e instanceof Error ? e.message : "Falha ao gerar exportação",
+    };
+  }
+}
+
+async function exportProdutosReport(
+  args: z.infer<typeof exportProdutosReportArgs>,
+  ctx: ToolContext
+) {
+  const denied = assertPermRelatorios(ctx);
+  if (denied) return denied;
+  try {
+    const fn =
+      args.format === "pdf" ? exportarProdutosPdf : exportarProdutosExcel;
+    const { buffer, filename } = await fn(ctx.user, {
+      q: args.q,
+      categoriaId: args.categoriaId,
+      // Alinha com a tela Relatórios (default: só ativos)
+      ativo: args.ativo === undefined || args.ativo === null ? true : args.ativo,
+    });
+    const label = `Relatório de produtos (${args.format.toUpperCase()})`;
+    const downloadToken = putAssistenteExport({
+      userId: ctx.user.id,
+      buffer,
+      filename,
+      format: args.format,
+      label,
+    });
+    const qs = new URLSearchParams({ aba: "produtos" });
+    if (args.q?.trim()) qs.set("q", args.q.trim());
+    const ativoExport =
+      args.ativo === undefined || args.ativo === null ? true : args.ativo;
+    qs.set("ativo", ativoExport ? "true" : "false");
+    if (args.categoriaId) qs.set("categoriaId", args.categoriaId);
+    return {
+      ok: true,
+      format: args.format,
+      filename,
+      downloadToken,
+      label,
+      actionLink: {
+        href: `/relatorios?${qs.toString()}`,
+        label: "Abrir Relatórios · Produtos",
+      },
+      mensagem:
+        "Arquivo gerado. Use o botão de download abaixo; também há atalho para a tela Relatórios.",
+    };
+  } catch (e) {
+    if (e instanceof AppError) return { ok: false, error: e.message };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Falha ao gerar relatório",
+    };
+  }
+}
+
+async function exportSaldosReport(
+  args: z.infer<typeof exportSaldosReportArgs>,
+  ctx: ToolContext
+) {
+  const denied = assertPermRelatorios(ctx);
+  if (denied) return denied;
+  try {
+    const filialId = resolveFilialId(
+      ctx.user,
+      args.filialId,
+      ctx.filialHint
+    );
+    const fn = args.format === "pdf" ? exportarSaldosPdf : exportarSaldosExcel;
+    const { buffer, filename } = await fn(ctx.user, {
+      filialId,
+      q: args.q,
+      categoriaId: args.categoriaId,
+      alerta: args.alerta ?? null,
+    });
+    const label = `Relatório de estoque/saldos (${args.format.toUpperCase()})`;
+    const downloadToken = putAssistenteExport({
+      userId: ctx.user.id,
+      buffer,
+      filename,
+      format: args.format,
+      label,
+    });
+    const qs = new URLSearchParams({ aba: "saldos" });
+    if (args.alerta) qs.set("alerta", args.alerta);
+    if (args.q?.trim()) qs.set("q", args.q.trim());
+    if (filialId) qs.set("filialId", filialId);
+    return {
+      ok: true,
+      format: args.format,
+      filename,
+      downloadToken,
+      label,
+      actionLink: {
+        href: `/relatorios?${qs.toString()}`,
+        label: "Abrir Relatórios · Estoque",
+      },
+      mensagem:
+        "Arquivo gerado. Use o botão de download abaixo; também há atalho para a tela Relatórios.",
+    };
+  } catch (e) {
+    if (e instanceof AppError) return { ok: false, error: e.message };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Falha ao gerar relatório",
+    };
+  }
+}
+
+async function exportArvoreReport(
+  args: z.infer<typeof exportArvoreReportArgs>,
+  ctx: ToolContext
+) {
+  const denied = assertPermRelatorios(ctx);
+  if (denied) return denied;
+  try {
+    let produtoPaiId: string | undefined;
+    const codigoOuNome = args.codigoOuNome?.trim();
+    if (codigoOuNome) {
+      const p = await findProdutoByCodigoOuNome(codigoOuNome);
+      if (!p) {
+        return {
+          ok: false,
+          error: `Produto não encontrado para "${codigoOuNome}"`,
+        };
+      }
+      produtoPaiId = p.id;
+    }
+    const fn = args.format === "pdf" ? exportarArvorePdf : exportarArvoreExcel;
+    const { buffer, filename } = await fn(ctx.user, {
+      q: produtoPaiId ? null : args.q,
+      produtoPaiId,
+    });
+    const label = `Relatório de árvore de produto (${args.format.toUpperCase()})`;
+    const downloadToken = putAssistenteExport({
+      userId: ctx.user.id,
+      buffer,
+      filename,
+      format: args.format,
+      label,
+    });
+    const qs = new URLSearchParams({ aba: "arvores" });
+    if (produtoPaiId) {
+      qs.set("produtoPaiId", produtoPaiId);
+      if (codigoOuNome) qs.set("q", codigoOuNome);
+    } else if (args.q?.trim()) {
+      qs.set("q", args.q.trim());
+    }
+    return {
+      ok: true,
+      format: args.format,
+      filename,
+      downloadToken,
+      label,
+      actionLink: {
+        href: `/relatorios?${qs.toString()}`,
+        label: "Abrir Relatórios · Árvore",
+      },
+      mensagem:
+        "Arquivo gerado. Use o botão de download abaixo; também há atalho para a tela Relatórios.",
+    };
+  } catch (e) {
+    if (e instanceof AppError) return { ok: false, error: e.message };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Falha ao gerar relatório",
     };
   }
 }
@@ -695,6 +1112,11 @@ async function listStockByValue(
         status: string;
         filial: string;
         filialDestino: string | null;
+        /** Nome do cadastro (pode começar com “Cliente…” mesmo em compra). */
+        parceiroNome: string | null;
+        parceiroTipoCadastro: string | null;
+        /** Papel nesta movimentação: compra→fornecedor, venda→cliente. */
+        papelParceiro: "fornecedor" | "cliente" | null;
         usuarioNome: string;
         usuarioEmail: string;
       } | null;
@@ -726,6 +1148,7 @@ async function listStockByValue(
             tipo: { select: { nome: true, operacao: true } },
             filial: { select: { sigla: true } },
             filialDestino: { select: { sigla: true } },
+            cliente: { select: { nome: true, tipo: true } },
             usuario: { select: { nome: true, email: true } },
           },
         });
@@ -740,6 +1163,14 @@ async function listStockByValue(
                 status: m.status,
                 filial: m.filial.sigla,
                 filialDestino: m.filialDestino?.sigla ?? null,
+                parceiroNome: m.cliente?.nome ?? null,
+                parceiroTipoCadastro: m.cliente?.tipo ?? null,
+                papelParceiro: papelParceiroNaMovimentacao({
+                  operacao: m.tipo.operacao,
+                  tipoNome: m.tipo.nome,
+                  temParceiro: Boolean(m.cliente),
+                  temDestinoEstoque: Boolean(m.filialDestino),
+                }),
                 usuarioNome: m.usuario.nome,
                 usuarioEmail: m.usuario.email,
               }
@@ -790,6 +1221,136 @@ async function listProducts(args: z.infer<typeof listProductsArgs>) {
       unidade: p.unidade,
       precoUnitario: Number(p.precoUnitario),
       categoria: p.categoria.nome,
+    })),
+  };
+}
+
+async function listProductTrees(args: z.infer<typeof listProductTreesArgs>) {
+  const q = args.q?.trim() || "";
+  const where = {
+    ativo: true,
+    componentesComoPai: { some: {} },
+    ...(q
+      ? {
+          OR: [
+            { codigo: { contains: q, mode: "insensitive" as const } },
+            { descricao: { contains: q, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
+
+  if (!args.incluirComponentes) {
+    const rows = await prisma.produto.findMany({
+      where,
+      select: {
+        codigo: true,
+        descricao: true,
+        precoUnitario: true,
+        _count: { select: { componentesComoPai: true } },
+      },
+      orderBy: { codigo: "asc" },
+      take: args.limit,
+    });
+    return {
+      encontrados: rows.length,
+      produtos: rows.map((p) => ({
+        codigo: p.codigo,
+        descricao: p.descricao,
+        precoUnitario: Number(p.precoUnitario),
+        qtdComponentes: p._count.componentesComoPai,
+      })),
+    };
+  }
+
+  const rows = await prisma.produto.findMany({
+    where,
+    select: {
+      codigo: true,
+      descricao: true,
+      precoUnitario: true,
+      _count: { select: { componentesComoPai: true } },
+      componentesComoPai: {
+        select: {
+          quantidade: true,
+          fantasma: true,
+          produtoFilho: {
+            select: {
+              codigo: true,
+              descricao: true,
+              precoUnitario: true,
+              ativo: true,
+            },
+          },
+        },
+        orderBy: { produtoFilho: { codigo: "asc" } },
+      },
+    },
+    orderBy: { codigo: "asc" },
+    take: args.limit,
+  });
+
+  return {
+    encontrados: rows.length,
+    produtos: rows.map((p) => ({
+      codigo: p.codigo,
+      descricao: p.descricao,
+      precoUnitario: Number(p.precoUnitario),
+      qtdComponentes: p._count.componentesComoPai,
+      componentes: p.componentesComoPai.map((c) => ({
+        codigo: c.produtoFilho.codigo,
+        descricao: c.produtoFilho.descricao,
+        quantidade: Number(c.quantidade),
+        fantasma: c.fantasma,
+        precoUnitario: Number(c.produtoFilho.precoUnitario),
+        ativo: c.produtoFilho.ativo,
+      })),
+    })),
+  };
+}
+
+async function getProductTree(args: z.infer<typeof getProductTreeArgs>) {
+  const produto = await findProdutoByCodigoOuNome(args.codigoOuNome);
+  if (!produto) {
+    return {
+      encontrado: false,
+      mensagem: `Produto não encontrado para "${args.codigoOuNome.trim()}"`,
+    };
+  }
+
+  const itens = await prisma.produtoComponente.findMany({
+    where: { produtoPaiId: produto.id },
+    select: {
+      quantidade: true,
+      fantasma: true,
+      produtoFilho: {
+        select: {
+          codigo: true,
+          descricao: true,
+          precoUnitario: true,
+          ativo: true,
+        },
+      },
+    },
+    orderBy: { produtoFilho: { codigo: "asc" } },
+  });
+
+  return {
+    encontrado: true,
+    temArvore: itens.length > 0,
+    produto: {
+      codigo: produto.codigo,
+      descricao: produto.descricao,
+      precoUnitario: Number(produto.precoUnitario),
+    },
+    qtdComponentes: itens.length,
+    componentes: itens.map((c) => ({
+      codigo: c.produtoFilho.codigo,
+      descricao: c.produtoFilho.descricao,
+      quantidade: Number(c.quantidade),
+      fantasma: c.fantasma,
+      precoUnitario: Number(c.produtoFilho.precoUnitario),
+      ativo: c.produtoFilho.ativo,
     })),
   };
 }
@@ -934,6 +1495,340 @@ async function getProductStock(
   };
 }
 
+/**
+ * Parse de datas do assistente.
+ * Aceita ISO completo ou YYYY-MM-DD (dia civil SP).
+ * Rejeita dd/mm/aaaa (JS interpreta como MM/DD e quebra o mês).
+ */
+export function parseAssistenteDateBound(
+  raw: string,
+  bound: "start" | "end"
+): { ok: true; date: Date } | { ok: false; error: string } {
+  const s = raw.trim();
+  if (!s) return { ok: false, error: "Data vazia" };
+
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(s)) {
+    return {
+      ok: false,
+      error: `Data “${s}” parece dd/mm/aaaa — use periodo=mes_atual|mes_passado|hoje ou ISO/YYYY-MM-DD (nunca dd/mm).`,
+    };
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const iso =
+      bound === "start"
+        ? `${s}T00:00:00-03:00`
+        : `${s}T23:59:59.999-03:00`;
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+      return { ok: false, error: `Data inválida: ${s}` };
+    }
+    return { ok: true, date };
+  }
+
+  const date = new Date(s);
+  if (Number.isNaN(date.getTime())) {
+    return { ok: false, error: `Data inválida: ${s}` };
+  }
+  return { ok: true, date };
+}
+
+function resolvePeriodoJanela(
+  periodo: "mes_atual" | "mes_passado" | "hoje" | "custom",
+  deRaw?: string | null,
+  ateRaw?: string | null
+):
+  | { ok: true; de: Date; ate: Date; label: string; periodo: string }
+  | { ok: false; error: string } {
+  if (periodo === "hoje") {
+    const j = janelaHojeSaoPaulo();
+    return {
+      ok: true,
+      de: new Date(j.deIso),
+      ate: new Date(j.ateIso),
+      label: `hoje ${j.dataCivil}`,
+      periodo,
+    };
+  }
+  if (periodo === "mes_atual") {
+    const j = janelaMesSaoPaulo(0);
+    return {
+      ok: true,
+      de: new Date(j.deIso),
+      ate: new Date(j.ateIso),
+      label: `mês ${j.label}`,
+      periodo,
+    };
+  }
+  if (periodo === "mes_passado") {
+    const j = janelaMesSaoPaulo(-1);
+    return {
+      ok: true,
+      de: new Date(j.deIso),
+      ate: new Date(j.ateIso),
+      label: `mês ${j.label}`,
+      periodo,
+    };
+  }
+
+  if (!deRaw?.trim() || !ateRaw?.trim()) {
+    return {
+      ok: false,
+      error: "periodo=custom exige de e ate (ISO ou YYYY-MM-DD)",
+    };
+  }
+  const deP = parseAssistenteDateBound(deRaw, "start");
+  if (!deP.ok) return deP;
+  const ateP = parseAssistenteDateBound(ateRaw, "end");
+  if (!ateP.ok) return ateP;
+  if (deP.date > ateP.date) {
+    return { ok: false, error: "de deve ser ≤ ate" };
+  }
+  return {
+    ok: true,
+    de: deP.date,
+    ate: ateP.date,
+    label: "custom",
+    periodo,
+  };
+}
+
+async function rankProductMovements(
+  args: z.infer<typeof rankMovementsArgs>,
+  ctx: ToolContext
+) {
+  const janela = resolvePeriodoJanela(
+    args.periodo || "mes_atual",
+    args.de,
+    args.ate
+  );
+  if (!janela.ok) {
+    return { ok: false, encontrados: 0, ranking: [], error: janela.error };
+  }
+
+  const sentido = args.sentido || "saida";
+  const limit = args.limit || 10;
+
+  const opIds =
+    ctx.user.perfil === "OPERADOR"
+      ? ctx.user.filialIds?.length > 0
+        ? ctx.user.filialIds
+        : ctx.user.filialId
+          ? [ctx.user.filialId]
+          : []
+      : null;
+
+  let filialId: string | null = null;
+  if (args.filialSigla?.trim()) {
+    const bySigla = await findFilialBySiglaOuNome(args.filialSigla);
+    if (!bySigla) {
+      return {
+        ok: false,
+        encontrados: 0,
+        ranking: [],
+        error: `Estoque não encontrado: “${args.filialSigla}”`,
+      };
+    }
+    if (opIds && !opIds.includes(bySigla.id)) {
+      return {
+        ok: false,
+        encontrados: 0,
+        ranking: [],
+        error: "Operador sem acesso a este estoque",
+      };
+    }
+    filialId = bySigla.id;
+  } else if (args.filialId) {
+    filialId = resolveFilialId(ctx.user, args.filialId, null);
+  } else {
+    // Ranking de período: não herdar filtro frágil do dashboard (Admin/Gerente vê tudo)
+    filialId =
+      ctx.user.perfil === "OPERADOR"
+        ? resolveFilialId(ctx.user, null, ctx.filialHint)
+        : null;
+  }
+  if (filialId) await assertFilialAtiva(filialId);
+
+  const where: Record<string, unknown> = {
+    status: "CONCLUIDO",
+    estornoDeId: null,
+    dataMovimento: { gte: janela.de, lte: janela.ate },
+  };
+
+  if (filialId) {
+    where.OR = [{ filialId }, { filialDestinoId: filialId }];
+  } else if (opIds?.length) {
+    where.OR = [
+      { filialId: { in: opIds } },
+      { filialDestinoId: { in: opIds } },
+    ];
+  }
+
+  if (sentido === "saida") {
+    // Badge SAÍDA na tela: operacao SAIDA sem destino (não é Transferência Enviada)
+    // e sem tipos de sistema (baixa de componente da árvore).
+    where.operacao = "SAIDA";
+    where.filialDestinoId = null;
+    where.tipo = { sistema: false };
+  } else if (sentido === "entrada") {
+    where.operacao = "ENTRADA";
+    where.tipo = {
+      sistema: false,
+      NOT: { nome: { contains: "transfer", mode: "insensitive" } },
+    };
+  } else if (sentido === "transferencia") {
+    where.operacao = "SAIDA";
+    where.filialDestinoId = { not: null };
+    where.tipo = { nome: { contains: "transfer", mode: "insensitive" } };
+  }
+
+  const grouped = await prisma.movimentacao.groupBy({
+    by: ["produtoId"],
+    where,
+    _sum: { quantidade: true },
+    _count: { _all: true },
+    orderBy: { _sum: { quantidade: "desc" } },
+    take: limit,
+  });
+
+  if (grouped.length === 0) {
+    return {
+      ok: true,
+      encontrados: 0,
+      periodo: janela.periodo,
+      periodoLabel: janela.label,
+      de: janela.de.toISOString(),
+      ate: janela.ate.toISOString(),
+      sentido,
+      ranking: [],
+      mensagem:
+        sentido === "saida"
+          ? `Nenhuma saída (venda/entrega) em ${janela.label}.`
+          : sentido === "entrada"
+            ? `Nenhuma entrada (compra etc.) em ${janela.label}.`
+            : sentido === "transferencia"
+              ? `Nenhuma transferência enviada em ${janela.label}.`
+              : `Nenhuma movimentação em ${janela.label}.`,
+    };
+  }
+
+  const produtoIds = grouped.map((g) => g.produtoId);
+  const produtos = await prisma.produto.findMany({
+    where: { id: { in: produtoIds } },
+    select: { id: true, codigo: true, descricao: true, unidade: true },
+  });
+  const byId = new Map(produtos.map((p) => [p.id, p]));
+
+  // Detalhe leve: tipos e parceiros mais frequentes por produto (amostra)
+  const amostra = await prisma.movimentacao.findMany({
+    where: { ...where, produtoId: { in: produtoIds } },
+    select: {
+      produtoId: true,
+      quantidade: true,
+      tipo: { select: { nome: true } },
+      cliente: { select: { nome: true } },
+      filial: { select: { sigla: true } },
+      filialDestino: { select: { sigla: true } },
+    },
+    orderBy: { dataMovimento: "desc" },
+    take: Math.min(200, limit * 20),
+  });
+
+  const meta = new Map<
+    string,
+    { tipos: Map<string, number>; clientes: Map<string, number> }
+  >();
+  for (const m of amostra) {
+    let slot = meta.get(m.produtoId);
+    if (!slot) {
+      slot = { tipos: new Map(), clientes: new Map() };
+      meta.set(m.produtoId, slot);
+    }
+    slot.tipos.set(
+      m.tipo.nome,
+      (slot.tipos.get(m.tipo.nome) || 0) + Number(m.quantidade)
+    );
+    if (m.cliente?.nome) {
+      slot.clientes.set(
+        m.cliente.nome,
+        (slot.clientes.get(m.cliente.nome) || 0) + Number(m.quantidade)
+      );
+    }
+  }
+
+  const rankingBase = grouped.map((g) => {
+    const p = byId.get(g.produtoId);
+    const m = meta.get(g.produtoId);
+    const tipos = m
+      ? [...m.tipos.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([nome, qty]) => ({ nome, qty }))
+      : [];
+    const parceiros = m
+      ? [...m.clientes.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([nome, qty]) => ({ nome, qty }))
+      : [];
+    return {
+      codigo: p?.codigo || "?",
+      descricao: p?.descricao || "",
+      unidade: p?.unidade || null,
+      qtyTotal: Number(g._sum.quantidade || 0),
+      lancamentos: g._count._all,
+      tiposPrincipais: tipos,
+      parceirosPrincipais: parceiros,
+    };
+  });
+
+  const qtyTopo = rankingBase[0]?.qtyTotal;
+  const empateNoTopo =
+    qtyTopo != null &&
+    rankingBase.filter((r) => r.qtyTotal === qtyTopo).length > 1;
+
+  let colocacao = 0;
+  let qtyAnterior: number | null = null;
+  const ranking = rankingBase.map((r) => {
+    if (qtyAnterior === null || r.qtyTotal !== qtyAnterior) {
+      colocacao += 1;
+      qtyAnterior = r.qtyTotal;
+    }
+    return {
+      ...r,
+      posicao: colocacao,
+      empatadoNoTopo: empateNoTopo && r.qtyTotal === qtyTopo,
+    };
+  });
+
+  const empatadosNoTopo = ranking.filter((r) => r.empatadoNoTopo);
+
+  return {
+    ok: true,
+    encontrados: ranking.length,
+    periodo: janela.periodo,
+    periodoLabel: janela.label,
+    de: janela.de.toISOString(),
+    ate: janela.ate.toISOString(),
+    sentido,
+    sentidoExplicacao:
+      sentido === "saida"
+        ? "Badge SAÍDA (Venda/Entrega etc.), sem transferência entre estoques e sem baixa automática de componente"
+        : undefined,
+    ranking,
+    empateNoTopo,
+    empatadosNoTopo: empatadosNoTopo.map((r) => ({
+      codigo: r.codigo,
+      descricao: r.descricao,
+      qtyTotal: r.qtyTotal,
+    })),
+    campeao: empateNoTopo ? null : ranking[0] || null,
+    avisoEmpate: empateNoTopo
+      ? `${empatadosNoTopo.length} produtos empataram no topo com qty ${qtyTopo}. Cite o empate; não escolha um único campeão.`
+      : undefined,
+  };
+}
+
 async function listStockMovements(
   args: z.infer<typeof listMovementsArgs>,
   ctx: ToolContext
@@ -1006,8 +1901,16 @@ async function listStockMovements(
     produtoId = p.id;
   }
 
-  const de = args.de ? new Date(args.de) : undefined;
-  const ate = args.ate ? new Date(args.ate) : undefined;
+  const deP = args.de ? parseAssistenteDateBound(args.de, "start") : null;
+  const ateP = args.ate ? parseAssistenteDateBound(args.ate, "end") : null;
+  if (deP && !deP.ok) {
+    return { encontrados: 0, movimentacoes: [], error: deP.error };
+  }
+  if (ateP && !ateP.ok) {
+    return { encontrados: 0, movimentacoes: [], error: ateP.error };
+  }
+  const de = deP && deP.ok ? deP.date : undefined;
+  const ate = ateP && ateP.ok ? ateP.date : undefined;
 
   const tipoWhere: Record<string, unknown> = {};
   if (fluxo === "comodato") {
@@ -1059,6 +1962,9 @@ async function listStockMovements(
     };
   }
 
+  const operacaoFiltro =
+    args.operacao && !fluxo && !somenteAbertos ? args.operacao : null;
+
   const rows = await prisma.movimentacao.findMany({
     where: {
       ...(produtoId ? { produtoId } : {}),
@@ -1074,6 +1980,7 @@ async function listStockMovements(
       ...(somenteAbertos
         ? { operacao: "SAIDA", status: "CONCLUIDO", estornoDeId: null }
         : {}),
+      ...(operacaoFiltro ? { operacao: operacaoFiltro } : {}),
       ...(Object.keys(tipoWhere).length > 0 ? { tipo: tipoWhere } : {}),
     },
     select: {
@@ -1094,7 +2001,7 @@ async function listStockMovements(
       },
       filial: { select: { sigla: true } },
       filialDestino: { select: { sigla: true } },
-      cliente: { select: { nome: true } },
+      cliente: { select: { nome: true, tipo: true } },
       usuario: { select: { nome: true, email: true } },
       alertasRetorno: {
         select: {
@@ -1192,7 +2099,16 @@ async function listStockMovements(
         : m.filial.sigla,
       ehTransferencia,
       papelNaTransferencia,
+      /** @deprecated Use parceiroNome + papelParceiro — nome do campo legado no schema. */
       clienteNome: m.cliente?.nome ?? null,
+      parceiroNome: m.cliente?.nome ?? null,
+      parceiroTipoCadastro: m.cliente?.tipo ?? null,
+      papelParceiro: papelParceiroNaMovimentacao({
+        operacao: m.tipo.operacao,
+        tipoNome: m.tipo.nome,
+        temParceiro: Boolean(m.cliente),
+        temDestinoEstoque: Boolean(m.filialDestino),
+      }),
       usuarioNome: m.usuario.nome,
       usuarioEmail: m.usuario.email,
       geraAlertaRetorno: m.tipo.geraAlertaRetorno,

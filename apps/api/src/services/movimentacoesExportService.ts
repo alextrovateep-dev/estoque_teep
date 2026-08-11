@@ -23,6 +23,8 @@ export type MovimentacoesFiltroQuery = {
   parceiroTipo?: string;
   dataInicio?: string;
   dataFim?: string;
+  /** Busca parcial no nº de série (≥2). Com série, o período de datas é ignorado. */
+  numeroSerie?: string;
 };
 
 export type MovimentacaoExportRow = {
@@ -70,6 +72,7 @@ export function parseMovimentacoesFiltroQuery(
     parceiroTipo: str("parceiroTipo")?.toUpperCase(),
     dataInicio: str("dataInicio"),
     dataFim: str("dataFim"),
+    numeroSerie: str("numeroSerie"),
   };
 }
 
@@ -84,9 +87,14 @@ export function buildMovimentacoesWhere(
     const ids = operadorFilialIds(user);
     if (q.filialId) {
       assertOperadorPodeFilial(user, q.filialId);
-      where.filialId = q.filialId;
+      // Filial explícita: origem ou destino dessa filial
+      where.OR = [{ filialId: q.filialId }, { filialDestinoId: q.filialId }];
     } else {
-      where.filialId = { in: ids };
+      // Origem OU destino nas filiais do operador (cargas em trânsito no destino)
+      where.OR = [
+        { filialId: { in: ids } },
+        { filialDestinoId: { in: ids } },
+      ];
     }
   } else if (q.filialId) {
     where.filialId = q.filialId;
@@ -105,20 +113,47 @@ export function buildMovimentacoesWhere(
     where.cliente = { tipo: { in: ["CLIENTE", "INTERNO"] } };
   }
 
-  if (q.dataInicio || q.dataFim) {
+  const serie = q.numeroSerie?.trim() || "";
+  if (serie.length >= 2) {
+    where.series = {
+      some: {
+        unidadeSerie: {
+          numeroSerie: { contains: serie, mode: "insensitive" },
+        },
+      },
+    };
+    // Histórico completo da série — não limitar pelo período padrão da tela
+  } else if (q.dataInicio || q.dataFim) {
     const range: Prisma.DateTimeFilter = {};
     if (q.dataInicio) {
-      const d = new Date(`${q.dataInicio}T00:00:00`);
-      if (!Number.isNaN(d.getTime())) range.gte = d;
+      const d = parseDiaCivilSaoPaulo(q.dataInicio, "inicio");
+      if (d) range.gte = d;
     }
     if (q.dataFim) {
-      const d = new Date(`${q.dataFim}T23:59:59.999`);
-      if (!Number.isNaN(d.getTime())) range.lte = d;
+      const d = parseDiaCivilSaoPaulo(q.dataFim, "fim");
+      if (d) range.lte = d;
     }
     if (range.gte || range.lte) where.dataMovimento = range;
   }
 
   return where;
+}
+
+/**
+ * Interpreta YYYY-MM-DD como dia civil em America/Sao_Paulo (UTC−03 fixo).
+ * Evita deslocar o filtro quando a API roda em UTC.
+ */
+export function parseDiaCivilSaoPaulo(
+  ymd: string,
+  bound: "inicio" | "fim"
+): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  const d = new Date(
+    bound === "inicio"
+      ? `${ymd}T00:00:00.000-03:00`
+      : `${ymd}T23:59:59.999-03:00`
+  );
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 function stampSaoPaulo() {
@@ -154,6 +189,9 @@ function fmtDataIso(iso: string) {
 }
 
 function formatPeriodo(q: MovimentacoesFiltroQuery): string {
+  if (q.numeroSerie && q.numeroSerie.trim().length >= 2) {
+    return "todo o histórico (filtro por série)";
+  }
   const a = q.dataInicio
     ? q.dataInicio.split("-").reverse().join("/")
     : null;
@@ -195,6 +233,9 @@ async function descreverFiltros(
   }
   if (q.status) parts.push(`Status: ${q.status}`);
   if (q.operacao) parts.push(`Operação: ${q.operacao}`);
+  if (q.numeroSerie && q.numeroSerie.trim().length >= 2) {
+    parts.push(`Série: ${q.numeroSerie.trim()}`);
+  }
   return parts.length ? parts.join(" · ") : "Sem filtros extras";
 }
 

@@ -35,6 +35,7 @@ export function ConfirmMotivoPanel({
 }: Props) {
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (loading) return;
     if (motivoRequired && !motivo.trim()) return;
     onConfirm();
   }

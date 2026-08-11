@@ -2,10 +2,20 @@
 
 import { api, apiUpload, getStoredUser, User, userFilialIds } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
+import {
+  LancamentoLinhaItem,
+  newLancamentoLinha,
+  type LancamentoLinha,
+  type LancamentoProduto,
+} from "@/components/LancamentoLinhaItem";
 import { SeriesInput } from "@/components/SeriesInput";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
+
+const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_ALERTA_EMAILS = 10;
+const MAX_LINHAS = 20;
 
 type Tipo = {
   id: string;
@@ -15,6 +25,7 @@ type Tipo = {
   geraAlertaRetorno?: boolean;
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
+  baixaPorArvore?: boolean;
 };
 
 type SaidaAberta = {
@@ -23,7 +34,13 @@ type SaidaAberta = {
   quantidade: number;
   qtyRestante?: number;
   notaFiscalNumero: string | null;
-  produto: { id: string; codigo: string; descricao: string };
+  produto: {
+    id: string;
+    codigo: string;
+    descricao: string;
+    controlaSerie?: boolean;
+    precoUnitario?: string | number;
+  };
   filial: { id: string; sigla: string; nome: string };
   tipo: { id: string; nome: string };
 };
@@ -35,6 +52,13 @@ type Produto = {
   descricao: string;
   precoUnitario?: string | number;
   controlaSerie?: boolean;
+  configuracaoSerie?: {
+    formato?: string;
+    geracaoAutomatica?: boolean;
+    tamanhoSequencial?: number;
+    prefixoFixo?: string | null;
+    sufixoFixo?: string | null;
+  } | null;
 };
 
 type CreditoDestino = "IMEDIATO" | "AGUARDAR_RECEBIMENTO";
@@ -62,9 +86,14 @@ async function fetchSaldoProduto(
   produtoId: string,
   filialId: string
 ): Promise<number> {
-  const r = await api<{ saldoAtual: string | number }>(
+  const r = await api<{
+    saldoAtual: string | number;
+    disponivel?: string | number;
+  }>(
     `/estoques/saldo?produtoId=${encodeURIComponent(produtoId)}&filialId=${encodeURIComponent(filialId)}`
   );
+  // Preferir disponível (saldo − reserva de transferência pendente).
+  if (r.disponivel != null) return Number(r.disponivel) || 0;
   return Number(r.saldoAtual) || 0;
 }
 
@@ -96,6 +125,7 @@ function NovoLancamentoForm() {
   const codigoRef = useRef<HTMLInputElement>(null);
   const nfNumeroRef = useRef<HTMLInputElement>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchAbort = useRef<AbortController | null>(null);
   const skipTipoClearRef = useRef(false);
   const [user, setUser] = useState<User | null>(null);
   const [tipos, setTipos] = useState<Tipo[]>([]);
@@ -107,6 +137,14 @@ function NovoLancamentoForm() {
   const [tipoId, setTipoId] = useState("");
   const [filialId, setFilialId] = useState("");
   const [filialDestinoId, setFilialDestinoId] = useState("");
+  const [bomPreview, setBomPreview] = useState<
+    Array<{
+      produtoFilhoId: string;
+      quantidade: number;
+      fantasma: boolean;
+      produtoFilho: { codigo: string; descricao: string };
+    }>
+  >([]);
   const [saldoOrigem, setSaldoOrigem] = useState<number | null>(null);
   const [saldoDestino, setSaldoDestino] = useState<number | null>(null);
   const [creditoDestino, setCreditoDestino] =
@@ -117,7 +155,8 @@ function NovoLancamentoForm() {
     null
   );
   const [nfUploading, setNfUploading] = useState(false);
-  const [alertaEmailsText, setAlertaEmailsText] = useState("");
+  const [alertaEmails, setAlertaEmails] = useState<string[]>([]);
+  const [alertaEmailDraft, setAlertaEmailDraft] = useState("");
   const [movimentacaoOrigemId, setMovimentacaoOrigemId] = useState("");
   const [saidasAbertas, setSaidasAbertas] = useState<SaidaAberta[]>([]);
   const [saidasLoading, setSaidasLoading] = useState(false);
@@ -126,6 +165,12 @@ function NovoLancamentoForm() {
   const [guiaTransporte, setGuiaTransporte] = useState("");
   const [quantidade, setQuantidade] = useState("1");
   const [series, setSeries] = useState<string[]>([]);
+  const [gerandoSeries, setGerandoSeries] = useState(false);
+  const [alocacaoSerieId, setAlocacaoSerieId] = useState<string | null>(null);
+  const [desfazendoSeries, setDesfazendoSeries] = useState(false);
+  const [linhas, setLinhas] = useState<LancamentoLinha[]>(() => [
+    newLancamentoLinha(),
+  ]);
   const [observacao, setObservacao] = useState("");
   const [msg, setMsg] = useState("");
   const [lastTransferId, setLastTransferId] = useState<string | null>(null);
@@ -133,6 +178,7 @@ function NovoLancamentoForm() {
   const [loading, setLoading] = useState(false);
   const [retornoPrefill, setRetornoPrefill] = useState(false);
   const [transferPrefill, setTransferPrefill] = useState(false);
+  const [saidasRefreshKey, setSaidasRefreshKey] = useState(0);
   const [prefillLoading, setPrefillLoading] = useState(
     Boolean(retornoDeId || wantsTransf)
   );
@@ -142,13 +188,17 @@ function NovoLancamentoForm() {
   const isRetorno = Boolean(tipo?.ehRetornoDeId);
   const precisaAlerta = Boolean(tipo?.geraAlertaRetorno);
   const precisaTermo = Boolean(tipo?.requerTermoComodato);
+  const isBaixaArvore = Boolean(tipo?.baixaPorArvore);
+  const multiSkuMode = !isRetorno && !isBaixaArvore;
   const precisaCliente =
     Boolean(tipo?.requerCliente) ||
     precisaAlerta ||
     isRetorno ||
     precisaTermo;
+  /** Atalho ?retornoDe= trava tipo/cliente/saída. */
   const camposTravados = retornoPrefill;
-  const prefillAtivo = retornoPrefill || transferPrefill;
+  /** Produto/filial vêm da saída vinculada — não podem divergir. */
+  const travaProdutoFilial = retornoPrefill || Boolean(movimentacaoOrigemId);
   /** Retorno (demo/comodato): NF número + anexo obrigatórios antes de salvar. */
   const nfRetornoOk =
     !isRetorno ||
@@ -164,21 +214,29 @@ function NovoLancamentoForm() {
       skipTipoClearRef.current = false;
       return;
     }
-    // Retorno trava o formulário; transferência só protege o setTipoId inicial (skip ref).
-    if (retornoPrefill) return;
-    if (transferPrefill) setTransferPrefill(false);
+    // Prefills travam o formulário até o usuário trocar o tipo de propósito.
+    if (retornoPrefill || transferPrefill) return;
     // Ao trocar o tipo, limpa campos específicos para não vazar estado
     setClienteId("");
     setNotaFiscalNumero("");
     setNotaFiscalArquivo(null);
-    setAlertaEmailsText("");
+    setAlertaEmails([]);
+    setAlertaEmailDraft("");
     setMovimentacaoOrigemId("");
     setSaidasAbertas([]);
     setTermoArquivo(null);
     setGuiaTransporte("");
     setObservacao("");
     setQuantidade("1");
-  }, [tipoId, retornoPrefill]);
+    setProduto(null);
+    setCodigo("");
+    setSugestoes([]);
+    setSeries([]);
+    setAlocacaoSerieId(null);
+    setSaldoOrigem(null);
+    setSaldoDestino(null);
+    setLinhas([newLancamentoLinha()]);
+  }, [tipoId, retornoPrefill, transferPrefill]);
 
   useEffect(() => {
     const u = getStoredUser();
@@ -204,12 +262,18 @@ function NovoLancamentoForm() {
         if (dest && !wantsTransf) setFilialDestinoId(dest.id);
       })
       .catch((e) => {
-        setError(e.message);
+        setError(
+          e instanceof Error ? e.message : "Falha ao carregar dados do lançamento"
+        );
         if (retornoDeId || wantsTransf) setPrefillLoading(false);
       });
     if (!retornoDeId && !wantsTransf) {
       setTimeout(() => codigoRef.current?.focus(), 100);
     }
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+      searchAbort.current?.abort();
+    };
   }, [retornoDeId, wantsTransf]);
 
   /** Prefill completo a partir de ?retornoDe= — só lê dados; NÃO cria lançamento. */
@@ -273,10 +337,7 @@ function NovoLancamentoForm() {
         setClienteId(mov.clienteId);
         setSaidasAbertas(abertas);
         setMovimentacaoOrigemId(s.id);
-        setProduto(s.produto);
-        setCodigo(s.produto.codigo);
-        setQuantidade(String(s.qtyRestante ?? s.quantidade));
-        setFilialId(s.filial.id);
+        aplicarProdutoDaSaida(s);
         setNotaFiscalNumero("");
         setNotaFiscalArquivo(null);
         setObservacao("");
@@ -392,9 +453,13 @@ function NovoLancamentoForm() {
         setTipoId(tipoTransf.id);
         setFilialId(origem.id);
         setFilialDestinoId(destino.id);
-        setProduto(prod);
-        setCodigo(prod.codigo);
-        setQuantidade(qtdFinal);
+        setLinhas([
+          newLancamentoLinha({
+            codigo: prod.codigo,
+            produto: prod,
+            quantidade: qtdFinal,
+          }),
+        ]);
         setObservacao("");
         setError("");
         setPrefillLoading(false);
@@ -425,6 +490,12 @@ function NovoLancamentoForm() {
   }, [isTransf, filialId, filiais, filialDestinoId]);
 
   useEffect(() => {
+    // Em multi-SKU o saldo fica por linha (LancamentoLinhaItem)
+    if (multiSkuMode) {
+      setSaldoOrigem(null);
+      setSaldoDestino(null);
+      return;
+    }
     if (!produto?.id || !filialId) {
       setSaldoOrigem(null);
       setSaldoDestino(null);
@@ -453,14 +524,40 @@ function NovoLancamentoForm() {
     return () => {
       cancelled = true;
     };
-  }, [produto, filialId, filialDestinoId, isTransf]);
+  }, [multiSkuMode, produto, filialId, filialDestinoId, isTransf]);
 
   useEffect(() => {
     setSeries([]);
+    setAlocacaoSerieId(null);
   }, [produto?.id]);
 
   useEffect(() => {
-    // Prefill já carregou saídas — não zerar/recarregar.
+    if (!isBaixaArvore || !produto?.id) {
+      setBomPreview([]);
+      return;
+    }
+    let cancelled = false;
+    void api<{
+      itens: Array<{
+        produtoFilhoId: string;
+        quantidade: number;
+        fantasma: boolean;
+        produtoFilho: { codigo: string; descricao: string };
+      }>;
+    }>(`/produtos/${produto.id}/componentes`)
+      .then((r) => {
+        if (!cancelled) setBomPreview(r.itens || []);
+      })
+      .catch(() => {
+        if (!cancelled) setBomPreview([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isBaixaArvore, produto?.id]);
+
+  useEffect(() => {
+    // Prefill do atalho já carregou saídas — não zerar/recarregar.
     if (retornoPrefill || retornoDeId) return;
     setMovimentacaoOrigemId("");
     setSaidasAbertas([]);
@@ -475,10 +572,14 @@ function NovoLancamentoForm() {
         setSaidasAbertas(rows);
         setError("");
       })
-      .catch((e: Error) => {
+      .catch((e: unknown) => {
         if (!cancelled) {
           setSaidasAbertas([]);
-          setError(e.message || "Falha ao carregar saídas abertas");
+          setError(
+            e instanceof Error
+              ? e.message
+              : "Falha ao carregar saídas abertas"
+          );
         }
       })
       .finally(() => {
@@ -493,6 +594,7 @@ function NovoLancamentoForm() {
     clienteId,
     retornoDeId,
     retornoPrefill,
+    saidasRefreshKey,
   ]);
 
   function onCodigoChange(value: string) {
@@ -500,20 +602,42 @@ function NovoLancamentoForm() {
     setProduto(null);
     setError("");
     if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchAbort.current?.abort();
     if (!value.trim()) {
       setSugestoes([]);
       return;
     }
     searchTimer.current = setTimeout(async () => {
+      const ac = new AbortController();
+      searchAbort.current = ac;
       try {
         const list = await api<Produto[]>(
-          `/produtos/busca?q=${encodeURIComponent(value.trim())}`
+          `/produtos/busca?q=${encodeURIComponent(value.trim())}`,
+          { signal: ac.signal }
         );
-        setSugestoes(list);
-      } catch {
+        if (!ac.signal.aborted) setSugestoes(list);
+      } catch (e) {
+        if (ac.signal.aborted) return;
+        if (e instanceof DOMException && e.name === "AbortError") return;
         setSugestoes([]);
       }
     }, 250);
+  }
+
+  function aplicarProdutoDaSaida(s: SaidaAberta) {
+    setProduto({
+      id: s.produto.id,
+      codigo: s.produto.codigo,
+      descricao: s.produto.descricao,
+      controlaSerie: Boolean(s.produto.controlaSerie),
+      precoUnitario: s.produto.precoUnitario,
+    });
+    setCodigo(s.produto.codigo);
+    setQuantidade(String(s.qtyRestante ?? s.quantidade));
+    setFilialId(s.filial.id);
+    setSeries([]);
+    setAlocacaoSerieId(null);
+    setSugestoes([]);
   }
 
   async function buscarProduto(code: string): Promise<Produto | null> {
@@ -525,12 +649,17 @@ function NovoLancamentoForm() {
     const list = await api<Produto[]>(
       `/produtos/busca?q=${encodeURIComponent(code.trim())}`
     );
-    const exact =
-      list.find((p) => p.codigo.toLowerCase() === code.trim().toLowerCase()) ||
-      list[0];
+    const exact = list.find(
+      (p) => p.codigo.toLowerCase() === code.trim().toLowerCase()
+    );
     if (!exact) {
       setProduto(null);
-      setError("Produto não encontrado");
+      setSugestoes(list);
+      setError(
+        list.length
+          ? "Selecione o produto na lista (código exato necessário)"
+          : "Produto não encontrado"
+      );
       return null;
     }
     setProduto(exact);
@@ -546,6 +675,46 @@ function NovoLancamentoForm() {
     setError("");
   }
 
+  function addAlertaEmail(raw: string) {
+    const email = raw.trim().toLowerCase();
+    if (!email) return;
+    if (!EMAIL_OK.test(email)) {
+      setError(`E-mail de alerta inválido: ${raw.trim()}`);
+      return;
+    }
+    if (alertaEmails.includes(email)) {
+      setAlertaEmailDraft("");
+      return;
+    }
+    if (alertaEmails.length >= MAX_ALERTA_EMAILS) {
+      setError(`No máximo ${MAX_ALERTA_EMAILS} e-mails de alerta`);
+      return;
+    }
+    setAlertaEmails((prev) => [...prev, email]);
+    setAlertaEmailDraft("");
+    setError("");
+  }
+
+  async function resolveLinhaProduto(
+    linha: LancamentoLinha
+  ): Promise<LancamentoProduto | null> {
+    const code = linha.codigo.trim();
+    if (
+      linha.produto &&
+      linha.produto.codigo.toLowerCase() === code.toLowerCase()
+    ) {
+      return linha.produto;
+    }
+    if (!code) return null;
+    const list = await api<Produto[]>(
+      `/produtos/busca?q=${encodeURIComponent(code)}`
+    );
+    const exact = list.find(
+      (p) => p.codigo.toLowerCase() === code.toLowerCase()
+    );
+    return exact || null;
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!podeSalvar) return;
@@ -554,12 +723,8 @@ function NovoLancamentoForm() {
     setMsg("");
     setLastTransferId(null);
     try {
-      let prod = produto;
-      if (!prod || prod.codigo.toLowerCase() !== codigo.trim().toLowerCase()) {
-        prod = await buscarProduto(codigo);
-      }
-      if (!prod) {
-        setError("Informe um produto");
+      if (precisaCliente && !clienteId) {
+        setError("Selecione o cliente / fornecedor");
         return;
       }
       if (isTransf && !filialDestinoId) {
@@ -572,32 +737,235 @@ function NovoLancamentoForm() {
       }
 
       const body: Record<string, unknown> = {
-        produtoId: prod.id,
         tipoId,
         filialId,
         clienteId: precisaCliente ? clienteId || null : null,
-        quantidade: prod.controlaSerie ? series.length : Number(quantidade),
         observacao: observacao || null,
       };
-      if (prod.controlaSerie) {
-        if (series.length === 0) {
-          setError("Informe os números de série deste produto");
+
+      if (multiSkuMode) {
+        const resolved: Array<{
+          produtoId: string;
+          codigo: string;
+          quantidade: number;
+          series?: string[];
+          controlaSerie: boolean;
+        }> = [];
+
+        for (let i = 0; i < linhas.length; i++) {
+          const linha = linhas[i]!;
+          const prod = await resolveLinhaProduto(linha);
+          if (!prod) {
+            setError(`Item ${i + 1}: informe um produto válido`);
+            return;
+          }
+          // Mantém estado sincronizado se resolveu via busca
+          if (!linha.produto || linha.produto.id !== prod.id) {
+            setLinhas((ls) =>
+              ls.map((l) =>
+                l.key === linha.key
+                  ? { ...l, produto: prod, codigo: prod.codigo }
+                  : l
+              )
+            );
+          }
+
+          const controlaSerie = Boolean(prod.controlaSerie);
+          const needsSerieEstoque =
+            controlaSerie &&
+            (tipo?.operacao === "SAIDA" || isTransf);
+          const needsSerieEntrada =
+            controlaSerie && tipo?.operacao === "ENTRADA";
+
+          let qtdNum: number;
+          let seriesPayload: string[] | undefined;
+
+          if (needsSerieEstoque) {
+            const filled = linha.series.map((s) => s.trim()).filter(Boolean);
+            if (filled.length === 0 || filled.length !== linha.series.length) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): preencha todos os números de série`
+              );
+              return;
+            }
+            if (linha.serieStatus.some((st) => st === "err")) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): há série inválida`
+              );
+              return;
+            }
+            const hasChecking = linha.serieStatus.some(
+              (st) => st === "checking"
+            );
+            if (hasChecking) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): aguarde a validação das séries`
+              );
+              return;
+            }
+            // Preferir status 'ok'; se ainda idle mas preenchido, deixa o servidor validar
+            if (
+              linha.serieStatus.length === filled.length &&
+              linha.serieStatus.some((st) => st !== "ok" && st !== "idle")
+            ) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): revise os números de série`
+              );
+              return;
+            }
+            const uniq = new Set(filled.map((s) => s.toUpperCase()));
+            if (uniq.size !== filled.length) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): há séries duplicadas`
+              );
+              return;
+            }
+            qtdNum = filled.length;
+            seriesPayload = filled;
+          } else if (needsSerieEntrada) {
+            // SeriesInput dirige a quantidade — série preenchida é a fonte da verdade
+            const filled = linha.series.map((s) => s.trim()).filter(Boolean);
+            if (filled.length === 0) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): informe os números de série`
+              );
+              return;
+            }
+            const uniq = new Set(filled.map((s) => s.toUpperCase()));
+            if (uniq.size !== filled.length) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): há séries duplicadas`
+              );
+              return;
+            }
+            qtdNum = filled.length;
+            seriesPayload = filled;
+          } else if (controlaSerie) {
+            // Fallback: séries informadas via lista
+            const filled = linha.series.map((s) => s.trim()).filter(Boolean);
+            if (filled.length === 0) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): informe os números de série`
+              );
+              return;
+            }
+            qtdNum = filled.length;
+            seriesPayload = filled;
+          } else {
+            qtdNum = Number(linha.quantidade);
+            if (!Number.isFinite(qtdNum) || qtdNum <= 0) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): informe uma quantidade válida`
+              );
+              return;
+            }
+          }
+
+          resolved.push({
+            produtoId: prod.id,
+            codigo: prod.codigo,
+            quantidade: qtdNum,
+            series: seriesPayload,
+            controlaSerie,
+          });
+        }
+
+        const ids = resolved.map((r) => r.produtoId);
+        if (new Set(ids).size !== ids.length) {
+          setError("Não repita o mesmo produto nos itens");
           return;
         }
-        body.series = series;
-        body.quantidade = series.length;
+
+        if (resolved.length === 1) {
+          const only = resolved[0]!;
+          body.produtoId = only.produtoId;
+          body.quantidade = only.quantidade;
+          if (only.series) body.series = only.series;
+        } else {
+          body.itens = resolved.map((r) => ({
+            produtoId: r.produtoId,
+            quantidade: r.quantidade,
+            ...(r.series ? { series: r.series } : {}),
+          }));
+        }
+      } else {
+        // Retorno / baixa por árvore — fluxo single-SKU legado
+        let prod = produto;
+        if (!prod || prod.codigo.toLowerCase() !== codigo.trim().toLowerCase()) {
+          prod = await buscarProduto(codigo);
+        }
+        if (!prod) {
+          setError("Informe um produto");
+          return;
+        }
+        if (isBaixaArvore) {
+          if (bomPreview.length === 0) {
+            setError(
+              "Este produto não tem árvore de componentes — cadastre a árvore no produto"
+            );
+            return;
+          }
+          if (prod.controlaSerie) {
+            setError(
+              "Produto com série ainda não pode usar baixa pela árvore"
+            );
+            return;
+          }
+        }
+
+        const qtdNum = prod.controlaSerie
+          ? series.length
+          : Number(quantidade);
+        if (!Number.isFinite(qtdNum) || qtdNum <= 0) {
+          setError(
+            prod.controlaSerie
+              ? "Informe ao menos um número de série"
+              : "Informe uma quantidade válida"
+          );
+          return;
+        }
+
+        body.produtoId = prod.id;
+        body.quantidade = qtdNum;
+        if (prod.controlaSerie) {
+          if (series.length === 0) {
+            setError("Informe os números de série deste produto");
+            return;
+          }
+          body.series = series;
+          body.quantidade = series.length;
+        }
       }
+
       if (precisaCliente) {
         body.notaFiscalNumero = notaFiscalNumero.trim() || null;
         body.notaFiscalArquivo = notaFiscalArquivo || null;
       }
       if (precisaAlerta) {
-        const emails = alertaEmailsText
-          .split(/[,;\s]+/)
-          .map((x) => x.trim())
-          .filter(Boolean);
+        let emails = alertaEmails;
+        if (alertaEmailDraft.trim()) {
+          const draft = alertaEmailDraft.trim().toLowerCase();
+          if (!EMAIL_OK.test(draft)) {
+            setError(`E-mail de alerta inválido: ${alertaEmailDraft.trim()}`);
+            return;
+          }
+          if (!emails.includes(draft) && emails.length < MAX_ALERTA_EMAILS) {
+            emails = [...emails, draft];
+            setAlertaEmails(emails);
+            setAlertaEmailDraft("");
+          }
+        }
         if (emails.length === 0) {
           setError("Informe ao menos um e-mail para alertas de retorno");
+          return;
+        }
+        if (emails.length > MAX_ALERTA_EMAILS) {
+          setError(`No máximo ${MAX_ALERTA_EMAILS} e-mails de alerta`);
+          return;
+        }
+        const invalid = emails.find((em) => !EMAIL_OK.test(em));
+        if (invalid) {
+          setError(`E-mail de alerta inválido: ${invalid}`);
           return;
         }
         body.alertaEmails = emails;
@@ -621,7 +989,7 @@ function NovoLancamentoForm() {
         body.notaFiscalArquivo = notaFiscalArquivo;
         const saida = saidasAbertas.find((s) => s.id === movimentacaoOrigemId);
         const max = saida?.qtyRestante ?? saida?.quantidade;
-        const qtdEfetiva = prod.controlaSerie
+        const qtdEfetiva = produto?.controlaSerie
           ? series.length
           : Number(quantidade);
         if (max != null && qtdEfetiva > max + 1e-9) {
@@ -649,6 +1017,7 @@ function NovoLancamentoForm() {
         creditoDestino?: string;
         transferencia?: { id: string; status: string };
         movimentacao: { status: string; id?: string };
+        movimentacoes?: Array<{ status: string; id?: string }>;
         alertaEstoqueMinimo: boolean;
         alertaEstoqueMaximo?: boolean;
         alertas?: Array<{ mensagem: string }>;
@@ -694,6 +1063,12 @@ function NovoLancamentoForm() {
             result.creditoDestino === "AGUARDAR_RECEBIMENTO" && tid ? tid : null
           );
         }
+      } else if (result.fluxo === "LANCAMENTO_GRUPO") {
+        const n = result.movimentacoes?.length ?? 0;
+        setLastTransferId(null);
+        setMsg(
+          `Grupo com ${n} movimentação(ões)${extras ? ` · ${extras}` : ""}`
+        );
       } else {
         setLastTransferId(null);
         setMsg(
@@ -712,14 +1087,24 @@ function NovoLancamentoForm() {
       setSaldoOrigem(null);
       setSaldoDestino(null);
       setQuantidade("1");
+      setLinhas([newLancamentoLinha()]);
       setObservacao("");
       setNotaFiscalNumero("");
       setNotaFiscalArquivo(null);
-      setAlertaEmailsText("");
+      setAlertaEmails([]);
+      setAlertaEmailDraft("");
       setMovimentacaoOrigemId("");
-      setSaidasAbertas([]);
+      setSeries([]);
+      setAlocacaoSerieId(null);
       setTermoArquivo(null);
       setGuiaTransporte("");
+      if (isRetorno && clienteId) {
+        // Recarrega saídas abertas (retorno parcial / próximo retorno).
+        setSaidasAbertas([]);
+        setSaidasRefreshKey((k) => k + 1);
+      } else {
+        setSaidasAbertas([]);
+      }
       codigoRef.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -739,6 +1124,163 @@ function NovoLancamentoForm() {
 
   const filialOrigemLabel = filiais.find((f) => f.id === filialId);
   const filialDestinoLabel = filiais.find((f) => f.id === filialDestinoId);
+  const saidaVinculada = saidasAbertas.find(
+    (s) => s.id === movimentacaoOrigemId
+  );
+  const maxRetornoAberto =
+    saidaVinculada?.qtyRestante ?? saidaVinculada?.quantidade;
+  const qtdDigitada = Number(quantidade);
+  const avisoSaldoInsuficiente =
+    Boolean(produto) &&
+    !produto?.controlaSerie &&
+    (tipo?.operacao === "SAIDA" || isTransf) &&
+    saldoOrigem != null &&
+    Number.isFinite(qtdDigitada) &&
+    qtdDigitada > saldoOrigem + 1e-9;
+  const avisoSeriesSaldo =
+    Boolean(produto?.controlaSerie) &&
+    (tipo?.operacao === "SAIDA" || isTransf) &&
+    saldoOrigem != null &&
+    series.length > saldoOrigem + 1e-9;
+  const avisoSeriesRetorno =
+    Boolean(produto?.controlaSerie) &&
+    isRetorno &&
+    maxRetornoAberto != null &&
+    series.length > maxRetornoAberto + 1e-9;
+
+  const tipoSelect = (
+    <label className="block">
+      <span className="mb-1 block text-sm font-medium">Tipo</span>
+      <select
+        className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
+        value={tipoId}
+        disabled={camposTravados}
+        onChange={(e) => {
+          if (transferPrefill) setTransferPrefill(false);
+          setTipoId(e.target.value);
+        }}
+      >
+        {tipos.map((t) => (
+          <option key={t.id} value={t.id}>
+            {t.nome} ({t.operacao === "TRANSFERENCIA" ? "A→B" : t.operacao})
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+
+  const estoqueSubtitle = (
+    <span className="mb-1 block text-xs text-slate-500">
+      Filial onde o saldo muda
+    </span>
+  );
+
+  const estoqueSelectOptions = (
+    user?.perfil === "OPERADOR" ? filiaisOrigem : filiais
+  ).map((f) => (
+    <option key={f.id} value={f.id}>
+      {f.sigla} — {f.nome}
+    </option>
+  ));
+
+  const estoqueField =
+    user?.perfil === "OPERADOR" && !operadorMultiFilial ? (
+      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
+        <div className="font-medium text-slate-700">Estoque</div>
+        {estoqueSubtitle}
+        <div className="mt-1 text-slate-600">
+          {filialOrigemLabel
+            ? `${filialOrigemLabel.sigla} — ${filialOrigemLabel.nome}`
+            : "Filial do operador"}
+        </div>
+      </div>
+    ) : (
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">Estoque</span>
+        {estoqueSubtitle}
+        <select
+          className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
+          value={filialId}
+          disabled={travaProdutoFilial}
+          onChange={(e) => setFilialId(e.target.value)}
+          required
+        >
+          {estoqueSelectOptions}
+        </select>
+      </label>
+    );
+
+  const origemDestinoFields = (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {user?.perfil === "OPERADOR" ? (
+        operadorMultiFilial ? (
+          <label className="block">
+            <span className="mb-1 block text-sm font-medium">
+              Filial de origem
+            </span>
+            <select
+              className="w-full rounded-lg border px-3 py-3"
+              value={filialId}
+              onChange={(e) => setFilialId(e.target.value)}
+              required
+            >
+              {filiaisOrigem.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.sigla} — {f.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
+            <div className="font-medium text-slate-700">Filial de origem</div>
+            <div className="mt-1 text-slate-600">
+              {filialOrigemLabel
+                ? `${filialOrigemLabel.sigla} — ${filialOrigemLabel.nome}`
+                : "Filial do operador"}
+            </div>
+          </div>
+        )
+      ) : (
+        <label className="block">
+          <span className="mb-1 block text-sm font-medium">
+            Filial de origem
+          </span>
+          <select
+            className="w-full rounded-lg border px-3 py-3"
+            value={filialId}
+            onChange={(e) => setFilialId(e.target.value)}
+            required
+          >
+            {filiais.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.sigla} — {f.nome}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      <label className="block">
+        <span className="mb-1 block text-sm font-medium">
+          Filial de destino
+        </span>
+        <select
+          className="w-full rounded-lg border px-3 py-3"
+          value={filialDestinoId}
+          onChange={(e) => setFilialDestinoId(e.target.value)}
+          required
+        >
+          {filiais
+            .filter((f) => f.id !== filialId)
+            .map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.sigla} — {f.nome}
+              </option>
+            ))}
+        </select>
+      </label>
+    </div>
+  );
 
   return (
     <>
@@ -771,12 +1313,12 @@ function NovoLancamentoForm() {
         ) : (
           <>
             O tipo de movimentação define se é entrada, saída ou transferência
-            entre filiais. Confirmação de recebimento fica em{" "}
+            entre filiais. Acompanhe e confirme o recebimento em{" "}
             <Link
               href="/transferencias"
               className="text-brand hover:underline"
             >
-              Confirmar Recebimento
+              Transferências
             </Link>
             .
           </>
@@ -814,21 +1356,25 @@ function NovoLancamentoForm() {
               ? ` (${filialOrigemLabel.sigla} → ${filialDestinoLabel.sigla})`
               : ""}
             {qtdFromUrl ? ` · quantidade do atalho: ${qtdFromUrl}` : ""}.
-            {saldoOrigem != null &&
+            {linhas[0]?.saldo != null &&
             qtdFromUrl &&
-            Number(qtdFromUrl) !== saldoOrigem ? (
+            Number(qtdFromUrl) !== linhas[0].saldo ? (
               <span className="mt-1 block text-xs text-amber-800/90">
-                Saldo na origem ({formatQty(saldoOrigem)}) é só referência — a
-                quantidade a lançar é a pedida no atalho.
+                Saldo na origem ({formatQty(linhas[0].saldo)}) é só referência —
+                a quantidade a lançar é a pedida no atalho.
               </span>
             ) : null}
           </div>
         )}
         {retornoPrefill && !prefillLoading && (
           <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-sm text-amber-950">
-            Dados da saída preenchidos (somente visualização). Informe a{" "}
+            Dados da saída preenchidos. Informe a{" "}
             <strong className="font-semibold">NF de retorno</strong> (número +
-            anexo) e confirme para gravar a entrada no estoque.
+            anexo)
+            {produto?.controlaSerie
+              ? " e os números de série que estão voltando"
+              : " — a quantidade pode ser parcial"}
+            , depois confirme para gravar a entrada no estoque.
           </div>
         )}
         {tipo && (
@@ -837,235 +1383,16 @@ function NovoLancamentoForm() {
           </div>
         )}
 
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium">Tipo</span>
-          <select
-            className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
-            value={tipoId}
-            disabled={camposTravados}
-            onChange={(e) => setTipoId(e.target.value)}
-          >
-            {tipos.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.nome} ({t.operacao === "TRANSFERENCIA" ? "A→B" : t.operacao})
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="relative block">
-          <span className="mb-1 block text-sm font-medium">Código / produto</span>
-          <input
-            ref={codigoRef}
-            value={codigo}
-            disabled={camposTravados}
-            onChange={(e) => onCodigoChange(e.target.value)}
-            onBlur={() => {
-              setTimeout(() => {
-                if (codigo.trim() && !produto) void buscarProduto(codigo);
-              }, 150);
-            }}
-            onKeyDown={(e) => {
-              if (e.key !== "Enter") return;
-              if (
-                !produto ||
-                produto.codigo.toLowerCase() !== codigo.trim().toLowerCase()
-              ) {
-                e.preventDefault();
-                void buscarProduto(codigo);
-              }
-            }}
-            className="w-full rounded-lg border px-3 py-3 font-mono disabled:bg-slate-50 disabled:text-slate-600"
-            placeholder="Ex: TMP-1088-W ou descrição"
-            autoComplete="off"
-          />
-          {sugestoes.length > 0 && !produto && (
-            <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-lg border bg-white shadow-lg">
-              {sugestoes.map((p) => (
-                <li key={p.id}>
-                  <button
-                    type="button"
-                    className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
-                    onMouseDown={(ev) => {
-                      ev.preventDefault();
-                      selecionarProduto(p);
-                    }}
-                  >
-                    <span className="font-mono text-xs">{p.codigo}</span> —{" "}
-                    {p.descricao}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </label>
-
-        {produto && (
-          <div className="rounded-lg bg-brand-light px-3 py-2 text-sm">
-            <div className="font-medium">{produto.descricao}</div>
-            <div className="text-slate-600">
-              Preço: R$ {Number(produto.precoUnitario).toFixed(2)}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
-              <span>
-                {isTransf ? "Saldo origem" : "Saldo disponível"}
-                {filialOrigemLabel ? ` (${filialOrigemLabel.sigla})` : ""}:{" "}
-                <strong>
-                  {saldoOrigem === null ? "…" : formatQty(saldoOrigem)}
-                </strong>
-              </span>
-              {isTransf && (
-                <span>
-                  Saldo destino
-                  {filialDestinoLabel ? ` (${filialDestinoLabel.sigla})` : ""}:{" "}
-                  <strong>
-                    {saldoDestino === null ? "…" : formatQty(saldoDestino)}
-                  </strong>
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-
-        {user?.perfil === "OPERADOR" ? (
-          isTransf ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {operadorMultiFilial ? (
-                <label className="block">
-                  <span className="mb-1 block text-sm font-medium">
-                    Filial de origem
-                  </span>
-                  <select
-                    className="w-full rounded-lg border px-3 py-3"
-                    value={filialId}
-                    onChange={(e) => setFilialId(e.target.value)}
-                    required
-                  >
-                    {filiaisOrigem.map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.sigla} — {f.nome}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
-                  <div className="font-medium text-slate-700">
-                    Filial de origem
-                  </div>
-                  <div className="mt-1 text-slate-600">
-                    {filialOrigemLabel
-                      ? `${filialOrigemLabel.sigla} — ${filialOrigemLabel.nome}`
-                      : "Filial do operador"}
-                  </div>
-                </div>
-              )}
-              <label className="block">
-                <span className="mb-1 block text-sm font-medium">
-                  Filial de destino
-                </span>
-                <select
-                  className="w-full rounded-lg border px-3 py-3"
-                  value={filialDestinoId}
-                  onChange={(e) => setFilialDestinoId(e.target.value)}
-                  required
-                >
-                  {filiais
-                    .filter((f) => f.id !== filialId)
-                    .map((f) => (
-                      <option key={f.id} value={f.id}>
-                        {f.sigla} — {f.nome}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            </div>
-          ) : operadorMultiFilial ? (
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium">
-                Estoque (filial) afetado
-              </span>
-              <select
-                className="w-full rounded-lg border px-3 py-3"
-                value={filialId}
-                onChange={(e) => setFilialId(e.target.value)}
-                required
-              >
-                {filiaisOrigem.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.sigla} — {f.nome}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
-              <div className="font-medium text-slate-700">Estoque afetado</div>
-              <div className="mt-1 text-slate-600">
-                {filialOrigemLabel
-                  ? `${filialOrigemLabel.sigla} — ${filialOrigemLabel.nome}`
-                  : "Filial do operador"}
-              </div>
-            </div>
-          )
-        ) : isTransf ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium">
-                Filial de origem
-              </span>
-              <select
-                className="w-full rounded-lg border px-3 py-3"
-                value={filialId}
-                onChange={(e) => setFilialId(e.target.value)}
-                required
-              >
-                {filiais.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.sigla} — {f.nome}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium">
-                Filial de destino
-              </span>
-              <select
-                className="w-full rounded-lg border px-3 py-3"
-                value={filialDestinoId}
-                onChange={(e) => setFilialDestinoId(e.target.value)}
-                required
-              >
-                {filiais
-                  .filter((f) => f.id !== filialId)
-                  .map((f) => (
-                    <option key={f.id} value={f.id}>
-                      {f.sigla} — {f.nome}
-                    </option>
-                  ))}
-              </select>
-            </label>
+        {isTransf ? (
+          <div className="space-y-3">
+            {tipoSelect}
+            {origemDestinoFields}
           </div>
         ) : (
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium">
-              Estoque (filial) afetado
-            </span>
-            <select
-              className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
-              value={filialId}
-              disabled={camposTravados}
-              onChange={(e) => setFilialId(e.target.value)}
-              required
-            >
-              {filiais.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.sigla} — {f.nome}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {tipoSelect}
+            {estoqueField}
+          </div>
         )}
 
         {isTransf && (
@@ -1102,7 +1429,7 @@ function NovoLancamentoForm() {
                     Na Confirmação do Recebimento
                   </span>
                   <span className="block text-xs text-slate-600">
-                    Fica em trânsito; o destino confirma em Confirmar Recebimento.
+                    Fica em trânsito; o destino confirma em Transferências.
                   </span>
                 </span>
               </label>
@@ -1120,7 +1447,7 @@ function NovoLancamentoForm() {
                 className="w-full rounded-lg border border-amber-100 bg-white px-3 py-2"
               />
               <span className="mt-1 block text-xs text-slate-500">
-                Campo livre — cadastro de transportadoras virá no futuro.
+                Opcional — nome da transportadora ou número da guia.
               </span>
             </label>
           </fieldset>
@@ -1162,14 +1489,7 @@ function NovoLancamentoForm() {
                     const id = e.target.value;
                     setMovimentacaoOrigemId(id);
                     const s = saidasAbertas.find((x) => x.id === id);
-                    if (s) {
-                      setProduto(s.produto);
-                      setCodigo(s.produto.codigo);
-                      setQuantidade(
-                        String(s.qtyRestante ?? s.quantidade)
-                      );
-                      setFilialId(s.filial.id);
-                    }
+                    if (s) aplicarProdutoDaSaida(s);
                   }}
                 >
                   <option value="">
@@ -1206,24 +1526,60 @@ function NovoLancamentoForm() {
             )}
 
             {precisaAlerta && (
-              <label className="block">
+              <div className="block">
                 <span className="mb-1 block text-sm font-medium">
                   E-mails para alertas de retorno
                 </span>
+                <div className="flex flex-wrap gap-2">
+                  {alertaEmails.map((em) => (
+                    <span
+                      key={em}
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-700"
+                    >
+                      {em}
+                      <button
+                        type="button"
+                        className="ml-0.5 text-slate-400 hover:text-rose-600"
+                        aria-label={`Remover ${em}`}
+                        onClick={() =>
+                          setAlertaEmails((prev) =>
+                            prev.filter((x) => x !== em)
+                          )
+                        }
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
                 <input
-                  type="text"
-                  required
-                  value={alertaEmailsText}
-                  onChange={(e) => setAlertaEmailsText(e.target.value)}
-                  placeholder="financeiro@teep.com.br, outro@…"
-                  className="w-full rounded-lg border px-3 py-3"
+                  type="email"
+                  value={alertaEmailDraft}
+                  onChange={(e) => setAlertaEmailDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addAlertaEmail(
+                        e.key === ","
+                          ? alertaEmailDraft.replace(/,$/, "")
+                          : alertaEmailDraft
+                      );
+                    }
+                  }}
+                  onBlur={() => {
+                    if (alertaEmailDraft.trim()) {
+                      addAlertaEmail(alertaEmailDraft);
+                    }
+                  }}
+                  placeholder="financeiro@teep.com.br"
+                  className="mt-2 w-full rounded-lg border px-3 py-3"
                 />
                 <span className="mt-1 block text-xs text-slate-500">
-                  Disparos conforme os dias do tipo (calendário
-                  America/Sao_Paulo), a partir desta data de lançamento
-                  (separados por vírgula).
+                  Pode informar mais de um (Enter ou vírgula). Disparos conforme
+                  os dias do tipo (calendário America/Sao_Paulo), a partir desta
+                  data de lançamento.
                 </span>
-              </label>
+              </div>
             )}
 
             <div
@@ -1392,37 +1748,375 @@ function NovoLancamentoForm() {
           </>
         )}
 
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium">Quantidade</span>
-          {produto?.controlaSerie ? (
-            <input
-              type="number"
-              readOnly
-              value={series.length || ""}
-              className="w-full rounded-lg border bg-slate-50 px-3 py-3 text-slate-700"
-            />
-          ) : (
-            <input
-              type="number"
-              min="0.0001"
-              step="any"
-              required
-              disabled={camposTravados}
-              value={quantidade}
-              onChange={(e) => setQuantidade(e.target.value)}
-              className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
-            />
-          )}
-        </label>
+        {multiSkuMode ? (
+          <section className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/40 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-800">
+                Itens da nota
+              </h2>
+              <span className="text-xs text-slate-500">
+                {linhas.length}/{MAX_LINHAS}
+              </span>
+            </div>
+            <div className="space-y-3">
+              {linhas.map((linha, index) => (
+                <LancamentoLinhaItem
+                  key={linha.key}
+                  linha={linha}
+                  index={index}
+                  canRemove={linhas.length > 1}
+                  locked={false}
+                  filialId={filialId}
+                  validarSerieEstoque={
+                    tipo?.operacao === "SAIDA" || isTransf
+                  }
+                  podeGerarAutomatico={
+                    tipo?.operacao === "ENTRADA" && !isRetorno
+                  }
+                  tipoNome={tipo?.nome}
+                  onPatch={(partial) =>
+                    setLinhas((ls) =>
+                      ls.map((l) =>
+                        l.key === linha.key ? { ...l, ...partial } : l
+                      )
+                    )
+                  }
+                  onRemove={() =>
+                    setLinhas((ls) => ls.filter((l) => l.key !== linha.key))
+                  }
+                  onError={setError}
+                  onMsg={setMsg}
+                />
+              ))}
+            </div>
+            <button
+              type="button"
+              disabled={linhas.length >= MAX_LINHAS}
+              onClick={() =>
+                setLinhas((ls) =>
+                  ls.length >= MAX_LINHAS
+                    ? ls
+                    : [...ls, newLancamentoLinha()]
+                )
+              }
+              className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Adicionar item
+            </button>
+          </section>
+        ) : (
+          <>
+            <label className="relative block">
+              <span className="mb-1 block text-sm font-medium">
+                Código / produto
+              </span>
+              <input
+                ref={codigoRef}
+                value={codigo}
+                disabled={travaProdutoFilial}
+                onChange={(e) => onCodigoChange(e.target.value)}
+                onBlur={() => {
+                  setTimeout(() => {
+                    if (codigo.trim() && !produto) void buscarProduto(codigo);
+                  }, 150);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  if (
+                    !produto ||
+                    produto.codigo.toLowerCase() !==
+                      codigo.trim().toLowerCase()
+                  ) {
+                    e.preventDefault();
+                    void buscarProduto(codigo);
+                  }
+                }}
+                className="w-full rounded-lg border px-3 py-3 font-mono disabled:bg-slate-50 disabled:text-slate-600"
+                placeholder="Ex: TMP-1088-W ou descrição"
+                autoComplete="off"
+              />
+              {sugestoes.length > 0 && !produto && (
+                <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded-lg border bg-white shadow-lg">
+                  {sugestoes.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
+                        onMouseDown={(ev) => {
+                          ev.preventDefault();
+                          selecionarProduto(p);
+                        }}
+                      >
+                        <span className="font-mono text-xs">{p.codigo}</span>{" "}
+                        — {p.descricao}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </label>
 
-        {produto?.controlaSerie ? (
-          <SeriesInput
-            value={series}
-            onChange={setSeries}
-            disabled={camposTravados}
-            label="Números de série (digite os códigos físicos)"
-          />
-        ) : null}
+            {produto && (
+              <div className="rounded-lg bg-brand-light px-3 py-2 text-sm">
+                <div className="font-medium">{produto.descricao}</div>
+                <div className="text-slate-600">
+                  Preço:{" "}
+                  {Number(produto.precoUnitario).toLocaleString("pt-BR", {
+                    style: "currency",
+                    currency: "BRL",
+                  })}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
+                  <span>
+                    {isTransf ? "Saldo origem" : "Saldo disponível"}
+                    {filialOrigemLabel
+                      ? ` (${filialOrigemLabel.sigla})`
+                      : ""}
+                    :{" "}
+                    <strong>
+                      {saldoOrigem === null ? "…" : formatQty(saldoOrigem)}
+                    </strong>
+                  </span>
+                  {isTransf && (
+                    <span>
+                      Saldo destino
+                      {filialDestinoLabel
+                        ? ` (${filialDestinoLabel.sigla})`
+                        : ""}
+                      :{" "}
+                      <strong>
+                        {saldoDestino === null
+                          ? "…"
+                          : formatQty(saldoDestino)}
+                      </strong>
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {isBaixaArvore ? (
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/50 p-3">
+                <p className="text-sm font-medium text-amber-950">
+                  Baixa pela árvore
+                </p>
+                <p className="text-xs text-amber-900/80">
+                  {isTransf
+                    ? "Na origem serão baixados os componentes da árvore. No destino entra apenas este produto."
+                    : "No estoque selecionado serão baixados os componentes da árvore deste produto."}
+                </p>
+                {bomPreview.length > 0 ? (
+                  <div className="text-xs text-slate-700">
+                    <p className="mb-1 font-medium">Componentes que saem</p>
+                    <ul className="space-y-0.5">
+                      {bomPreview.map((b) => {
+                        const qtdMont = Number(quantidade) || 0;
+                        const cons = b.quantidade * qtdMont;
+                        return (
+                          <li key={b.produtoFilhoId}>
+                            {b.produtoFilho.codigo} × {cons}
+                            {b.fantasma
+                              ? " (fantasma — não baixa estoque)"
+                              : ""}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                ) : produto ? (
+                  <p className="text-xs text-amber-800">
+                    Este produto ainda não tem componentes na árvore.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            <label className="block">
+              <span className="mb-1 block text-sm font-medium">Quantidade</span>
+              {produto?.controlaSerie ? (
+                <input
+                  type="number"
+                  readOnly
+                  value={series.length || ""}
+                  className="w-full rounded-lg border bg-slate-50 px-3 py-3 text-slate-700"
+                />
+              ) : (
+                <input
+                  type="number"
+                  min="0.0001"
+                  step="any"
+                  required
+                  value={quantidade}
+                  onChange={(e) => setQuantidade(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-3"
+                />
+              )}
+              {produto?.controlaSerie ? (
+                <span className="mt-1 block text-xs text-slate-500">
+                  A quantidade segue a contagem dos números de série.
+                </span>
+              ) : isRetorno && maxRetornoAberto != null ? (
+                <span className="mt-1 block text-xs text-slate-500">
+                  Máximo em aberto: {formatQty(maxRetornoAberto)}. Pode
+                  retornar parcial.
+                </span>
+              ) : null}
+            </label>
+
+            {produto?.controlaSerie ? (
+              <SeriesInput
+                key={produto.id}
+                value={series}
+                onChange={setSeries}
+                gerando={gerandoSeries}
+                desfazendo={desfazendoSeries}
+                alocacaoPendenteId={alocacaoSerieId}
+                formatoDica={produto.configuracaoSerie?.formato}
+                podeGerarAutomatico={
+                  tipo?.operacao === "ENTRADA" &&
+                  !isRetorno &&
+                  !/rma/i.test(tipo?.nome || "") &&
+                  produto.configuracaoSerie?.geracaoAutomatica !== false
+                }
+                onDesfazerAlocacao={async () => {
+                  if (!alocacaoSerieId) return;
+                  setDesfazendoSeries(true);
+                  setError("");
+                  setMsg("");
+                  try {
+                    await api("/series/alocar/desfazer", {
+                      method: "POST",
+                      body: JSON.stringify({ alocacaoId: alocacaoSerieId }),
+                    });
+                    setSeries([]);
+                    setAlocacaoSerieId(null);
+                    setMsg(
+                      "Geração desfeita — números devolvidos ao contador."
+                    );
+                  } catch (err) {
+                    setError(
+                      err instanceof Error
+                        ? err.message
+                        : "Falha ao desfazer geração"
+                    );
+                  } finally {
+                    setDesfazendoSeries(false);
+                  }
+                }}
+                onGerarAutomatico={async (quantidade) => {
+                  if (!produto?.id) return;
+                  if (alocacaoSerieId) {
+                    if (
+                      !confirm(
+                        "Há uma geração pendente. Desfazer e gerar de novo?"
+                      )
+                    ) {
+                      return;
+                    }
+                    setDesfazendoSeries(true);
+                    try {
+                      await api("/series/alocar/desfazer", {
+                        method: "POST",
+                        body: JSON.stringify({
+                          alocacaoId: alocacaoSerieId,
+                        }),
+                      });
+                      setAlocacaoSerieId(null);
+                      setSeries([]);
+                    } catch (err) {
+                      setError(
+                        err instanceof Error
+                          ? err.message
+                          : "Falha ao desfazer geração anterior"
+                      );
+                      return;
+                    } finally {
+                      setDesfazendoSeries(false);
+                    }
+                  } else if (
+                    series.length > 0 &&
+                    !confirm(
+                      `Já há ${series.length} série(s) na lista. Gerar de novo substitui a lista. Continuar?`
+                    )
+                  ) {
+                    return;
+                  }
+                  setGerandoSeries(true);
+                  setError("");
+                  setMsg("");
+                  try {
+                    const out = await api<{
+                      series: string[];
+                      alocacaoId?: string;
+                      formato?: string;
+                    }>("/series/alocar", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        produtoId: produto.id,
+                        quantidade,
+                      }),
+                    });
+                    const geradas = out.series || [];
+                    if (!geradas.length) {
+                      setError("Nenhuma série gerada");
+                      return;
+                    }
+                    setSeries(geradas);
+                    setAlocacaoSerieId(out.alocacaoId || null);
+                    setMsg(
+                      `${geradas.length} série(s) gerada(s). Confirme o lançamento para entrar no estoque (ou desfaça se cancelar).`
+                    );
+                  } catch (err) {
+                    setError(
+                      err instanceof Error
+                        ? err.message
+                        : "Falha ao gerar séries"
+                    );
+                  } finally {
+                    setGerandoSeries(false);
+                  }
+                }}
+                label={
+                  isRetorno
+                    ? "Números de série que estão retornando"
+                    : tipo?.operacao === "ENTRADA" &&
+                        !/rma/i.test(tipo?.nome || "")
+                      ? "Números de série (gerar ou informar)"
+                      : "Números de série (digite os códigos físicos)"
+                }
+              />
+            ) : null}
+
+            {avisoSaldoInsuficiente && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Quantidade ({formatQty(qtdDigitada)}) maior que o saldo
+                disponível ({formatQty(saldoOrigem!)}
+                {filialOrigemLabel
+                  ? ` em ${filialOrigemLabel.sigla}`
+                  : ""}
+                ). O servidor pode recusar o lançamento.
+              </p>
+            )}
+
+            {avisoSeriesSaldo && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Você informou {series.length} série(s), mas o saldo disponível
+                é {formatQty(saldoOrigem!)}
+                {filialOrigemLabel
+                  ? ` em ${filialOrigemLabel.sigla}`
+                  : ""}
+                .
+              </p>
+            )}
+
+            {avisoSeriesRetorno && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Você informou {series.length} série(s), mas o saldo em aberto é{" "}
+                {formatQty(maxRetornoAberto!)}.
+              </p>
+            )}
+          </>
+        )}
 
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Observação</span>

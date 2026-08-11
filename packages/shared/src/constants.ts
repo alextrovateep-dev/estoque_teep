@@ -35,16 +35,56 @@ export const TIPO_TRANSF_RECEBIDA = "Transferência Recebida";
 /** Tipo de lançamento unificado (F15) — pode ter requerAprovacao */
 export const TIPO_TRANSF_ENTRE_ESTOQUES = "Transferência entre estoques";
 export const TIPO_ESTORNO = "Estorno";
+export const TIPO_ENTRADA_RMA = "Entrada RMA";
+/** Nome do tipo no banco; UI: “Devolução ao cliente” */
+export const TIPO_SAIDA_RMA = "Saída RMA";
+/**
+ * Tipo sistema: saída automática de cada componente na baixa pela árvore.
+ * Nome no banco (histórico pode ter sido "Consumo Montagem" — o seed renomeia).
+ */
+export const TIPO_CONSUMO_MONTAGEM = "Baixa de componente (árvore)";
+
+/** Locais de estoque especiais (Filial.sigla) */
+export const SIGLA_ESTOQUE_RMA = "RMA";
+export const SIGLA_ESTOQUE_DESCARTE = "DESC";
+
+export const RMA_PROCESSO_STATUS = ["ABERTO", "FECHADO", "CANCELADO"] as const;
+export type RmaProcessoStatus = (typeof RMA_PROCESSO_STATUS)[number];
+
+export const RMA_ITEM_STATUS = [
+  "ABERTO",
+  "EM_ESTOQUE",
+  "SEM_MANUTENCAO",
+  "DEVOLVIDO",
+  "DESCARTADO",
+  "CANCELADO",
+] as const;
+export type RmaItemStatus = (typeof RMA_ITEM_STATUS)[number];
+
+export const RMA_ANEXO_TIPOS = [
+  "LAUDO",
+  "NF_ENTRADA",
+  "NF_SAIDA",
+  "NF_COBRANCA",
+  "OUTRO",
+] as const;
+export type RmaAnexoTipo = (typeof RMA_ANEXO_TIPOS)[number];
 
 export const BRAND_COLOR = "#5B8B83";
 
-/** Eventos de alerta por e-mail (preferências no cadastro do usuário) */
+/** Eventos de alerta (preferências no cadastro: sino; e-mail via master + allowlist) */
 export const ALERTA_EVENTOS = [
   "ESTOQUE_MINIMO",
   "ESTOQUE_MAXIMO",
   "PRECO_AJUSTADO",
   "DIVERGENCIA_TRANSFERENCIA",
   "ALERTA_RETORNO_MOVIMENTACAO",
+  "TRANSFERENCIA_PENDENTE_APROVACAO",
+  "TRANSFERENCIA_APROVADA",
+  "TRANSFERENCIA_REJEITADA",
+  "RMA_ABERTO",
+  "RMA_FINANCEIRO",
+  "RMA_ENCERRADO",
 ] as const;
 export type AlertaEvento = (typeof ALERTA_EVENTOS)[number];
 
@@ -54,6 +94,12 @@ export const ALERTA_EVENTO_LABELS: Record<AlertaEvento, string> = {
   PRECO_AJUSTADO: "Produto teve preço ajustado",
   DIVERGENCIA_TRANSFERENCIA: "Divergência em transferência",
   ALERTA_RETORNO_MOVIMENTACAO: "Alerta de retorno (demo/comodato)",
+  TRANSFERENCIA_PENDENTE_APROVACAO: "Transferência pendente de aprovação",
+  TRANSFERENCIA_APROVADA: "Transferência aprovada",
+  TRANSFERENCIA_REJEITADA: "Transferência rejeitada",
+  RMA_ABERTO: "RMA aberto",
+  RMA_FINANCEIRO: "RMA — atualização financeira",
+  RMA_ENCERRADO: "RMA encerrado (fechado ou cancelado)",
 };
 
 export const MOVIMENTACAO_ANEXO_TIPOS = [
@@ -76,6 +122,8 @@ export const DIAS_ALERTA_RETORNO_DEFAULT = [15, 30, 45, 60] as const;
 /**
  * Permissões de tela/ação configuráveis por usuário (além do perfil).
  * Admin ignora e tem tudo. Área /admin/* continua só ADMIN.
+ *
+ * Cadastros: permissão por página (consultar e cadastrar/editar separados).
  */
 export const PERMISSAO_KEYS = [
   "dashboard",
@@ -84,12 +132,47 @@ export const PERMISSAO_KEYS = [
   "transferencias",
   "movimentacoes",
   "aprovacoes",
-  "cadastros",
+  "cadastros_produtos_ver",
+  "cadastros_produtos_editar",
+  "cadastros_clientes_ver",
+  "cadastros_clientes_editar",
+  "cadastros_arvore_ver",
+  "cadastros_arvore_editar",
   "estoque_init",
+  "rma",
+  "rma_cobranca",
+  "relatorios",
 ] as const;
 export type PermissaoKey = (typeof PERMISSAO_KEYS)[number];
 
 export type PermissoesUsuario = Record<PermissaoKey, boolean>;
+
+/** Páginas de cadastro (moderação por tela). */
+export const CADASTROS_PAGINAS = [
+  {
+    id: "produtos",
+    label: "Produtos",
+    href: "/cadastros/produtos",
+    ver: "cadastros_produtos_ver",
+    editar: "cadastros_produtos_editar",
+  },
+  {
+    id: "clientes",
+    label: "Clientes / Fornecedores",
+    href: "/cadastros/clientes",
+    ver: "cadastros_clientes_ver",
+    editar: "cadastros_clientes_editar",
+  },
+  {
+    id: "arvore",
+    label: "Árvore de produto",
+    href: "/cadastros/arvore",
+    ver: "cadastros_arvore_ver",
+    editar: "cadastros_arvore_editar",
+  },
+] as const;
+
+export type CadastrosPaginaId = (typeof CADASTROS_PAGINAS)[number]["id"];
 
 export const PERMISSAO_LABELS: Record<
   PermissaoKey,
@@ -108,8 +191,8 @@ export const PERMISSAO_LABELS: Record<
     descricao: "Criar entradas, saídas e transferências",
   },
   transferencias: {
-    label: "Confirmar Recebimento",
-    descricao: "Conferir e confirmar cargas em trânsito",
+    label: "Transferências",
+    descricao: "Acompanhar cargas e confirmar recebimento",
   },
   movimentacoes: {
     label: "Movimentações",
@@ -119,13 +202,45 @@ export const PERMISSAO_LABELS: Record<
     label: "Aprovações / Estornos",
     descricao: "Aprovar, rejeitar e estornar movimentos",
   },
-  cadastros: {
-    label: "Cadastros",
-    descricao: "Produtos, categorias e clientes",
+  cadastros_produtos_ver: {
+    label: "Produtos — consultar",
+    descricao: "Abrir a página de produtos",
+  },
+  cadastros_produtos_editar: {
+    label: "Produtos — cadastrar/editar",
+    descricao: "Criar e alterar produtos",
+  },
+  cadastros_clientes_ver: {
+    label: "Clientes — consultar",
+    descricao: "Abrir a página de clientes/fornecedores",
+  },
+  cadastros_clientes_editar: {
+    label: "Clientes — cadastrar/editar",
+    descricao: "Criar e alterar clientes/fornecedores",
+  },
+  cadastros_arvore_ver: {
+    label: "Árvore — consultar",
+    descricao: "Abrir a página de árvore de produto",
+  },
+  cadastros_arvore_editar: {
+    label: "Árvore — cadastrar/editar",
+    descricao: "Criar e alterar a montagem (BOM)",
   },
   estoque_init: {
     label: "Inventário",
     descricao: "Inventário / saldo inicial em lote",
+  },
+  rma: {
+    label: "RMA",
+    descricao: "Processos de RMA (entrada e devolução ao cliente)",
+  },
+  rma_cobranca: {
+    label: "RMA — financeiro",
+    descricao: "Cobrança, valor e números/anexos de NF do RMA",
+  },
+  relatorios: {
+    label: "Relatórios",
+    descricao: "Hub de relatórios (produtos, estoque, árvore) e exportações",
   },
 };
 
@@ -144,8 +259,16 @@ export function defaultPermissoes(perfil: Perfil): PermissoesUsuario {
       transferencias: true,
       movimentacoes: true,
       aprovacoes: true,
-      cadastros: true,
+      cadastros_produtos_ver: true,
+      cadastros_produtos_editar: true,
+      cadastros_clientes_ver: true,
+      cadastros_clientes_editar: true,
+      cadastros_arvore_ver: true,
+      cadastros_arvore_editar: true,
       estoque_init: true,
+      rma: true,
+      rma_cobranca: true,
+      relatorios: true,
     };
   }
   return {
@@ -155,9 +278,52 @@ export function defaultPermissoes(perfil: Perfil): PermissoesUsuario {
     transferencias: true,
     movimentacoes: true,
     aprovacoes: false,
-    cadastros: false,
+    cadastros_produtos_ver: false,
+    cadastros_produtos_editar: false,
+    cadastros_clientes_ver: false,
+    cadastros_clientes_editar: false,
+    cadastros_arvore_ver: false,
+    cadastros_arvore_editar: false,
     estoque_init: false,
+    rma: true,
+    rma_cobranca: false,
+    relatorios: false,
   };
+}
+
+function applyCadastrosCompat(
+  out: PermissoesUsuario,
+  overrides: Partial<Record<string, boolean>>
+) {
+  if (overrides.cadastros === true) {
+    for (const p of CADASTROS_PAGINAS) {
+      if (typeof overrides[p.ver] !== "boolean") out[p.ver] = true;
+    }
+  } else if (overrides.cadastros === false) {
+    for (const p of CADASTROS_PAGINAS) {
+      if (typeof overrides[p.ver] !== "boolean") out[p.ver] = false;
+      if (typeof overrides[p.editar] !== "boolean") out[p.editar] = false;
+    }
+  }
+  if (overrides.cadastros_editar === true) {
+    for (const p of CADASTROS_PAGINAS) {
+      if (typeof overrides[p.editar] !== "boolean") out[p.editar] = true;
+      if (typeof overrides[p.ver] !== "boolean") out[p.ver] = true;
+    }
+  }
+  const legadoEdit: Array<[string, (typeof CADASTROS_PAGINAS)[number]]> = [
+    ["cadastros_produtos", CADASTROS_PAGINAS[0]],
+    ["cadastros_clientes", CADASTROS_PAGINAS[1]],
+    ["cadastros_arvore", CADASTROS_PAGINAS[2]],
+  ];
+  for (const [oldKey, pagina] of legadoEdit) {
+    if (overrides[oldKey] === true) {
+      if (typeof overrides[pagina.editar] !== "boolean") out[pagina.editar] = true;
+      if (typeof overrides[pagina.ver] !== "boolean") out[pagina.ver] = true;
+    } else if (overrides[oldKey] === false) {
+      if (typeof overrides[pagina.editar] !== "boolean") out[pagina.editar] = false;
+    }
+  }
 }
 
 /** Mescla defaults do perfil com overrides salvos (só keys conhecidas). */
@@ -172,15 +338,48 @@ export function resolvePermissoes(
   for (const k of PERMISSAO_KEYS) {
     if (typeof overrides[k] === "boolean") out[k] = overrides[k]!;
   }
-  // Assistente sem dashboard não faz sentido
+  applyCadastrosCompat(out, overrides);
   if (out.assistente && !out.dashboard) out.assistente = false;
-  // Gestão continua restrita a Gerente+ (API/services)
+  for (const p of CADASTROS_PAGINAS) {
+    if (out[p.editar] && !out[p.ver]) out[p.ver] = true;
+  }
   if (perfil === "OPERADOR") {
     out.aprovacoes = false;
-    out.cadastros = false;
+    for (const p of CADASTROS_PAGINAS) {
+      out[p.ver] = false;
+      out[p.editar] = false;
+    }
     out.estoque_init = false;
+    out.rma_cobranca = false;
   }
   return out;
+}
+
+/** Tem acesso à página (consultar ou editar). */
+export function hasCadastroPagina(
+  permissoes: PermissoesUsuario,
+  paginaId: CadastrosPaginaId
+): boolean {
+  const p = CADASTROS_PAGINAS.find((x) => x.id === paginaId);
+  if (!p) return false;
+  return Boolean(permissoes[p.ver] || permissoes[p.editar]);
+}
+
+/** Pode cadastrar/editar na página. */
+export function hasCadastroEditar(
+  permissoes: PermissoesUsuario,
+  paginaId: CadastrosPaginaId
+): boolean {
+  const p = CADASTROS_PAGINAS.find((x) => x.id === paginaId);
+  if (!p) return false;
+  return Boolean(permissoes[p.editar]);
+}
+
+/** Alguma página de cadastro liberada. */
+export function hasQualquerCadastro(permissoes: PermissoesUsuario): boolean {
+  return CADASTROS_PAGINAS.some(
+    (p) => permissoes[p.ver] || permissoes[p.editar]
+  );
 }
 
 export function hasPermissao(

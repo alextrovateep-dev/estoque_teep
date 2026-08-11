@@ -13,8 +13,6 @@ model Filial {
   sigla         String          @unique @db.VarChar(5)
   cidade        String?         @db.VarChar(80)
   estado        String?         @db.Char(2)
-  responsavel   String?         @db.VarChar(100)
-  emailContato  String?         @map("email_contato") @db.VarChar(100)
   ativo         Boolean         @default(true)
   criadoEm      DateTime        @default(now()) @map("criado_em") @db.Timestamptz
   usuarios      Usuario[]
@@ -22,9 +20,11 @@ model Filial {
   estoques      Estoque[]
   movimentacoes Movimentacao[] @relation("MovFilial")
   movimentacoesDestino Movimentacao[] @relation("MovFilialDestino")
+  movimentacoesComponentes Movimentacao[] @relation("MovFilialComponentes")
   transferenciasOrigem  Transferencia[] @relation("Origem")
   transferenciasDestino Transferencia[] @relation("Destino")
   unidadesSerie         UnidadeSerie[]
+  rmaProcessos          RmaProcesso[]
 
   @@map("filiais")
 }
@@ -61,6 +61,8 @@ model Usuario {
   refreshTokens      RefreshToken[]
   transferenciasCriadas Transferencia[]
   notificacoes       Notificacao[]
+  rmaProcessosCriados RmaProcesso[]
+  serieAlocacoes      SerieAlocacao[]
 
   @@map("usuarios")
 }
@@ -119,6 +121,12 @@ model Produto {
   movimentacoes   Movimentacao[]
   transferenciaItens TransferenciaItem[]
   unidadesSerie   UnidadeSerie[]
+  contadoresSerie ContadorSerie[]
+  configuracaoSerie ConfiguracaoSerie?
+  serieAlocacoes  SerieAlocacao[]
+  rmaItens        RmaItem[]
+  componentesComoPai   ProdutoComponente[] @relation("BomPai")
+  componentesComoFilho ProdutoComponente[] @relation("BomFilho")
 
   @@map("produtos")
 }
@@ -141,6 +149,7 @@ model Cliente {
   ativo         Boolean        @default(true)
   movimentacoes Movimentacao[]
   unidadesSerie UnidadeSerie[]
+  rmaProcessos  RmaProcesso[]
 
   @@map("clientes")
 }
@@ -165,6 +174,8 @@ model TipoMovimentacao {
   ehRetornoDeId      String?             @map("eh_retorno_de_id") @db.Uuid
   /// Exige anexo TERMO_COMODATO no lançamento (ex. Saída Comodato)
   requerTermoComodato Boolean            @default(false) @map("requer_termo_comodato")
+  /// SAIDA/TRANSFERENCIA: na saída baixa componentes não-fantasma da BOM
+  baixaPorArvore     Boolean             @default(false) @map("baixa_por_arvore")
   descricao          String?             @db.Text
   ativo              Boolean             @default(true)
   movimentacoes      Movimentacao[]
@@ -174,6 +185,24 @@ model TipoMovimentacao {
 
   @@index([ehRetornoDeId])
   @@map("tipos_movimentacao")
+}
+
+/// BOM 1 nível: componentes do produto acabado
+model ProdutoComponente {
+  id             String  @id @default(uuid()) @db.Uuid
+  produtoPaiId   String  @map("produto_pai_id") @db.Uuid
+  produtoFilhoId String  @map("produto_filho_id") @db.Uuid
+  /// Quantidade do filho por 1 unidade do pai
+  quantidade     Decimal @db.Decimal(12, 4)
+  /// true = estrutura apenas (não movimenta estoque na baixa pela árvore)
+  fantasma       Boolean @default(false)
+  produtoPai     Produto @relation("BomPai", fields: [produtoPaiId], references: [id], onDelete: Cascade)
+  produtoFilho   Produto @relation("BomFilho", fields: [produtoFilhoId], references: [id], onDelete: Restrict)
+
+  @@unique([produtoPaiId, produtoFilhoId], name: "uniq_bom_pai_filho")
+  @@index([produtoPaiId])
+  @@index([produtoFilhoId])
+  @@map("produto_componentes")
 }
 
 model Estoque {
@@ -201,6 +230,8 @@ model Movimentacao {
   filialId            String           @map("filial_id") @db.Uuid
   /// Estoque destino — só TRANSFERENCIA
   filialDestinoId     String?          @map("filial_destino_id") @db.Uuid
+  /// Legado montagem ENTRADA; na baixa atual os componentes saem do filialId
+  filialComponentesId String?          @map("filial_componentes_id") @db.Uuid
   quantidade          Decimal          @db.Decimal(12, 4)
   precoUnitario       Decimal          @map("preco_unitario") @db.Decimal(12, 2)
   /// ENTRADA | SAIDA | TRANSFERENCIA
@@ -214,6 +245,10 @@ model Movimentacao {
   alertaEmails        Json             @default("[]") @map("alerta_emails")
   /// Retorno vinculado à saída (demo/comodato)
   movimentacaoOrigemId String?         @map("movimentacao_origem_id") @db.Uuid
+  /// Agrupa linhas do mesmo lançamento multi-SKU (ENTRADA/SAIDA)
+  grupoLancamentoId String?        @map("grupo_lancamento_id") @db.Uuid
+  /// SAIDA/envio pai que originou este consumo de componente da árvore
+  movimentacaoMontagemId String?       @map("movimentacao_montagem_id") @db.Uuid
   status              String           @default("CONCLUIDO") @db.VarChar(20)
   estornoDeId         String?          @map("estorno_de_id") @db.Uuid
   transferenciaItemId String?          @map("transferencia_item_id") @db.Uuid
@@ -224,24 +259,33 @@ model Movimentacao {
   cliente             Cliente?         @relation(fields: [clienteId], references: [id], onDelete: Restrict)
   filial              Filial           @relation("MovFilial", fields: [filialId], references: [id], onDelete: Restrict)
   filialDestino       Filial?          @relation("MovFilialDestino", fields: [filialDestinoId], references: [id], onDelete: Restrict)
+  filialComponentes   Filial?          @relation("MovFilialComponentes", fields: [filialComponentesId], references: [id], onDelete: Restrict)
   estornoDe           Movimentacao?    @relation("Estorno", fields: [estornoDeId], references: [id])
   estornos            Movimentacao[]   @relation("Estorno")
   movimentacaoOrigem  Movimentacao?    @relation("RetornoVinculo", fields: [movimentacaoOrigemId], references: [id], onDelete: Restrict)
   retornos            Movimentacao[]   @relation("RetornoVinculo")
+  montagemPai         Movimentacao?    @relation("Montagem", fields: [movimentacaoMontagemId], references: [id], onDelete: Restrict)
+  consumosMontagem    Movimentacao[]   @relation("Montagem")
   transferenciaItem   TransferenciaItem? @relation(fields: [transferenciaItemId], references: [id])
   /// Séries informadas no lançamento PENDENTE (aplicadas na aprovação)
   seriesInformadas    Json             @default("[]") @map("series_informadas")
   alertasRetorno      AlertaRetornoAgenda[]
   anexos              MovimentacaoAnexo[]
   series              MovimentacaoSerie[]
+  rmaItensEntrada     RmaItem[] @relation("RmaItemEntrada")
+  rmaItensSaida       RmaItem[] @relation("RmaItemSaida")
+  rmaItensDescarte    RmaItem[] @relation("RmaItemDescarte")
 
   @@index([produtoId])
   @@index([filialId])
   @@index([filialDestinoId])
+  @@index([filialComponentesId])
   @@index([dataMovimento])
   @@index([clienteId])
   @@index([status])
   @@index([movimentacaoOrigemId])
+  @@index([movimentacaoMontagemId])
+  @@index([grupoLancamentoId])
   @@map("movimentacoes")
 }
 
@@ -331,12 +375,64 @@ model UnidadeSerie {
   cliente      Cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
   movimentacoes MovimentacaoSerie[]
   transferenciaItens TransferenciaItemSerie[]
+  rmaItens      RmaItem[] @relation("RmaItemSerieOriginal")
+  rmaItensSubstituicao RmaItem[] @relation("RmaItemSerieSubstituicao")
 
   @@unique([produtoId, numeroSerie], name: "uniq_produto_serie")
   @@index([produtoId, status])
   @@index([filialId, status])
   @@index([numeroSerie])
   @@map("unidades_serie")
+}
+
+/// Sequencial anual por produto para geração automática de séries
+model ContadorSerie {
+  id         String  @id @default(uuid()) @db.Uuid
+  produtoId  String  @map("produto_id") @db.Uuid
+  ano        Int
+  sequencial Int     @default(0)
+  produto    Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@unique([produtoId, ano])
+  @@index([produtoId])
+  @@map("contador_series")
+}
+
+/// Formato / opções de geração automática por produto
+model ConfiguracaoSerie {
+  id                String  @id @default(uuid()) @db.Uuid
+  produtoId         String  @unique @map("produto_id") @db.Uuid
+  /// Ex.: {codigo}{ano2}{seq4} ou {codigo}-{ano2}-{seq4}
+  formato           String  @default("{codigo}{ano2}{seq4}") @db.VarChar(80)
+  geracaoAutomatica Boolean @default(true) @map("geracao_automatica")
+  tamanhoSequencial Int     @default(4) @map("tamanho_sequencial")
+  prefixoFixo       String? @map("prefixo_fixo") @db.VarChar(20)
+  sufixoFixo        String? @map("sufixo_fixo") @db.VarChar(20)
+  reiniciarAnual    Boolean @default(true) @map("reiniciar_anual")
+  produto           Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+
+  @@map("configuracao_series")
+}
+
+/// Lote alocado no contador (antes do lançamento criar UnidadeSerie)
+model SerieAlocacao {
+  id                 String   @id @default(uuid()) @db.Uuid
+  produtoId          String   @map("produto_id") @db.Uuid
+  usuarioId          String   @map("usuario_id") @db.Uuid
+  ano                Int
+  sequencialInicial  Int      @map("sequencial_inicial")
+  sequencialFinal    Int      @map("sequencial_final")
+  /// string[]
+  series             Json
+  /// PENDENTE | CONFIRMADA | CANCELADA
+  status             String   @default("PENDENTE") @db.VarChar(20)
+  criadoEm           DateTime @default(now()) @map("criado_em") @db.Timestamptz
+  produto            Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  usuario            Usuario  @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+
+  @@index([produtoId, status])
+  @@index([usuarioId, status])
+  @@map("serie_alocacoes")
 }
 
 model MovimentacaoSerie {
@@ -409,4 +505,88 @@ model EmailTemplate {
   atualizadoEm DateTime @default(now()) @updatedAt @map("atualizado_em") @db.Timestamptz
 
   @@map("email_templates")
+}
+
+/// Processo RMA (financeiro + estoque dedicado)
+model RmaProcesso {
+  id                String     @id @default(uuid()) @db.Uuid
+  clienteId         String     @map("cliente_id") @db.Uuid
+  /// Estoque RMA (filial sigla RMA)
+  filialId          String     @map("filial_id") @db.Uuid
+  /// ABERTO | FECHADO | CANCELADO
+  status            String     @default("ABERTO") @db.VarChar(20)
+  nfEntradaNumero   String?    @map("nf_entrada_numero") @db.VarChar(60)
+  nfSaidaNumero     String?    @map("nf_saida_numero") @db.VarChar(60)
+  /// null = ainda não informado; true/false = Sim/Não
+  cobrou            Boolean?
+  valorCobrado      Decimal?   @map("valor_cobrado") @db.Decimal(12, 2)
+  nfCobrancaNumero  String?    @map("nf_cobranca_numero") @db.VarChar(60)
+  observacao        String?    @db.Text
+  criadoPorId       String     @map("criado_por_id") @db.Uuid
+  criadoEm          DateTime   @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm      DateTime   @updatedAt @map("atualizado_em") @db.Timestamptz
+  cliente           Cliente    @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  filial            Filial     @relation(fields: [filialId], references: [id], onDelete: Restrict)
+  criadoPor         Usuario    @relation(fields: [criadoPorId], references: [id], onDelete: Restrict)
+  itens             RmaItem[]
+  anexos            RmaAnexo[]
+
+  @@index([clienteId])
+  @@index([filialId])
+  @@index([status])
+  @@index([criadoEm])
+  @@map("rma_processos")
+}
+
+model RmaItem {
+  id              String        @id @default(uuid()) @db.Uuid
+  processoId      String        @map("processo_id") @db.Uuid
+  produtoId       String        @map("produto_id") @db.Uuid
+  unidadeSerieId  String?       @map("unidade_serie_id") @db.Uuid
+  quantidade      Decimal       @db.Decimal(12, 4)
+  /// ABERTO | EM_ESTOQUE | DEVOLVIDO | DESCARTADO | CANCELADO
+  status          String        @default("ABERTO") @db.VarChar(20)
+  movEntradaId    String?       @map("mov_entrada_id") @db.Uuid
+  movSaidaId      String?       @map("mov_saida_id") @db.Uuid
+  movDescarteId   String?       @map("mov_descarte_id") @db.Uuid
+  /// Série boa enviada ao cliente na troca (substitui a unidadeSerie ruim)
+  unidadeSerieSubstituicaoId String? @map("unidade_serie_substituicao_id") @db.Uuid
+  observacao      String?       @db.Text
+  processo        RmaProcesso   @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  produto         Produto       @relation(fields: [produtoId], references: [id], onDelete: Restrict)
+  unidadeSerie    UnidadeSerie? @relation("RmaItemSerieOriginal", fields: [unidadeSerieId], references: [id], onDelete: SetNull)
+  unidadeSerieSubstituicao UnidadeSerie? @relation("RmaItemSerieSubstituicao", fields: [unidadeSerieSubstituicaoId], references: [id], onDelete: SetNull)
+  movEntrada      Movimentacao? @relation("RmaItemEntrada", fields: [movEntradaId], references: [id], onDelete: SetNull)
+  movSaida        Movimentacao? @relation("RmaItemSaida", fields: [movSaidaId], references: [id], onDelete: SetNull)
+  movDescarte     Movimentacao? @relation("RmaItemDescarte", fields: [movDescarteId], references: [id], onDelete: SetNull)
+  anexos          RmaAnexo[]
+
+  @@index([processoId])
+  @@index([produtoId])
+  @@index([status])
+  @@index([unidadeSerieSubstituicaoId])
+  @@map("rma_itens")
+}
+
+model RmaAnexo {
+  id            String      @id @default(uuid()) @db.Uuid
+  processoId    String      @map("processo_id") @db.Uuid
+  /// Laudo por produto/série; null = anexo do processo (NF etc.)
+  itemId        String?     @map("item_id") @db.Uuid
+  /// LAUDO | NF_ENTRADA | NF_SAIDA | NF_COBRANCA | OUTRO
+  tipo          String      @db.VarChar(40)
+  /// Path público: /uploads/rma/{processoId}/atual/... ou .../historico/...
+  arquivo       String      @db.VarChar(255)
+  label         String?     @db.VarChar(120)
+  /// false = substituído (mantido para consulta / auditoria)
+  ativo         Boolean     @default(true)
+  substituidoEm DateTime?   @map("substituido_em") @db.Timestamptz
+  criadoEm      DateTime    @default(now()) @map("criado_em") @db.Timestamptz
+  processo      RmaProcesso @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  item          RmaItem?    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([processoId])
+  @@index([itemId])
+  @@index([processoId, tipo, ativo])
+  @@map("rma_anexos")
 }

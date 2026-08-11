@@ -45,7 +45,7 @@ export function getLlmConfig() {
     8,
     Math.max(1, Number(process.env.LLM_MAX_TOOL_ROUNDS || 5))
   );
-  const temperature = Number(process.env.LLM_TEMPERATURE || 0.2);
+  const temperature = Number(process.env.LLM_TEMPERATURE || 0.45);
   const maxTokens = Number(process.env.LLM_MAX_TOKENS || 800);
   const model =
     process.env.LLM_MODEL ||

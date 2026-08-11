@@ -4,6 +4,32 @@ import { AppError } from "../middleware/error";
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
+/**
+ * Qty em cargas PENDENTE_APROVACAO que reservam saldo da origem
+ * (ainda sem baixar o estoque).
+ */
+export async function qtyReservadaTransferenciaPendente(
+  db: Tx,
+  produtoId: string,
+  origemFilialId: string,
+  excludeTransferenciaId?: string | null
+): Promise<number> {
+  const rows = await db.transferenciaItem.findMany({
+    where: {
+      produtoId,
+      transferencia: {
+        status: "PENDENTE_APROVACAO",
+        origemFilialId,
+        ...(excludeTransferenciaId
+          ? { id: { not: excludeTransferenciaId } }
+          : {}),
+      },
+    },
+    select: { qtdEnviada: true },
+  });
+  return rows.reduce((s, r) => s + Number(r.qtdEnviada), 0);
+}
+
 export async function aplicarSaldo(
   tx: Tx,
   params: {
@@ -11,6 +37,11 @@ export async function aplicarSaldo(
     filialId: string;
     operacao: "ENTRADA" | "SAIDA";
     quantidade: Prisma.Decimal | number | string;
+    /**
+     * Ao baixar estoque de uma transferência que estava PENDENTE_APROVACAO,
+     * exclui a própria carga da reserva (senão bloqueia a si mesma).
+     */
+    excludeTransferenciaId?: string | null;
   }
 ): Promise<{
   saldoAtual: Prisma.Decimal;
@@ -51,8 +82,20 @@ export async function aplicarSaldo(
   if (params.operacao === "ENTRADA") {
     novo = novo.add(qtd);
   } else {
-    if (novo.lt(qtd)) {
-      throw new AppError(400, "Quantidade indisponível no estoque local");
+    const reservada = await qtyReservadaTransferenciaPendente(
+      tx,
+      params.produtoId,
+      params.filialId,
+      params.excludeTransferenciaId
+    );
+    const disponivel = novo.sub(new Prisma.Decimal(reservada));
+    if (disponivel.lt(qtd)) {
+      throw new AppError(
+        400,
+        reservada > 0
+          ? `Quantidade indisponível no estoque local (disponível: ${disponivel}, reservado em transferência pendente: ${reservada})`
+          : "Quantidade indisponível no estoque local"
+      );
     }
     novo = novo.sub(qtd);
   }

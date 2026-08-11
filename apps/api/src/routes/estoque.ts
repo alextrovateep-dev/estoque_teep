@@ -16,6 +16,7 @@ import {
 } from "../middleware/auth";
 import { requirePermissao } from "../middleware/permissoes";
 import { validateBody, AppError } from "../middleware/error";
+import { requireEstoqueParaOperar } from "../lib/estoqueGate";
 import {
   criarMovimentacao,
   inicializarEstoque,
@@ -36,15 +37,17 @@ import {
   exportarMovimentacoesExcel,
   exportarMovimentacoesPdf,
   parseMovimentacoesFiltroQuery,
+  parseDiaCivilSaoPaulo,
 } from "../services/movimentacoesExportService";
 import {
   assertOperadorPodeFilial,
   operadorFilialIds,
   resolveOperadorFilialId,
 } from "../lib/filialScope";
+import { qtyReservadaTransferenciaPendente } from "../services/estoqueService";
 
 export const estoqueRouter = Router();
-estoqueRouter.use(authenticate, requireFilialOperador);
+estoqueRouter.use(authenticate, requireFilialOperador, requireEstoqueParaOperar);
 
 estoqueRouter.get(
   "/dashboard",
@@ -66,6 +69,11 @@ function parseSaldosExportQuery(req: AuthedRequest) {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const alertaRaw = String(req.query.alerta || "").trim().toLowerCase();
+  const alerta =
+    alertaRaw === "min" || alertaRaw === "max" || alertaRaw === "qualquer"
+      ? (alertaRaw as "min" | "max" | "qualquer")
+      : undefined;
   return {
     filialId: req.query.filialId ? String(req.query.filialId) : undefined,
     q: req.query.q ? String(req.query.q) : undefined,
@@ -76,6 +84,7 @@ function parseSaldosExportQuery(req: AuthedRequest) {
       req.query.soAlertas === "1" ||
       req.query.soAlertas === "true" ||
       req.query.soAlertas === "yes",
+    alerta,
     ids: rawIds.length > 0 ? rawIds : undefined,
   };
 }
@@ -257,11 +266,20 @@ estoqueRouter.get(
         },
         select: { saldoAtual: true },
       });
+      const saldoAtual = row ? Number(row.saldoAtual) : 0;
+      const reservadoPendente = await qtyReservadaTransferenciaPendente(
+        prisma,
+        produtoId,
+        filialId
+      );
+      const disponivel = Math.max(0, saldoAtual - reservadoPendente);
       res.json({
         produtoId,
         filialId,
         filialSigla: filial.sigla,
-        saldoAtual: row ? Number(row.saldoAtual) : 0,
+        saldoAtual,
+        reservadoPendente,
+        disponivel,
       });
     } catch (e) {
       next(e);
@@ -650,12 +668,12 @@ estoqueRouter.get(
       const dataFim = String(req.query.dataFim || "").trim();
       const range: { gte?: Date; lte?: Date } = {};
       if (dataInicio) {
-        const d = new Date(`${dataInicio}T00:00:00`);
-        if (!Number.isNaN(d.getTime())) range.gte = d;
+        const d = parseDiaCivilSaoPaulo(dataInicio, "inicio");
+        if (d) range.gte = d;
       }
       if (dataFim) {
-        const d = new Date(`${dataFim}T23:59:59.999`);
-        if (!Number.isNaN(d.getTime())) range.lte = d;
+        const d = parseDiaCivilSaoPaulo(dataFim, "fim");
+        if (d) range.lte = d;
       }
 
       const movWhere: Record<string, unknown> = {

@@ -133,8 +133,6 @@ export const filialSchema = z.object({
   sigla: z.string().min(1).max(5),
   cidade: z.string().max(80).optional().nullable(),
   estado: z.string().length(2).optional().nullable(),
-  responsavel: z.string().max(100).optional().nullable(),
-  emailContato: z.string().email().max(100).optional().nullable(),
   ativo: z.boolean().optional(),
 });
 
@@ -190,6 +188,22 @@ export const produtoSchema = z
   })
   .superRefine(refineMinMax);
 
+/** Opções de geração automática de série no cadastro do produto. */
+export const configuracaoSerieSchema = z.object({
+  formato: z.string().min(1).max(80).default("{codigo}{ano2}{seq4}"),
+  geracaoAutomatica: z.boolean().default(true),
+  tamanhoSequencial: z.coerce.number().int().min(3).max(6).default(4),
+  prefixoFixo: z.preprocess(
+    (v) => (v === "" || v === undefined ? null : v),
+    z.string().max(20).nullable().optional()
+  ),
+  sufixoFixo: z.preprocess(
+    (v) => (v === "" || v === undefined ? null : v),
+    z.string().max(20).nullable().optional()
+  ),
+  reiniciarAnual: z.boolean().default(true),
+});
+
 export const createProdutoSchema = z
   .object({
     codigo: z.string().min(1).max(50),
@@ -200,10 +214,18 @@ export const createProdutoSchema = z
     estoqueMinimo: z.coerce.number().int().min(0).default(0),
     estoqueMaximo: z.coerce.number().int().min(0).default(0),
     controlaSerie: z.boolean().optional().default(false),
+    configuracaoSerie: configuracaoSerieSchema.optional(),
     /** Fotos só via PATCH após o produto existir (upload exige produtoId) */
     ativo: z.boolean().optional(),
   })
   .superRefine(refineMinMax);
+
+/** Linha da BOM (árvore de componentes). */
+export const produtoComponenteItemSchema = z.object({
+  produtoFilhoId: z.string().uuid(),
+  quantidade: z.coerce.number().positive().max(1_000_000),
+  fantasma: z.boolean().default(false),
+});
 
 export const updateProdutoSchema = z
   .object({
@@ -216,6 +238,9 @@ export const updateProdutoSchema = z
     estoqueMaximo: z.coerce.number().int().min(0).optional(),
     fotos: fotosProdutoSchema.optional(),
     controlaSerie: z.boolean().optional(),
+    configuracaoSerie: configuracaoSerieSchema.nullable().optional(),
+    /** Se enviado, substitui a BOM na mesma transação do PATCH. */
+    componentes: z.array(produtoComponenteItemSchema).max(200).optional(),
     ativo: z.boolean().optional(),
   })
   .superRefine(refineMinMax);
@@ -278,6 +303,8 @@ export const tipoMovimentacaoObjectSchema = z.object({
     .nullable(),
   ehRetornoDeId: z.string().uuid().optional().nullable(),
   requerTermoComodato: z.boolean().optional(),
+  /** SAIDA/TRANSFERENCIA: na saída, baixa componentes não-fantasma da árvore */
+  baixaPorArvore: z.boolean().optional(),
   descricao: z.string().optional().nullable(),
   ativo: z.boolean().optional(),
 });
@@ -287,6 +314,7 @@ export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
     const alerta = data.geraAlertaRetorno === true;
     const retorno = Boolean(data.ehRetornoDeId);
     const termo = data.requerTermoComodato === true;
+    const arvore = data.baixaPorArvore === true;
     if ((alerta || retorno || termo) && data.requerCliente === false) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -309,6 +337,26 @@ export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
         path: ["ehRetornoDeId"],
       });
     }
+    if (
+      arvore &&
+      data.operacao &&
+      data.operacao !== "SAIDA" &&
+      data.operacao !== "TRANSFERENCIA"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Baixa pela árvore só se aplica a tipos de Saída ou Transferência",
+        path: ["baixaPorArvore"],
+      });
+    }
+    if (arvore && data.requerAprovacao === true) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Tipo com baixa pela árvore não pode exigir aprovação (a baixa conclui na hora)",
+        path: ["requerAprovacao"],
+      });
+    }
   }
 );
 export const createMovimentacaoSchema = z
@@ -318,6 +366,11 @@ export const createMovimentacaoSchema = z
     filialId: z.string().uuid().optional(),
     /** Destino — obrigatório quando o tipo for TRANSFERENCIA */
     filialDestinoId: z.string().uuid().optional().nullable(),
+    /**
+     * Legado (montagem em ENTRADA). Com baixa por árvore em SAIDA/TRANSFERENCIA
+     * os componentes saem do mesmo estoque de origem — este campo é ignorado.
+     */
+    filialComponentesId: z.string().uuid().optional().nullable(),
     clienteId: z.string().uuid().optional().nullable(),
     /** Item único (ENTRADA/SAIDA ou transferência com 1 produto) */
     produtoId: z.string().uuid().optional(),
@@ -375,7 +428,7 @@ export const createMovimentacaoSchema = z
     creditoDestino: z
       .enum(["IMEDIATO", "AGUARDAR_RECEBIMENTO"])
       .optional(),
-    /** Multi-item (TRANSFERÊNCIA); se omitido, usa produtoId+quantidade */
+    /** Multi-item (ENTRADA/SAÍDA/TRANSFERÊNCIA); se omitido, usa produtoId+quantidade */
     itens: z
       .array(
         z.object({
@@ -385,6 +438,7 @@ export const createMovimentacaoSchema = z
         })
       )
       .min(1)
+      .max(20)
       .optional(),
   })
   .superRefine((data, ctx) => {
@@ -396,6 +450,16 @@ export const createMovimentacaoSchema = z
         message: "Informe produtoId+quantidade ou itens[]",
         path: ["produtoId"],
       });
+    }
+    if (hasItens) {
+      const ids = data.itens!.map((i) => i.produtoId);
+      if (new Set(ids).size !== ids.length) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Não repita o mesmo produto nos itens",
+          path: ["itens"],
+        });
+      }
     }
     if (data.creditoDestino && !data.filialDestinoId) {
       ctx.addIssue({
@@ -505,4 +569,166 @@ export const assistenteChatSchema = z.object({
     .optional()
     .default([]),
   filialId: z.string().uuid().optional().nullable(),
+});
+
+const uploadPath = z
+  .string()
+  .max(255)
+  .regex(/^\/uploads\//, "arquivo inválido");
+
+export const createRmaProcessoSchema = z
+  .object({
+    clienteId: z.string().uuid(),
+    observacao: z.string().max(2000).optional().nullable(),
+    nfEntradaNumero: z.string().max(60).optional().nullable(),
+    /** Path temporário /uploads/rma/_tmp/... (promovido na abertura) */
+    nfEntradaArquivo: uploadPath.optional().nullable(),
+    itens: z
+      .array(
+        z.object({
+          produtoId: z.string().uuid(),
+          /** Uma ou mais séries; cada série vira 1 item RMA (qtd 1) */
+          series: z.array(z.string().trim().min(1).max(80)).min(1).max(500),
+          observacao: z.string().max(500).optional().nullable(),
+        })
+      )
+      .min(1)
+      .max(50),
+  })
+  .superRefine((data, ctx) => {
+    const vistas = new Set<string>();
+    data.itens.forEach((it, idx) => {
+      for (const raw of it.series) {
+        const sn = raw.trim().toLowerCase();
+        if (!sn) continue;
+        const key = `${it.produtoId}::${sn}`;
+        if (vistas.has(key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `Número de série duplicado na nota (item ${idx + 1})`,
+            path: ["itens", idx, "series"],
+          });
+          return;
+        }
+        vistas.add(key);
+      }
+    });
+  });
+
+export const updateRmaFinanceiroSchema = z
+  .object({
+    nfEntradaNumero: z.string().max(60).optional().nullable(),
+    nfSaidaNumero: z.string().max(60).optional().nullable(),
+    cobrou: z.boolean().optional().nullable(),
+    valorCobrado: z.coerce.number().min(0).optional().nullable(),
+    nfCobrancaNumero: z.string().max(60).optional().nullable(),
+    observacao: z.string().max(2000).optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.cobrou === true) {
+      if (
+        data.valorCobrado == null ||
+        Number.isNaN(Number(data.valorCobrado)) ||
+        Number(data.valorCobrado) <= 0
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Informe o valor cobrado (maior que zero)",
+          path: ["valorCobrado"],
+        });
+      }
+      if (!data.nfCobrancaNumero?.trim()) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Informe o número da NF de cobrança",
+          path: ["nfCobrancaNumero"],
+        });
+      }
+    }
+  });
+
+/** Nome de arquivo do anexo — trunca nomes longos do SO (preserva extensão). */
+function truncateAnexoLabel(raw: string, max = 120): string {
+  const t = raw.trim();
+  if (!t) return "";
+  if (t.length <= max) return t;
+  const dot = t.lastIndexOf(".");
+  const ext =
+    dot > 0 && t.length - dot <= 10 && t.length - dot > 1
+      ? t.slice(dot)
+      : "";
+  if (ext) {
+    return `${t.slice(0, Math.max(1, max - ext.length))}${ext}`;
+  }
+  return t.slice(0, max);
+}
+
+const anexoLabel = z
+  .union([z.string(), z.null(), z.undefined()])
+  .transform((v) => {
+    if (v == null) return null;
+    const t = truncateAnexoLabel(v);
+    return t || null;
+  });
+
+export const anexarRmaSchema = z
+  .object({
+    tipo: z.enum(["LAUDO", "NF_ENTRADA", "NF_SAIDA", "NF_COBRANCA", "OUTRO"]),
+    arquivo: uploadPath,
+    label: anexoLabel,
+    /** Obrigatório para LAUDO (produto + série) */
+    itemId: z.string().uuid().optional().nullable(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.tipo === "LAUDO" && !data.itemId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Informe o item (produto/série) para anexar o laudo",
+        path: ["itemId"],
+      });
+    }
+  });
+
+export const devolverRmaSchema = z.object({
+  itemIds: z.array(z.string().uuid()).min(1).optional(),
+  nfSaidaNumero: z.string().max(60).optional().nullable(),
+});
+
+/** Aloca N séries no contador (não cria UnidadeSerie — isso ocorre no lançamento). */
+export const alocarSeriesSchema = z.object({
+  produtoId: z.string().uuid(),
+  quantidade: z.coerce.number().int().min(1).max(500),
+});
+
+/** Substitui a BOM (árvore) do produto. */
+export const putProdutoComponentesSchema = z.object({
+  itens: z.array(produtoComponenteItemSchema).max(200),
+});
+
+/** Desfaz a última alocação pendente (reverte contador se ainda for o topo). */
+export const desfazerAlocacaoSerieSchema = z.object({
+  alocacaoId: z.string().uuid(),
+});
+
+/** Marca item(ns) EM_ESTOQUE como SEM_MANUTENCAO (sem mover saldo). */
+export const semManutencaoRmaSchema = z.object({
+  itemIds: z.array(z.string().uuid()).min(1),
+});
+
+/**
+ * Troca: série boa vem de estoque operacional → preparação (em geral RMA),
+ * sai ao cliente; série ruim vai ao estoque de descarte via transferência.
+ */
+export const trocarRmaItemSchema = z.object({
+  itemId: z.string().uuid(),
+  /** Estoque de onde sai a série boa (PLN, TBO, …) */
+  origemFilialId: z.string().uuid(),
+  /** Destino de preparação antes da expedição (default: filial do processo / RMA) */
+  destinoPreparacaoFilialId: z.string().uuid().optional(),
+  /** Número de série da peça substituta */
+  numeroSerieBoa: z.string().trim().min(1).max(80),
+  /** Destino da série ruim (default: estoque sigla DESC, se existir) */
+  destinoDescarteFilialId: z.string().uuid().optional(),
+  nfSaidaNumero: z.string().max(60).optional().nullable(),
+  observacao: z.string().max(500).optional().nullable(),
 });

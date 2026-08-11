@@ -23,6 +23,7 @@ import {
   randomHash12,
   toPublicUrl,
 } from "../lib/uploads";
+import { writeRmaTmpFile } from "../lib/rmaUploads";
 
 ensureUploadDirs();
 
@@ -54,24 +55,34 @@ uploadRouter.post(
         context !== "perfil" &&
         context !== "produto" &&
         context !== "nota-fiscal" &&
-        context !== "documento"
+        context !== "documento" &&
+        context !== "rma"
       ) {
         throw new AppError(
           400,
-          "context deve ser perfil, produto, nota-fiscal ou documento"
+          "context deve ser perfil, produto, nota-fiscal, documento ou rma"
         );
       }
 
-      const allowPdf = context === "nota-fiscal" || context === "documento";
-      const mime = allowPdf
-        ? detectUploadMime(req.file.buffer, true)
+      const rmaKind = String(req.body?.kind || "nf");
+      const docOpts =
+        context === "documento" || (context === "rma" && rmaKind === "laudo")
+          ? { pdf: true, word: true }
+          : context === "nota-fiscal" ||
+              (context === "rma" && rmaKind !== "laudo")
+            ? { pdf: true, word: false }
+            : null;
+      const mime = docOpts
+        ? detectUploadMime(req.file.buffer, docOpts)
         : detectImageMime(req.file.buffer);
-      if (!mime || !isAllowedMime(mime, allowPdf)) {
+      if (!mime || !isAllowedMime(mime, docOpts || {})) {
         throw new AppError(
           400,
-          allowPdf
-            ? "Formato inválido — use PDF, JPEG, PNG, GIF ou WebP"
-            : "Formato inválido — use JPEG, PNG, GIF ou WebP"
+          context === "documento" || (context === "rma" && rmaKind === "laudo")
+            ? "Formato inválido — use PDF, Word (doc/docx), JPEG, PNG, GIF ou WebP"
+            : context === "nota-fiscal" || context === "rma"
+              ? "Formato inválido — use PDF, JPEG, PNG, GIF ou WebP"
+              : "Formato inválido — use JPEG, PNG, GIF ou WebP"
         );
       }
       const ext = extFromMime(mime)!;
@@ -111,9 +122,27 @@ uploadRouter.post(
         return res.status(201).json({ url });
       }
 
+      if (context === "rma") {
+        const perms = await loadPermissoes(req);
+        if (
+          req.user!.perfil !== "ADMIN" &&
+          !perms.rma &&
+          !perms.rma_cobranca
+        ) {
+          throw new AppError(403, "Sem permissão para upload de anexo RMA");
+        }
+        const url = writeRmaTmpFile(req.user!.id, req.file.buffer, ext);
+        return res.status(201).json({ url });
+      }
+
       if (context === "nota-fiscal") {
         const perms = await loadPermissoes(req);
-        if (req.user!.perfil !== "ADMIN" && !perms.lancamentos) {
+        if (
+          req.user!.perfil !== "ADMIN" &&
+          !perms.lancamentos &&
+          !perms.rma &&
+          !perms.rma_cobranca
+        ) {
           throw new AppError(403, "Sem permissão para upload de nota fiscal");
         }
         const dir = path.join(root, "notas-fiscais");
@@ -126,7 +155,12 @@ uploadRouter.post(
 
       if (context === "documento") {
         const perms = await loadPermissoes(req);
-        if (req.user!.perfil !== "ADMIN" && !perms.lancamentos) {
+        if (
+          req.user!.perfil !== "ADMIN" &&
+          !perms.lancamentos &&
+          !perms.rma &&
+          !perms.rma_cobranca
+        ) {
           throw new AppError(403, "Sem permissão para upload de documento");
         }
         const dir = path.join(root, "movimentacao-anexos");
@@ -142,7 +176,7 @@ uploadRouter.post(
         throw new AppError(403, "Operador não envia fotos de produto");
       }
       const perms = await loadPermissoes(req);
-      if (req.user!.perfil !== "ADMIN" && !perms.cadastros) {
+      if (req.user!.perfil !== "ADMIN" && !perms.cadastros_produtos_editar) {
         throw new AppError(403, "Sem permissão para upload de produto");
       }
       const produtoId = String(req.body?.produtoId || "");

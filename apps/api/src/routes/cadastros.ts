@@ -10,11 +10,13 @@ import {
   clienteSchema,
   tipoMovimentacaoSchema,
   tipoMovimentacaoObjectSchema,
+  putProdutoComponentesSchema,
   normalizeDocumento,
   onlyDigits,
   sameDocumento,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
+import { upsertConfiguracaoSerie } from "../services/geracaoSerieService";
 import {
   authenticate,
   requirePerfil,
@@ -43,9 +45,85 @@ import {
 import { lookupCnpj } from "../services/cnpjLookup";
 import { lookupCep } from "../services/cepLookup";
 import { assertPodeAtivarControlaSerie } from "../services/serieService";
+import {
+  calcularSimulacaoArvore,
+  exportarSimulacaoArvoreExcel,
+  exportarSimulacaoArvorePdf,
+} from "../services/simulacaoArvoreService";
+import { Prisma } from "@prisma/client";
 
 export const cadastrosRouter = Router();
 cadastrosRouter.use(authenticate, requireFilialOperador);
+
+type BomItemInput = {
+  produtoFilhoId: string;
+  quantidade: number;
+  fantasma: boolean;
+};
+
+/** Valida e substitui a BOM do produto (mesma TX do chamador). */
+async function replaceProdutoBom(
+  tx: Prisma.TransactionClient,
+  paiId: string,
+  rawItens: BomItemInput[]
+) {
+  const seen = new Set<string>();
+  for (const it of rawItens) {
+    if (it.produtoFilhoId === paiId) {
+      throw new AppError(400, "Produto não pode ser componente de si mesmo");
+    }
+    if (seen.has(it.produtoFilhoId)) {
+      throw new AppError(400, "Componente duplicado na árvore");
+    }
+    if (!(Number(it.quantidade) > 0)) {
+      throw new AppError(400, "Quantidade do componente deve ser maior que zero");
+    }
+    seen.add(it.produtoFilhoId);
+  }
+
+  if (rawItens.length) {
+    const filhos = await tx.produto.findMany({
+      where: { id: { in: rawItens.map((i) => i.produtoFilhoId) } },
+      select: {
+        id: true,
+        codigo: true,
+        ativo: true,
+        controlaSerie: true,
+      },
+    });
+    if (filhos.length !== rawItens.length) {
+      throw new AppError(400, "Um ou mais componentes são inválidos");
+    }
+    const byId = new Map(filhos.map((f) => [f.id, f]));
+    for (const it of rawItens) {
+      const f = byId.get(it.produtoFilhoId)!;
+      if (!f.ativo) {
+        throw new AppError(
+          400,
+          `Componente inativo na árvore: ${f.codigo}`
+        );
+      }
+      if (it.fantasma !== true && f.controlaSerie) {
+        throw new AppError(
+          400,
+          `Componente ${f.codigo} controla série — marque como Fantasma ou use produto sem série (MVP)`
+        );
+      }
+    }
+  }
+
+  await tx.produtoComponente.deleteMany({ where: { produtoPaiId: paiId } });
+  if (rawItens.length) {
+    await tx.produtoComponente.createMany({
+      data: rawItens.map((i) => ({
+        produtoPaiId: paiId,
+        produtoFilhoId: i.produtoFilhoId,
+        quantidade: i.quantidade,
+        fantasma: i.fantasma === true,
+      })),
+    });
+  }
+}
 
 const usuarioSelect = {
   id: true,
@@ -119,6 +197,18 @@ cadastrosRouter.get("/filiais", async (req: AuthedRequest, res, next) => {
   }
 });
 
+cadastrosRouter.get("/filiais/:id", async (req, res, next) => {
+  try {
+    const row = await prisma.filial.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!row) throw new AppError(404, "Estoque não encontrado");
+    res.json(row);
+  } catch (e) {
+    next(e);
+  }
+});
+
 cadastrosRouter.post(
   "/filiais",
   requirePerfil("ADMIN"),
@@ -164,6 +254,23 @@ cadastrosRouter.get(
         orderBy: { nome: "asc" },
       });
       res.json(data.map(mapUsuarioResponse));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+cadastrosRouter.get(
+  "/usuarios/:id",
+  requirePerfil("ADMIN"),
+  async (req, res, next) => {
+    try {
+      const data = await prisma.usuario.findUnique({
+        where: { id: req.params.id },
+        select: usuarioSelect,
+      });
+      if (!data) throw new AppError(404, "Usuário não encontrado");
+      res.json(mapUsuarioResponse(data));
     } catch (e) {
       next(e);
     }
@@ -405,10 +512,21 @@ cadastrosRouter.get("/categorias", async (req, res, next) => {
   }
 });
 
+cadastrosRouter.get("/categorias/:id", async (req, res, next) => {
+  try {
+    const row = await prisma.categoria.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!row) throw new AppError(404, "Categoria não encontrada");
+    res.json(row);
+  } catch (e) {
+    next(e);
+  }
+});
+
 cadastrosRouter.post(
   "/categorias",
-  requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePerfil("ADMIN"),
   validateBody(categoriaSchema),
   async (req, res, next) => {
     try {
@@ -424,8 +542,7 @@ cadastrosRouter.post(
 
 cadastrosRouter.patch(
   "/categorias/:id",
-  requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePerfil("ADMIN"),
   validateBody(categoriaSchema.partial()),
   async (req, res, next) => {
     try {
@@ -442,6 +559,11 @@ cadastrosRouter.patch(
 );
 
 // —— Produtos ——
+const produtoInclude = {
+  categoria: true,
+  configuracaoSerie: true,
+} as const;
+
 cadastrosRouter.get("/produtos", async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -460,7 +582,7 @@ cadastrosRouter.get("/produtos", async (req, res, next) => {
     res.json(
       await prisma.produto.findMany({
         where,
-        include: { categoria: true },
+        include: produtoInclude,
         orderBy: { codigo: "asc" },
         take: 200,
       })
@@ -469,6 +591,52 @@ cadastrosRouter.get("/produtos", async (req, res, next) => {
     next(e);
   }
 });
+
+/** Lista produtos que já têm árvore (BOM) — página Árvore. */
+cadastrosRouter.get(
+  "/produtos/arvores",
+  requirePerfil("ADMIN", "GERENTE"),
+  requirePermissao("cadastros_arvore_ver", "cadastros_arvore_editar"),
+  async (req, res, next) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      const rows = await prisma.produto.findMany({
+        where: {
+          ativo: true,
+          componentesComoPai: { some: {} },
+          ...(q
+            ? {
+                OR: [
+                  { codigo: { contains: q, mode: "insensitive" as const } },
+                  { descricao: { contains: q, mode: "insensitive" as const } },
+                ],
+              }
+            : {}),
+        },
+        select: {
+          id: true,
+          codigo: true,
+          descricao: true,
+          precoUnitario: true,
+          _count: { select: { componentesComoPai: true } },
+        },
+        orderBy: { codigo: "asc" },
+        take: 200,
+      });
+      res.json(
+        rows.map((r) => ({
+          id: r.id,
+          codigo: r.codigo,
+          descricao: r.descricao,
+          precoUnitario: Number(r.precoUnitario),
+          qtdComponentes: r._count.componentesComoPai,
+        }))
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 cadastrosRouter.get("/produtos/busca", async (req, res, next) => {
   try {
@@ -483,7 +651,7 @@ cadastrosRouter.get("/produtos/busca", async (req, res, next) => {
             { descricao: { contains: q, mode: "insensitive" } },
           ],
         },
-        include: { categoria: true },
+        include: produtoInclude,
         take: 20,
         orderBy: { codigo: "asc" },
       })
@@ -506,7 +674,7 @@ cadastrosRouter.get("/produtos/:id", async (req, res, next) => {
   try {
     const p = await prisma.produto.findUnique({
       where: { id: req.params.id },
-      include: { categoria: true },
+      include: produtoInclude,
     });
     if (!p) throw new AppError(404, "Produto não encontrado");
     res.json(p);
@@ -532,16 +700,26 @@ cadastrosRouter.get("/produtos/:id/relacionamentos", async (req, res, next) => {
 cadastrosRouter.post(
   "/produtos",
   requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePermissao("cadastros_produtos_editar"),
   validateBody(createProdutoSchema),
   async (req, res, next) => {
     try {
-      res.status(201).json(
-        await prisma.produto.create({
-          data: { ...req.body, fotos: [] },
-          include: { categoria: true },
-        })
-      );
+      const { configuracaoSerie, ...produtoData } = req.body;
+      const created = await prisma.$transaction(async (tx) => {
+        const p = await tx.produto.create({
+          data: { ...produtoData, fotos: [] },
+        });
+        if (p.controlaSerie && configuracaoSerie) {
+          await upsertConfiguracaoSerie(tx, p.id, configuracaoSerie);
+        } else if (p.controlaSerie) {
+          await upsertConfiguracaoSerie(tx, p.id, {});
+        }
+        return tx.produto.findUniqueOrThrow({
+          where: { id: p.id },
+          include: produtoInclude,
+        });
+      });
+      res.status(201).json(created);
     } catch (e: unknown) {
       if ((e as { code?: string }).code === "P2002") {
         return next(new AppError(409, "Código já cadastrado"));
@@ -554,7 +732,7 @@ cadastrosRouter.post(
 cadastrosRouter.patch(
   "/produtos/:id",
   requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePermissao("cadastros_produtos_editar"),
   validateBody(updateProdutoSchema),
   async (req, res, next) => {
     try {
@@ -605,10 +783,39 @@ cadastrosRouter.patch(
         ? (atual.fotos as string[])
         : [];
 
-      const updated = await prisma.produto.update({
-        where: { id: req.params.id },
-        data: req.body,
-        include: { categoria: true },
+      const { configuracaoSerie, componentes, ...produtoPatch } = req.body;
+
+      const updated = await prisma.$transaction(async (tx) => {
+        const p = await tx.produto.update({
+          where: { id: req.params.id },
+          data: produtoPatch,
+        });
+
+        const controla =
+          produtoPatch.controlaSerie !== undefined
+            ? Boolean(produtoPatch.controlaSerie)
+            : atual.controlaSerie;
+
+        if (!controla) {
+          await upsertConfiguracaoSerie(tx, p.id, null);
+        } else if (configuracaoSerie !== undefined) {
+          await upsertConfiguracaoSerie(
+            tx,
+            p.id,
+            configuracaoSerie === null ? {} : configuracaoSerie
+          );
+        } else if (!atual.controlaSerie && controla) {
+          await upsertConfiguracaoSerie(tx, p.id, {});
+        }
+
+        if (componentes !== undefined) {
+          await replaceProdutoBom(tx, p.id, componentes as BomItemInput[]);
+        }
+
+        return tx.produto.findUniqueOrThrow({
+          where: { id: p.id },
+          include: produtoInclude,
+        });
       });
 
       if (Array.isArray(req.body.fotos)) {
@@ -630,6 +837,188 @@ cadastrosRouter.patch(
       }
 
       res.json(updated);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** BOM / árvore de componentes do produto (leitura — também usada no lançamento). */
+cadastrosRouter.get("/produtos/:id/componentes", async (req, res, next) => {
+  try {
+    const pai = await prisma.produto.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true,
+        codigo: true,
+        descricao: true,
+        precoUnitario: true,
+        ativo: true,
+      },
+    });
+    if (!pai) throw new AppError(404, "Produto não encontrado");
+    const itens = await prisma.produtoComponente.findMany({
+      where: { produtoPaiId: pai.id },
+      include: {
+        produtoFilho: {
+          select: {
+            id: true,
+            codigo: true,
+            descricao: true,
+            controlaSerie: true,
+            ativo: true,
+            precoUnitario: true,
+          },
+        },
+      },
+      orderBy: { produtoFilho: { codigo: "asc" } },
+    });
+    res.json({
+      produtoId: pai.id,
+      codigo: pai.codigo,
+      descricao: pai.descricao,
+      precoUnitario: Number(pai.precoUnitario),
+      ativo: pai.ativo,
+      itens: itens.map((i) => ({
+        id: i.id,
+        produtoFilhoId: i.produtoFilhoId,
+        quantidade: Number(i.quantidade),
+        fantasma: i.fantasma,
+        produtoFilho: {
+          ...i.produtoFilho,
+          precoUnitario: Number(i.produtoFilho.precoUnitario),
+        },
+      })),
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Simula produção: qtd do pai × árvore × saldo no estoque → faltas e valores.
+ */
+cadastrosRouter.get(
+  "/produtos/:id/arvore/simulacao",
+  requirePerfil("ADMIN", "GERENTE"),
+  requirePermissao("cadastros_arvore_ver", "cadastros_arvore_editar"),
+  async (req, res, next) => {
+    try {
+      const quantidade = Number(req.query.quantidade);
+      const filialId = String(req.query.filialId || "").trim();
+      const data = await calcularSimulacaoArvore({
+        produtoId: req.params.id,
+        quantidade,
+        filialId,
+      });
+      res.json(data);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+cadastrosRouter.get(
+  "/produtos/:id/arvore/simulacao/export.pdf",
+  requirePerfil("ADMIN", "GERENTE"),
+  requirePermissao("cadastros_arvore_ver", "cadastros_arvore_editar"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const quantidade = Number(req.query.quantidade);
+      const filialId = String(req.query.filialId || "").trim();
+      const { buffer, filename } = await exportarSimulacaoArvorePdf(req.user!, {
+        produtoId: req.params.id,
+        quantidade,
+        filialId,
+      });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+cadastrosRouter.get(
+  "/produtos/:id/arvore/simulacao/export.xlsx",
+  requirePerfil("ADMIN", "GERENTE"),
+  requirePermissao("cadastros_arvore_ver", "cadastros_arvore_editar"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const quantidade = Number(req.query.quantidade);
+      const filialId = String(req.query.filialId || "").trim();
+      const { buffer, filename } = await exportarSimulacaoArvoreExcel(
+        req.user!,
+        {
+          produtoId: req.params.id,
+          quantidade,
+          filialId,
+        }
+      );
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+cadastrosRouter.put(
+  "/produtos/:id/componentes",
+  requirePerfil("ADMIN", "GERENTE"),
+  requirePermissao("cadastros_arvore_editar"),
+  validateBody(putProdutoComponentesSchema),
+  async (req, res, next) => {
+    try {
+      const paiId = req.params.id;
+      const pai = await prisma.produto.findUnique({ where: { id: paiId } });
+      if (!pai) throw new AppError(404, "Produto não encontrado");
+
+      const rawItens = req.body.itens as BomItemInput[];
+      await prisma.$transaction(async (tx) => {
+        await replaceProdutoBom(tx, paiId, rawItens);
+      });
+
+      const itens = await prisma.produtoComponente.findMany({
+        where: { produtoPaiId: paiId },
+        include: {
+          produtoFilho: {
+            select: {
+              id: true,
+              codigo: true,
+              descricao: true,
+              controlaSerie: true,
+              ativo: true,
+              precoUnitario: true,
+            },
+          },
+        },
+        orderBy: { produtoFilho: { codigo: "asc" } },
+      });
+      res.json({
+        produtoId: paiId,
+        itens: itens.map((i) => ({
+          id: i.id,
+          produtoFilhoId: i.produtoFilhoId,
+          quantidade: Number(i.quantidade),
+          fantasma: i.fantasma,
+          produtoFilho: {
+            ...i.produtoFilho,
+            precoUnitario: Number(i.produtoFilho.precoUnitario),
+          },
+        })),
+      });
     } catch (e) {
       next(e);
     }
@@ -664,7 +1053,7 @@ cadastrosRouter.get("/clientes/relacionamentos-resumo", async (_req, res, next) 
 cadastrosRouter.get(
   "/clientes/cnpj/:cnpj",
   requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePermissao("cadastros_clientes_editar"),
   async (req, res, next) => {
     try {
       res.setHeader("Cache-Control", "private, max-age=3600");
@@ -679,7 +1068,7 @@ cadastrosRouter.get(
 cadastrosRouter.get(
   "/clientes/cep/:cep",
   requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePermissao("cadastros_clientes_editar"),
   async (req, res, next) => {
     try {
       res.setHeader("Cache-Control", "public, max-age=86400");
@@ -689,6 +1078,18 @@ cadastrosRouter.get(
     }
   }
 );
+
+cadastrosRouter.get("/clientes/:id", async (req, res, next) => {
+  try {
+    const row = await prisma.cliente.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!row) throw new AppError(404, "Cliente/fornecedor não encontrado");
+    res.json(row);
+  } catch (e) {
+    next(e);
+  }
+});
 
 /** Produtos comprados (ENTRADA) e vendidos (SAIDA) para o cadastro. */
 cadastrosRouter.get("/clientes/:id/relacionamentos", async (req, res, next) => {
@@ -707,7 +1108,7 @@ cadastrosRouter.get("/clientes/:id/relacionamentos", async (req, res, next) => {
 cadastrosRouter.post(
   "/clientes",
   requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePermissao("cadastros_clientes_editar"),
   validateBody(clienteSchema),
   async (req, res, next) => {
     try {
@@ -734,7 +1135,7 @@ cadastrosRouter.post(
 cadastrosRouter.patch(
   "/clientes/:id",
   requirePerfil("ADMIN", "GERENTE"),
-  requirePermissao("cadastros"),
+  requirePermissao("cadastros_clientes_editar"),
   validateBody(clienteSchema.partial()),
   async (req, res, next) => {
     try {
@@ -830,6 +1231,22 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
   }
 });
 
+cadastrosRouter.get(
+  "/tipos-movimentacao/:id",
+  requirePerfil("ADMIN"),
+  async (req, res, next) => {
+    try {
+      const row = await prisma.tipoMovimentacao.findUnique({
+        where: { id: req.params.id },
+      });
+      if (!row) throw new AppError(404, "Tipo não encontrado");
+      res.json(row);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
 cadastrosRouter.post(
   "/tipos-movimentacao",
   requirePerfil("ADMIN"),
@@ -848,6 +1265,10 @@ cadastrosRouter.post(
             diasAlerta: req.body.diasAlerta ?? [15, 30, 45, 60],
             ehRetornoDeId: req.body.ehRetornoDeId ?? null,
             requerTermoComodato: req.body.requerTermoComodato ?? false,
+            baixaPorArvore:
+              (req.body.operacao === "SAIDA" ||
+                req.body.operacao === "TRANSFERENCIA") &&
+              req.body.baixaPorArvore === true,
             requerCliente:
               req.body.requerCliente === true ||
               req.body.geraAlertaRetorno === true ||
@@ -906,6 +1327,36 @@ cadastrosRouter.patch(
         data.requerTermoComodato ?? existing.requerTermoComodato;
       if (geraAlerta || ehRetorno || termo) {
         data.requerCliente = true;
+      }
+
+      const operacaoFinal =
+        (data.operacao as string | undefined) ?? existing.operacao;
+      if (
+        data.baixaPorArvore === true &&
+        operacaoFinal !== "SAIDA" &&
+        operacaoFinal !== "TRANSFERENCIA"
+      ) {
+        throw new AppError(
+          400,
+          "Baixa pela árvore só se aplica a tipos de Saída ou Transferência"
+        );
+      }
+      if (operacaoFinal !== "SAIDA" && operacaoFinal !== "TRANSFERENCIA") {
+        data.baixaPorArvore = false;
+      }
+      const baixaArvore =
+        data.baixaPorArvore !== undefined
+          ? data.baixaPorArvore === true
+          : existing.baixaPorArvore;
+      const requerAprov =
+        data.requerAprovacao !== undefined
+          ? data.requerAprovacao === true
+          : existing.requerAprovacao;
+      if (baixaArvore && requerAprov) {
+        throw new AppError(
+          400,
+          "Tipo com baixa pela árvore não pode exigir aprovação (a baixa conclui na hora)"
+        );
       }
 
       res.json(

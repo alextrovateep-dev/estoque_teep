@@ -6,101 +6,175 @@ const prisma = new PrismaClient();
 async function main() {
   const email = process.env.SEED_ADMIN_EMAIL || "admin@teep.com.br";
   const password = process.env.SEED_ADMIN_PASSWORD || "Admin@123";
-
-  const paulinia = await prisma.filial.upsert({
-    where: { sigla: "PLN" },
-    update: {},
-    create: {
-      nome: "Paulínia",
-      sigla: "PLN",
-      cidade: "Paulínia",
-      estado: "SP",
-      responsavel: "Almoxarifado",
-      emailContato: "paulinia@teep.com.br",
-    },
-  });
-
-  const timbo = await prisma.filial.upsert({
-    where: { sigla: "TBO" },
-    update: {},
-    create: {
-      nome: "Timbó",
-      sigla: "TBO",
-      cidade: "Timbó",
-      estado: "SC",
-      responsavel: "Almoxarifado",
-      emailContato: "timbo@teep.com.br",
-    },
-  });
+  const seedDemo = process.env.SEED_DEMO === "1";
 
   const senhaHash = await bcrypt.hash(password, 12);
 
-  async function upsertUsuarioComFiliais(opts: {
-    email: string;
-    nome: string;
-    perfil: "ADMIN" | "GERENTE" | "OPERADOR";
-    senhaHash: string;
-    filialId: string;
-  }) {
-    const u = await prisma.usuario.upsert({
-      where: { email: opts.email },
-      update: {
-        senhaHash: opts.senhaHash,
-        ativo: true,
-        perfil: opts.perfil,
-        filialId: opts.filialId,
-        perfilCompleto: true,
-      },
-      create: {
-        nome: opts.nome,
-        email: opts.email,
-        senhaHash: opts.senhaHash,
-        perfil: opts.perfil,
-        filialId: opts.filialId,
-        perfilCompleto: true,
-      },
-    });
-    await prisma.usuarioFilial.deleteMany({ where: { usuarioId: u.id } });
-    await prisma.usuarioFilial.create({
-      data: { usuarioId: u.id, filialId: opts.filialId },
-    });
-    return u;
+  /** Admin sem estoque obrigatório — instalação começa no cadastro de estoques. */
+  const admin = await prisma.usuario.upsert({
+    where: { email },
+    update: {
+      senhaHash,
+      ativo: true,
+      perfil: "ADMIN",
+      perfilCompleto: true,
+      // Sem demo: não prende o admin a filial antiga de seed anterior
+      ...(!seedDemo ? { filialId: null } : {}),
+    },
+    create: {
+      nome: "Administrador TEEP",
+      email,
+      senhaHash,
+      perfil: "ADMIN",
+      perfilCompleto: true,
+    },
+  });
+  if (!seedDemo) {
+    await prisma.usuarioFilial.deleteMany({ where: { usuarioId: admin.id } });
   }
 
-  await upsertUsuarioComFiliais({
-    email,
-    nome: "Administrador TEEP",
-    perfil: "ADMIN",
-    senhaHash,
-    filialId: paulinia.id,
-  });
+  /**
+   * Estoques de exemplo + usuários de homologação só com SEED_DEMO=1.
+   * Premissa de produto: estoque não é padrão do sistema — nasce no cadastro.
+   */
+  let filiaisSeed: string[] = [];
+  if (seedDemo) {
+    const paulinia = await prisma.filial.upsert({
+      where: { sigla: "PLN" },
+      update: {},
+      create: {
+        nome: "Paulínia",
+        sigla: "PLN",
+        cidade: "Paulínia",
+        estado: "SP",
+      },
+    });
 
-  const senhaOps = await bcrypt.hash(
-    process.env.SEED_OPS_PASSWORD || "Oper@123",
-    12
-  );
-  await upsertUsuarioComFiliais({
-    email: "gerente@teep.com.br",
-    nome: "Gerente Homologação",
-    perfil: "GERENTE",
-    senhaHash: senhaOps,
-    filialId: paulinia.id,
-  });
-  await upsertUsuarioComFiliais({
-    email: "operador@teep.com.br",
-    nome: "Operador Homologação",
-    perfil: "OPERADOR",
-    senhaHash: senhaOps,
-    filialId: paulinia.id,
-  });
-  await upsertUsuarioComFiliais({
-    email: "operador.tbo@teep.com.br",
-    nome: "Operador Timbó",
-    perfil: "OPERADOR",
-    senhaHash: senhaOps,
-    filialId: timbo.id,
-  });
+    const timbo = await prisma.filial.upsert({
+      where: { sigla: "TBO" },
+      update: {},
+      create: {
+        nome: "Timbó",
+        sigla: "TBO",
+        cidade: "Timbó",
+        estado: "SC",
+      },
+    });
 
+    const estoqueRma = await prisma.filial.upsert({
+      where: { sigla: "RMA" },
+      update: { nome: "Estoque RMA", ativo: true },
+      create: {
+        nome: "Estoque RMA",
+        sigla: "RMA",
+        cidade: "Paulínia",
+        estado: "SP",
+      },
+    });
+
+    await prisma.filial.upsert({
+      where: { sigla: "DESC" },
+      update: { nome: "Estoque Descarte", ativo: true },
+      create: {
+        nome: "Estoque Descarte",
+        sigla: "DESC",
+        cidade: "Paulínia",
+        estado: "SP",
+      },
+    });
+
+    filiaisSeed = ["PLN", "TBO", "RMA", "DESC"];
+
+    async function upsertUsuarioComFiliais(opts: {
+      email: string;
+      nome: string;
+      perfil: "ADMIN" | "GERENTE" | "OPERADOR";
+      senhaHash: string;
+      filialId: string;
+    }) {
+      const u = await prisma.usuario.upsert({
+        where: { email: opts.email },
+        update: {
+          senhaHash: opts.senhaHash,
+          ativo: true,
+          perfil: opts.perfil,
+          filialId: opts.filialId,
+          perfilCompleto: true,
+        },
+        create: {
+          nome: opts.nome,
+          email: opts.email,
+          senhaHash: opts.senhaHash,
+          perfil: opts.perfil,
+          filialId: opts.filialId,
+          perfilCompleto: true,
+        },
+      });
+      await prisma.usuarioFilial.deleteMany({ where: { usuarioId: u.id } });
+      await prisma.usuarioFilial.create({
+        data: { usuarioId: u.id, filialId: opts.filialId },
+      });
+      return u;
+    }
+
+    // Vincula o admin ao estoque demo (homologação)
+    await upsertUsuarioComFiliais({
+      email,
+      nome: "Administrador TEEP",
+      perfil: "ADMIN",
+      senhaHash,
+      filialId: paulinia.id,
+    });
+
+    const senhaOps = await bcrypt.hash(
+      process.env.SEED_OPS_PASSWORD || "Oper@123",
+      12
+    );
+    await upsertUsuarioComFiliais({
+      email: "gerente@teep.com.br",
+      nome: "Gerente Homologação",
+      perfil: "GERENTE",
+      senhaHash: senhaOps,
+      filialId: paulinia.id,
+    });
+    await upsertUsuarioComFiliais({
+      email: "operador@teep.com.br",
+      nome: "Operador Homologação",
+      perfil: "OPERADOR",
+      senhaHash: senhaOps,
+      filialId: paulinia.id,
+    });
+    await upsertUsuarioComFiliais({
+      email: "operador.tbo@teep.com.br",
+      nome: "Operador Timbó",
+      perfil: "OPERADOR",
+      senhaHash: senhaOps,
+      filialId: timbo.id,
+    });
+
+    const emailsComRma = [
+      email,
+      "gerente@teep.com.br",
+      "operador@teep.com.br",
+      "operador.tbo@teep.com.br",
+    ];
+    for (const em of emailsComRma) {
+      const u = await prisma.usuario.findUnique({ where: { email: em } });
+      if (!u) continue;
+      await prisma.usuarioFilial.upsert({
+        where: {
+          usuarioId_filialId: {
+            usuarioId: u.id,
+            filialId: estoqueRma.id,
+          },
+        },
+        update: {},
+        create: { usuarioId: u.id, filialId: estoqueRma.id },
+      });
+    }
+  }
+
+  // —— Tipos / categorias (sempre; não dependem de estoque) ——
   const categorias = [
     "Eletrônico",
     "Adesivos",
@@ -131,6 +205,7 @@ async function main() {
     permitidoGerente: boolean;
     sistema: boolean;
     descricao: string;
+    baixaPorArvore?: boolean;
   }> = [
     {
       nome: "Compra",
@@ -194,14 +269,27 @@ async function main() {
       descricao: "Sai do estoque da filial informada",
     },
     {
-      nome: "Montagem / Produção",
+      nome: "Saída com árvore",
       operacao: "SAIDA",
       requerCliente: false,
       requerAprovacao: false,
       permitidoOperador: true,
       permitidoGerente: true,
       sistema: false,
-      descricao: "Sai do estoque da filial informada",
+      baixaPorArvore: true,
+      descricao:
+        "Na saída, baixa os componentes da árvore deste produto no mesmo estoque",
+    },
+    {
+      nome: "Baixa de componente (árvore)",
+      operacao: "SAIDA",
+      requerCliente: false,
+      requerAprovacao: false,
+      permitidoOperador: false,
+      permitidoGerente: false,
+      sistema: true,
+      descricao:
+        "Gerado automaticamente ao baixar um componente da árvore (saída ou transferência)",
     },
     {
       nome: "Transferência Enviada",
@@ -296,22 +384,74 @@ async function main() {
       sistema: false,
       descricao: "Retorno de equipamento em comodato (vincular à saída aberta)",
     },
+    {
+      nome: "Entrada RMA",
+      operacao: "ENTRADA",
+      requerCliente: true,
+      requerAprovacao: false,
+      permitidoOperador: true,
+      permitidoGerente: true,
+      sistema: false,
+      descricao: "Equipamento do cliente entra no Estoque RMA",
+    },
+    {
+      nome: "Saída RMA",
+      operacao: "SAIDA",
+      requerCliente: true,
+      requerAprovacao: false,
+      permitidoOperador: true,
+      permitidoGerente: true,
+      sistema: false,
+      descricao: "Devolução ao cliente — sai do Estoque RMA",
+    },
   ];
 
+  /** Renomeia tipos legados (montagem → baixa pela árvore) sem duplicar. */
+  async function renameTipoLegado(from: string, to: string) {
+    const antigo = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: from },
+    });
+    if (!antigo) return;
+    const novo = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: to },
+    });
+    if (novo) {
+      // Já existe o nome novo: desativa o legado para não aparecer no lançamento
+      if (antigo.id !== novo.id) {
+        await prisma.tipoMovimentacao.update({
+          where: { id: antigo.id },
+          data: { ativo: false, baixaPorArvore: false },
+        });
+      }
+      return;
+    }
+    await prisma.tipoMovimentacao.update({
+      where: { id: antigo.id },
+      data: { nome: to },
+    });
+  }
+  await renameTipoLegado("Montagem / Produção", "Saída com árvore");
+  await renameTipoLegado("Consumo Montagem", "Baixa de componente (árvore)");
+
   for (const t of tipos) {
+    const { baixaPorArvore, ...base } = t;
     await prisma.tipoMovimentacao.upsert({
       where: { nome: t.nome },
       update: {
-        operacao: t.operacao,
-        requerCliente: t.requerCliente,
-        requerAprovacao: t.requerAprovacao,
-        permitidoOperador: t.permitidoOperador,
-        permitidoGerente: t.permitidoGerente,
-        sistema: t.sistema,
-        descricao: t.descricao,
+        operacao: base.operacao,
+        requerCliente: base.requerCliente,
+        requerAprovacao: base.requerAprovacao,
+        permitidoOperador: base.permitidoOperador,
+        permitidoGerente: base.permitidoGerente,
+        sistema: base.sistema,
+        descricao: base.descricao,
+        baixaPorArvore: baixaPorArvore === true,
         ativo: true,
       },
-      create: t,
+      create: {
+        ...base,
+        baixaPorArvore: baixaPorArvore === true,
+      },
     });
   }
 
@@ -368,6 +508,34 @@ async function main() {
       data: {
         geraAlertaRetorno: false,
         ehRetornoDeId: saidaComodato.id,
+        requerCliente: true,
+      },
+    });
+  }
+
+  const entradaRma = await prisma.tipoMovimentacao.findUnique({
+    where: { nome: "Entrada RMA" },
+  });
+  const saidaRma = await prisma.tipoMovimentacao.findUnique({
+    where: { nome: "Saída RMA" },
+  });
+  if (saidaRma && entradaRma) {
+    await prisma.tipoMovimentacao.update({
+      where: { id: saidaRma.id },
+      data: {
+        // NÃO usar ehRetornoDe (fluxo demo/comodato). Devolução RMA = SAIDA normal do Estoque RMA.
+        geraAlertaRetorno: false,
+        ehRetornoDeId: null,
+        requerCliente: true,
+      },
+    });
+  }
+  if (entradaRma) {
+    await prisma.tipoMovimentacao.update({
+      where: { id: entradaRma.id },
+      data: {
+        geraAlertaRetorno: false,
+        ehRetornoDeId: null,
         requerCliente: true,
       },
     });
@@ -447,10 +615,12 @@ async function main() {
 
   console.log("Seed OK:", {
     admin: email,
-    filiais: ["PLN", "TBO"],
+    filiais: filiaisSeed.length ? filiaisSeed : "(nenhum — cadastre em Admin → Estoques)",
     tipos: tipos.length,
-    ops: ["gerente@teep.com.br", "operador@teep.com.br", "operador.tbo@teep.com.br"],
-    demo: process.env.SEED_DEMO === "1",
+    ops: seedDemo
+      ? ["gerente@teep.com.br", "operador@teep.com.br", "operador.tbo@teep.com.br"]
+      : [],
+    demo: seedDemo,
   });
 }
 

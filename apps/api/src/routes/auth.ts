@@ -24,6 +24,7 @@ import {
   purgeOrphanAvatarFiles,
 } from "../lib/uploads";
 import rateLimit from "express-rate-limit";
+import { temEstoqueAtivo } from "../lib/estoqueGate";
 
 export const authRouter = Router();
 
@@ -79,7 +80,7 @@ function toAuthUser(usuario: {
   };
 }
 
-function publicUser(usuario: {
+async function publicUser(usuario: {
   id: string;
   nome: string;
   email: string;
@@ -115,6 +116,8 @@ function publicUser(usuario: {
     dataNascimento,
     perfilCompleto: Boolean(usuario.perfilCompleto),
     aniversarioHoje: isAniversarioHoje(dataNascimento),
+    /** Premissa: operação exige ao menos um estoque cadastrado. */
+    temEstoque: await temEstoqueAtivo(),
     permissoes: resolvePermissoes(
       perfil,
       (usuario.permissoes as Record<string, boolean>) || null
@@ -152,7 +155,7 @@ authRouter.post(
       res.json({
         accessToken,
         refreshToken,
-        user: publicUser(usuario),
+        user: await publicUser(usuario),
       });
     } catch (e) {
       next(e);
@@ -250,7 +253,7 @@ authRouter.post(
       res.json({
         accessToken,
         refreshToken,
-        user: publicUser(updated),
+        user: await publicUser(updated),
       });
     } catch (e) {
       next(e);
@@ -272,7 +275,7 @@ authRouter.get("/me", authenticate, async (req: AuthedRequest, res, next) => {
       throw new AppError(401, "Usuário inativo");
     }
     res.json({
-      ...publicUser(usuario),
+      ...(await publicUser(usuario)),
       filial: usuario.filial,
     });
   } catch (e) {
@@ -367,7 +370,7 @@ authRouter.patch(
         purgeOrphanAvatarFiles(atual.id, [body.fotoPerfil]);
       }
 
-      res.json(publicUser(updated));
+      res.json(await publicUser(updated));
     } catch (e) {
       next(e);
     }

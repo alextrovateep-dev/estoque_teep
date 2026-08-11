@@ -46,10 +46,12 @@ export function validateProductionEnv(
   return errors;
 }
 
+import { logger } from "./logger";
+
 export function assertProductionEnv(): void {
   const errors = validateProductionEnv();
   if (!errors.length) return;
-  console.error("[env] Ambiente de produção inválido:");
-  for (const e of errors) console.error(`  - ${e}`);
+  logger.error("Ambiente de produção inválido:", { errors });
+  for (const e of errors) logger.error(`  - ${e}`);
   process.exit(1);
 }

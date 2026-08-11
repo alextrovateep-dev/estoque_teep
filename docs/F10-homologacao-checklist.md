@@ -75,7 +75,7 @@ pnpm smoke:f10
 - [ ] (Go-Live B) Novo Lançamento → transferência com crédito imediato → destino já com saldo; status RECEBIDO
 - [ ] (Go-Live B / F9) Conferência com divergência → justificativa + toast/e-mail se preferências ligadas
 - [ ] **Séries:** produto com `controlaSerie` → entrada com 3 séries → transferência (checklist na conferência) → saída → retorno (séries da saída)
-- [ ] **Séries:** busca em `/estoque/series` localiza unidade + histórico
+- [ ] **Séries:** filtro nº de série no Dashboard (onde está) e em Movimentações (histórico)
 
 **Critério:** nenhum saldo negativo indevido; ledger bate com tela de movimentações.
 

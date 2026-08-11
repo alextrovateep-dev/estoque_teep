@@ -56,7 +56,8 @@ Valida health → login → produto → init → compra/venda → saldo → tran
 
 ## Hardening / Go-Live (F11)
 
-Guia: [`docs/F11-hardening-golive.md`](docs/F11-hardening-golive.md)
+Guia de cutover: [`docs/F11-hardening-golive.md`](docs/F11-hardening-golive.md)  
+**Instalação oficial (Debian / Docker / VM):** [`docs/INSTALACAO.md`](docs/INSTALACAO.md)
 
 ```bash
 cp deploy/env.production.example .env.production
@@ -71,6 +72,7 @@ Produção: `https://estoque.teep.com.br` (web) · `https://api.estoque.teep.com
 
 | Doc | Conteúdo |
 |-----|----------|
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | **Instalação oficial** — Debian, Docker Compose prod, VM lab, `.env.production` |
 | [docs/F10-homologacao-checklist.md](docs/F10-homologacao-checklist.md) | Checklist de homologação / carga inicial |
 | [docs/F11-hardening-golive.md](docs/F11-hardening-golive.md) | F11 — staging, HTTPS, backup, cutover |
 | [docs/orientacao-senha-provisoria.md](docs/orientacao-senha-provisoria.md) | Senha provisória + troca no 1º acesso |
@@ -78,8 +80,29 @@ Produção: `https://estoque.teep.com.br` (web) · `https://api.estoque.teep.com
 | [docs/orientacao-upload-midia.md](docs/orientacao-upload-midia.md) | F13 — avatar + fotos de produto |
 | [docs/orientacao-assistente-estoque-llm.md](docs/orientacao-assistente-estoque-llm.md) | F14 — assistente LLM no Dashboard |
 | [docs/orientacao-lancamento-unificado-f15.md](docs/orientacao-lancamento-unificado-f15.md) | F15 — lançamento unificado + transferência só conferência |
+| [docs/orientacao-recuperacao-backup.md](docs/orientacao-recuperacao-backup.md) | Procedimentos de recuperação de backup e emergência |
+| [docs/orientacao-monitoramento-basico.md](docs/orientacao-monitoramento-basico.md) | Monitoramento básico para sistemas internos |
+| [docs/orientacao-geracao-numero-serie.md](docs/orientacao-geracao-numero-serie.md) | Orientação — geração de séries no Novo Lançamento (**implementado**; impressão Zebra em standby) |
+| [docs/orientacao-impressao-zebra.md](docs/orientacao-impressao-zebra.md) | Orientação — impressão Zebra (**standby** — etiquetas no software da impressora) |
+| [docs/orientacao-rma-fase2.md](docs/orientacao-rma-fase2.md) | RMA — MVP + backlog |
 
-Após F9.1: sino no header · Admin → **E-mail**. F13: foto no cadastro. F14: assistente no Dashboard (flag `ASSISTENTE_LLM_ENABLED`). F15: transferências criadas no Novo Lançamento.
+Após F9.1: sino no header · Admin → **E-mail**. F13: foto no cadastro. F14: assistente no Dashboard (flag `ASSISTENTE_LLM_ENABLED`). F15: transferências criadas no Novo Lançamento. RMA: menu **RMA**.
+
+## Segurança Importante
+
+⚠️ **ATENÇÃO:** Após copiar os arquivos `.env.example`, **EDITE OS SEGREDOS** antes de rodar em produção/staging:
+
+1. Em `apps/api/.env`:
+   - `JWT_ACCESS_SECRET`: mínimo 32 caracteres aleatórios
+   - `JWT_REFRESH_SECRET`: mínimo 32 caracteres aleatórios
+   - **NUNCA** use os valores de exemplo (`change-me-...`)
+
+2. Em `.env.production` (produção):
+   - Todos os secrets devem ser fortes e únicos
+   - `POSTGRES_PASSWORD` deve ser forte
+   - Configure `SMTP_*` para e-mails reais
+
+O sistema **falhará ao iniciar** se detectar secrets fracos em produção.
 
 ## Docker (dev)
 

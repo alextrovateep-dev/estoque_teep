@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { getStoredUser, logoutSession, User, api, displayName } from "@/lib/api";
-import { homeForUser, userHas } from "@/lib/access";
+import { homeForUser, userCanOpenCadastro, userHas, userHasAny } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
 import { NotificationBell } from "@/components/NotificationBell";
 import { TeepLogo } from "@/components/TeepLogo";
@@ -15,25 +15,24 @@ type NavItem = {
   href: string;
   label: string;
   section?: "admin" | "ops";
-  /** Subgrupo visual dentro de Operação */
-  group?: "visao" | "dia" | "controle" | "cadastros" | "inventario";
-  perm?: PermissaoKey;
+  /** Subgrupo visual da operação (cadastros de domínio ficam em ops). */
+  group?: "visao" | "operacoes" | "controle" | "cadastros";
+  /** Uma key ou qualquer uma da lista. */
+  perm?: PermissaoKey | readonly PermissaoKey[];
 };
 
 const OPS_GROUP_LABELS: Record<NonNullable<NavItem["group"]>, string> = {
-  visao: "Operação/Visão",
-  dia: "Dia a dia",
+  visao: "Visão",
+  operacoes: "Operações",
   controle: "Controle",
   cadastros: "Cadastros",
-  inventario: "Inventário",
 };
 
 const OPS_GROUP_ORDER: NonNullable<NavItem["group"]>[] = [
   "visao",
-  "dia",
+  "operacoes",
   "controle",
   "cadastros",
-  "inventario",
 ];
 
 function routeAllowed(pathname: string, user: User): boolean {
@@ -42,11 +41,32 @@ function routeAllowed(pathname: string, user: User): boolean {
   if (pathname.startsWith("/perfil")) return true;
   if (pathname.startsWith("/sem-acesso")) return true;
 
+  if (pathname.startsWith("/estoque/series")) {
+    return userHas(user, "dashboard") || userHas(user, "movimentacoes");
+  }
+
+  if (pathname.startsWith("/cadastros/produtos")) {
+    return userCanOpenCadastro(user, "produtos");
+  }
+  if (pathname.startsWith("/cadastros/clientes")) {
+    return userCanOpenCadastro(user, "clientes");
+  }
+  if (pathname.startsWith("/cadastros/arvore")) {
+    return userCanOpenCadastro(user, "arvore");
+  }
+  if (pathname.startsWith("/cadastros")) {
+    return (
+      userCanOpenCadastro(user, "produtos") ||
+      userCanOpenCadastro(user, "clientes") ||
+      userCanOpenCadastro(user, "arvore")
+    );
+  }
+
   const checks: Array<[string, PermissaoKey]> = [
     ["/estoque/init", "estoque_init"],
-    ["/estoque/series", "movimentacoes"],
-    ["/cadastros", "cadastros"],
     ["/aprovacoes", "aprovacoes"],
+    ["/rma", "rma"],
+    ["/relatorios", "relatorios"],
     ["/dashboard", "dashboard"],
     ["/lancamentos", "lancamentos"],
     ["/transferencias", "transferencias"],
@@ -101,7 +121,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     setUser(u);
     setOpen(false);
 
-    if (meFetchedRef.current) return;
+    const onUserUpdated = () => {
+      const latest = getStoredUser();
+      if (latest) setUser(latest);
+    };
+    window.addEventListener("teep-user-updated", onUserUpdated);
+
+    if (meFetchedRef.current) {
+      return () => window.removeEventListener("teep-user-updated", onUserUpdated);
+    }
     meFetchedRef.current = true;
     void api<User>("/auth/me")
       .then((me) => {
@@ -119,6 +147,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           dataNascimento: me.dataNascimento ?? null,
           perfilCompleto: me.perfilCompleto,
           aniversarioHoje: me.aniversarioHoje,
+          temEstoque: me.temEstoque,
           permissoes: me.permissoes,
         };
         localStorage.setItem("teep_user", JSON.stringify(next));
@@ -148,6 +177,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       .catch(() => {
         meFetchedRef.current = false;
       });
+
+    return () => window.removeEventListener("teep-user-updated", onUserUpdated);
   }, [router, pathname]);
 
   useEffect(() => {
@@ -180,7 +211,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const items = useMemo(() => {
     if (!user) return [] as NavItem[];
+    const isAdmin = user.perfil === "ADMIN";
+
     const opsAll: NavItem[] = [
+      // Visão — consulta / indicadores
       {
         href: "/dashboard",
         label: "Dashboard / Saldos",
@@ -189,19 +223,35 @@ export function AppShell({ children }: { children: ReactNode }) {
         perm: "dashboard",
       },
       {
+        href: "/relatorios",
+        label: "Relatórios",
+        section: "ops",
+        group: "visao",
+        perm: "relatorios",
+      },
+      // Operações — ações do dia
+      {
         href: "/lancamentos/novo",
         label: "Novo Lançamento",
         section: "ops",
-        group: "dia",
+        group: "operacoes",
         perm: "lancamentos",
       },
       {
         href: "/transferencias",
-        label: "Confirmar Recebimento",
+        label: "Transferências",
         section: "ops",
-        group: "dia",
+        group: "operacoes",
         perm: "transferencias",
       },
+      {
+        href: "/rma",
+        label: "RMA",
+        section: "ops",
+        group: "operacoes",
+        perm: "rma",
+      },
+      // Controle — histórico, filas e ajustes
       {
         href: "/movimentacoes",
         label: "Movimentações",
@@ -217,49 +267,62 @@ export function AppShell({ children }: { children: ReactNode }) {
         perm: "aprovacoes",
       },
       {
+        href: "/estoque/init",
+        label: "Inventário",
+        section: "ops",
+        group: "controle",
+        perm: "estoque_init",
+      },
+      // Cadastros — dados mestres (inclui itens só Admin)
+      {
         href: "/cadastros/produtos",
         label: "Produtos",
         section: "ops",
         group: "cadastros",
-        perm: "cadastros",
-      },
-      {
-        href: "/cadastros/categorias",
-        label: "Categorias",
-        section: "ops",
-        group: "cadastros",
-        perm: "cadastros",
+        perm: ["cadastros_produtos_ver", "cadastros_produtos_editar"],
       },
       {
         href: "/cadastros/clientes",
-        label: "Clientes",
+        label: "Clientes / Fornecedores",
         section: "ops",
         group: "cadastros",
-        perm: "cadastros",
+        perm: ["cadastros_clientes_ver", "cadastros_clientes_editar"],
       },
       {
-        href: "/estoque/init",
-        label: "Inventário",
+        href: "/cadastros/arvore",
+        label: "Árvore de produto",
         section: "ops",
-        group: "inventario",
-        perm: "estoque_init",
+        group: "cadastros",
+        perm: ["cadastros_arvore_ver", "cadastros_arvore_editar"],
       },
-      {
-        href: "/estoque/series",
-        label: "Números de série",
-        section: "ops",
-        group: "controle",
-        perm: "movimentacoes",
-      },
+      ...(isAdmin
+        ? [
+            {
+              href: "/admin/categorias",
+              label: "Categorias",
+              section: "ops" as const,
+              group: "cadastros" as const,
+            },
+            {
+              href: "/admin/filiais",
+              label: "Estoques",
+              section: "ops" as const,
+              group: "cadastros" as const,
+            },
+          ]
+        : []),
     ];
-    const ops = opsAll.filter((item) =>
-      item.perm ? userHas(user, item.perm) : true
-    );
+    const ops = opsAll.filter((item) => {
+      if (!item.perm) return true;
+      const p = item.perm;
+      if (typeof p === "string") return userHas(user, p);
+      return userHasAny(user, p);
+    });
 
+    // Administração — configuração do sistema (no fim do menu)
     const admin: NavItem[] = [];
-    if (user.perfil === "ADMIN") {
+    if (isAdmin) {
       admin.push(
-        { href: "/admin/filiais", label: "Filiais", section: "admin" },
         {
           href: "/admin/usuarios",
           label: "Usuários e Perfis",
@@ -277,7 +340,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         }
       );
     }
-    return [...admin, ...ops];
+    return [...ops, ...admin];
   }, [user]);
 
   if (!user) {
@@ -331,15 +394,22 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   function renderNavLink(item: NavItem) {
     const showBadge = item.href === "/aprovacoes" && pendentesAprovacao > 0;
-    const active =
-      pathname === item.href || pathname.startsWith(`${item.href}/`);
+    /** Prefere o item mais específico quando vários prefixos batem. */
+    const candidates = items.filter(
+      (i) => pathname === i.href || pathname.startsWith(`${i.href}/`)
+    );
+    const best =
+      candidates.length === 0
+        ? null
+        : candidates.reduce((a, b) => (a.href.length >= b.href.length ? a : b));
+    const active = best?.href === item.href;
     return (
       <Link
         key={item.href}
         href={item.href}
         onClick={() => setOpen(false)}
         className={clsx(
-          "flex items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-sm font-medium",
+          "flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium",
           active
             ? "bg-brand text-white"
             : "text-slate-700 hover:bg-brand-light"
@@ -363,69 +433,62 @@ export function AppShell({ children }: { children: ReactNode }) {
     );
   }
 
-  function SidebarNav() {
+  function SidebarBody() {
     return (
-      <nav className="scrollbar-ghost flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto overscroll-contain p-3">
-        {adminItems.length > 0 && (
-          <>
-            <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              Área Admin
-            </p>
-            {adminItems.map(renderNavLink)}
-          </>
-        )}
+      <div className="flex h-full min-h-0 flex-1 flex-col">
+        <div className="shrink-0 border-b border-slate-200 px-3 py-2.5">
+          <TeepLogo variant="full" height={22} />
+          <p className="mt-0.5 text-[11px] leading-tight text-slate-400">
+            Controle de estoque
+          </p>
+        </div>
 
-        {OPS_GROUP_ORDER.map((group) => {
-          const groupItems = opsItems.filter((i) => i.group === group);
-          if (groupItems.length === 0) return null;
-          return (
-            <div key={group} className="mt-1">
-              <p className="px-2 pb-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-slate-400/90">
-                {OPS_GROUP_LABELS[group]}
-              </p>
-              {groupItems.map(renderNavLink)}
-            </div>
-          );
-        })}
-      </nav>
-    );
-  }
+        <nav className="scrollbar-ghost min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-1.5">
+          <div className="flex flex-col gap-0.5">
+            {OPS_GROUP_ORDER.map((group) => {
+              const groupItems = opsItems.filter((i) => i.group === group);
+              if (groupItems.length === 0) return null;
+              return (
+                <div key={group}>
+                  <p className="px-2 pb-0.5 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-400/90">
+                    {OPS_GROUP_LABELS[group]}
+                  </p>
+                  {groupItems.map(renderNavLink)}
+                </div>
+              );
+            })}
 
-  function SidebarFooter() {
-    return (
-      <div className="shrink-0 border-t border-slate-100 pb-1 pt-1">
-        <Link
-          href="/perfil"
-          onClick={() => setOpen(false)}
-          className={clsx(
-            "mx-3 mb-1 block rounded-lg px-3 py-2.5 text-sm font-medium",
-            pathname.startsWith("/perfil")
-              ? "bg-brand text-white"
-              : "text-slate-700 hover:bg-brand-light"
-          )}
-        >
-          Meu perfil
-        </Link>
-        <button
-          type="button"
-          onClick={logout}
-          className="mx-3 mb-3 mt-0 block w-[calc(100%-1.5rem)] rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
-        >
-          Sair
-        </button>
+            {adminItems.length > 0 && (
+              <div>
+                <p className="px-2 pb-0.5 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                  Administração
+                </p>
+                {adminItems.map(renderNavLink)}
+              </div>
+            )}
+          </div>
+        </nav>
+
+        <div className="mt-auto shrink-0 border-t border-slate-200 bg-white px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              void logout();
+            }}
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-brand-light"
+          >
+            <span>Sair</span>
+          </button>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen md:flex md:h-dvh md:max-h-dvh md:overflow-hidden">
-      <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-white md:flex md:h-full md:flex-col md:overflow-hidden">
-        <div className="shrink-0 border-b border-slate-200 px-4 py-4">
-          <TeepLogo variant="full" height={28} priority />
-          <p className="mt-1.5 text-xs text-slate-400">Controle de estoque</p>
-        </div>
-        <SidebarNav />
-        <SidebarFooter />
+    <div className="min-h-screen md:flex md:h-svh md:max-h-svh md:overflow-hidden">
+      <aside className="hidden w-64 shrink-0 overflow-hidden border-r border-slate-200 bg-white md:flex md:h-svh md:max-h-svh md:min-h-0 md:flex-col">
+        <SidebarBody />
       </aside>
 
       {open && (
@@ -435,12 +498,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             onClick={() => setOpen(false)}
             aria-label="Fechar menu"
           />
-          <aside className="absolute left-0 top-0 flex h-full max-h-dvh w-72 flex-col overflow-hidden bg-white shadow-xl">
-            <div className="shrink-0 border-b border-slate-200 px-4 py-4">
-              <TeepLogo variant="full" height={28} />
-            </div>
-            <SidebarNav />
-            <SidebarFooter />
+          <aside className="absolute left-0 top-0 flex h-svh max-h-svh min-h-0 w-72 flex-col overflow-hidden bg-white shadow-xl">
+            <SidebarBody />
           </aside>
         </div>
       )}
@@ -479,6 +538,34 @@ export function AppShell({ children }: { children: ReactNode }) {
             >
               Fechar
             </button>
+          </div>
+        )}
+        {user.temEstoque === false && (
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950 md:px-6">
+            <p>
+              {user.perfil === "ADMIN" ? (
+                <>
+                  Cadastre ao menos um <strong>estoque</strong> para liberar
+                  lançamentos, transferências e RMA. Você pode navegar no
+                  sistema, mas operações ficam bloqueadas até lá.
+                </>
+              ) : (
+                <>
+                  Ainda não há estoque cadastrado. Operações ficam bloqueadas
+                  até um administrador criar ao menos um estoque em{" "}
+                  <strong>Cadastros → Estoques</strong>.
+                </>
+              )}
+            </p>
+            {user.perfil === "ADMIN" &&
+              !pathname.startsWith("/admin/filiais") && (
+                <Link
+                  href="/admin/filiais/novo"
+                  className="shrink-0 rounded-lg bg-sky-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-800"
+                >
+                  Cadastrar estoque
+                </Link>
+              )}
           </div>
         )}
         <main className="scrollbar-ghost min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 md:p-6">

@@ -2,12 +2,23 @@ import { Request, Response, NextFunction } from "express";
 import { ZodSchema } from "zod";
 import multer from "multer";
 
+function zodIssueMessage(raw: string | undefined): string {
+  if (!raw) return "Dados inválidos";
+  const t = raw.trim();
+  const lower = t.toLowerCase();
+  if (!t || lower === "required" || lower === "invalid" || lower === "expected string, received undefined") {
+    return "Dados inválidos";
+  }
+  return t;
+}
+
 export function validateBody(schema: ZodSchema) {
   return (req: Request, res: Response, next: NextFunction) => {
     const parsed = schema.safeParse(req.body ?? {});
     if (!parsed.success) {
+      const first = parsed.error.issues[0]?.message;
       return res.status(400).json({
-        error: "Dados inválidos",
+        error: zodIssueMessage(first),
         details: parsed.error.flatten(),
       });
     }

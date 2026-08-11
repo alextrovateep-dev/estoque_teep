@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { Prisma } from "@prisma/client";
 import {
   BRAND_COLOR,
   isAbaixoMinimo,
@@ -35,10 +36,15 @@ export type SaldoExportRow = {
   produtoAtivo: boolean;
 };
 
+export type AlertaFiltro = "min" | "max" | "qualquer";
+
 export type SaldosExportOpts = {
   filialId?: string | null;
   q?: string | null;
+  /** Legacy: true = alerta qualquer (min ou max). Preferir `alerta`. */
   soAlertas?: boolean;
+  /** min = só abaixo do mínimo; max = só acima do máximo; qualquer = fora de faixa */
+  alerta?: AlertaFiltro | null;
   categoriaId?: string | null;
   /** Se informado, exporta só esses estoque.id (ignora demais filtros de tela). */
   ids?: string[] | null;
@@ -51,6 +57,7 @@ export type SaldosExportMeta = {
   escopo: string;
   consolidado: boolean;
   soAlertas: boolean;
+  alerta: AlertaFiltro | null;
   busca: string | null;
   categoria: string | null;
   selecaoManual: number | null;
@@ -63,6 +70,17 @@ export type SaldosExportMeta = {
   valorTotal: number;
   linhas: number;
 };
+
+/** Resolve filtro de alerta a partir de opts (alerta tem prioridade sobre soAlertas). */
+export function resolveAlertaFiltro(
+  opts: Pick<SaldosExportOpts, "alerta" | "soAlertas">
+): AlertaFiltro | null {
+  if (opts.alerta === "min" || opts.alerta === "max" || opts.alerta === "qualquer") {
+    return opts.alerta;
+  }
+  if (opts.soAlertas) return "qualquer";
+  return null;
+}
 
 function moneyBr(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -117,7 +135,7 @@ export function totaisDasLinhas(rows: SaldoExportRow[]): {
 
 export function filtrarSaldosExport(
   rows: SaldoExportRow[],
-  opts: Pick<SaldosExportOpts, "q" | "soAlertas" | "categoriaId" | "ids">
+  opts: Pick<SaldosExportOpts, "q" | "soAlertas" | "alerta" | "categoriaId" | "ids">
 ): SaldoExportRow[] {
   const ids = (opts.ids || []).filter((id) => UUID_RE.test(id));
   if (ids.length > 0) {
@@ -127,18 +145,83 @@ export function filtrarSaldosExport(
 
   const q = (opts.q || "").trim().toLowerCase();
   const categoriaId = opts.categoriaId?.trim() || "";
+  const alerta = resolveAlertaFiltro(opts);
   return rows.filter((s) => {
     if (categoriaId && s.categoriaId !== categoriaId) return false;
-    if (opts.soAlertas && !(s.abaixoMinimo || s.acimaMaximo)) return false;
+    if (alerta === "min" && !s.abaixoMinimo) return false;
+    if (alerta === "max" && !s.acimaMaximo) return false;
+    if (alerta === "qualquer" && !(s.abaixoMinimo || s.acimaMaximo)) return false;
     if (!q) return true;
     return (
       s.codigo.toLowerCase().includes(q) ||
-      s.descricao.toLowerCase().includes(q) ||
-      s.filialSigla.toLowerCase().includes(q) ||
-      s.filialNome.toLowerCase().includes(q) ||
-      s.categoriaNome.toLowerCase().includes(q)
+      s.descricao.toLowerCase().includes(q)
     );
   });
+}
+
+/** IDs de estoque já filtrados (q/categoria/alerta) antes do LIMIT — evita alerta incompleto. */
+async function selecionarIdsSaldos(opts: {
+  filialId: string | null;
+  q: string;
+  categoriaId: string;
+  alerta: AlertaFiltro | null;
+}): Promise<{ ids: string[]; totalFiltrado: number }> {
+  const conditions: Prisma.Sql[] = [];
+  if (opts.filialId) {
+    conditions.push(Prisma.sql`e.filial_id = ${opts.filialId}::uuid`);
+  } else {
+    conditions.push(Prisma.sql`f.ativo = true`);
+  }
+  if (opts.categoriaId) {
+    conditions.push(Prisma.sql`p.categoria_id = ${opts.categoriaId}::uuid`);
+  }
+  if (opts.q) {
+    const like = `%${opts.q}%`;
+    conditions.push(
+      Prisma.sql`(p.codigo ILIKE ${like} OR p.descricao ILIKE ${like})`
+    );
+  }
+  if (opts.alerta === "min") {
+    conditions.push(
+      Prisma.sql`(p.estoque_minimo > 0 AND e.saldo_atual <= p.estoque_minimo)`
+    );
+  } else if (opts.alerta === "max") {
+    conditions.push(
+      Prisma.sql`(p.estoque_maximo > 0 AND e.saldo_atual >= p.estoque_maximo)`
+    );
+  } else if (opts.alerta === "qualquer") {
+    conditions.push(Prisma.sql`(
+      (p.estoque_minimo > 0 AND e.saldo_atual <= p.estoque_minimo)
+      OR (p.estoque_maximo > 0 AND e.saldo_atual >= p.estoque_maximo)
+    )`);
+  }
+
+  const whereSql =
+    conditions.length > 0
+      ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`
+      : Prisma.empty;
+
+  const countRows = await prisma.$queryRaw<Array<{ n: bigint }>>`
+    SELECT COUNT(*)::bigint AS n
+    FROM estoques e
+    INNER JOIN produtos p ON p.id = e.produto_id
+    INNER JOIN filiais f ON f.id = e.filial_id
+    ${whereSql}
+  `;
+  const idRows = await prisma.$queryRaw<Array<{ id: string }>>`
+    SELECT e.id
+    FROM estoques e
+    INNER JOIN produtos p ON p.id = e.produto_id
+    INNER JOIN filiais f ON f.id = e.filial_id
+    ${whereSql}
+    ORDER BY f.sigla ASC, p.codigo ASC
+    LIMIT ${DASHBOARD_SALDOS_LIMITE}
+  `;
+
+  return {
+    ids: idRows.map((r) => r.id),
+    totalFiltrado: Number(countRows[0]?.n ?? 0),
+  };
 }
 
 export async function carregarSaldosExport(
@@ -151,11 +234,11 @@ export async function carregarSaldosExport(
   if (opts.categoriaId && !UUID_RE.test(opts.categoriaId)) {
     throw new AppError(400, "categoriaId inválido");
   }
-  const ids = (opts.ids || []).filter((id) => UUID_RE.test(id));
-  if ((opts.ids?.length || 0) > 0 && ids.length === 0) {
+  const idsManuais = (opts.ids || []).filter((id) => UUID_RE.test(id));
+  if ((opts.ids?.length || 0) > 0 && idsManuais.length === 0) {
     throw new AppError(400, "ids inválidos");
   }
-  if (ids.length > DASHBOARD_SALDOS_LIMITE) {
+  if (idsManuais.length > DASHBOARD_SALDOS_LIMITE) {
     throw new AppError(400, `Máximo de ${DASHBOARD_SALDOS_LIMITE} itens na seleção`);
   }
 
@@ -164,32 +247,24 @@ export async function carregarSaldosExport(
     opts.filialId
   );
 
-  const estoqueWhere = filialId
-    ? { filialId }
-    : { filial: { ativo: true } };
+  const alerta =
+    idsManuais.length > 0 ? null : resolveAlertaFiltro(opts);
+  const q = idsManuais.length > 0 ? "" : (opts.q || "").trim();
+  const categoriaId =
+    idsManuais.length > 0 ? "" : opts.categoriaId?.trim() || "";
 
-  const [totalPosicoes, estoques, filiais, categoria] = await Promise.all([
-    prisma.estoque.count({ where: estoqueWhere }),
-    prisma.estoque.findMany({
-      where: estoqueWhere,
-      include: {
-        produto: {
-          select: {
-            codigo: true,
-            descricao: true,
-            precoUnitario: true,
-            estoqueMinimo: true,
-            estoqueMaximo: true,
-            ativo: true,
-            categoriaId: true,
-            categoria: { select: { id: true, nome: true } },
-          },
-        },
-        filial: { select: { id: true, nome: true, sigla: true } },
-      },
-      orderBy: [{ filial: { sigla: "asc" } }, { produto: { codigo: "asc" } }],
-      take: DASHBOARD_SALDOS_LIMITE,
-    }),
+  const [selecao, filiais, categoria] = await Promise.all([
+    idsManuais.length > 0
+      ? Promise.resolve({
+          ids: idsManuais,
+          totalFiltrado: idsManuais.length,
+        })
+      : selecionarIdsSaldos({
+          filialId,
+          q,
+          categoriaId,
+          alerta,
+        }),
     user.perfil === "OPERADOR"
       ? prisma.filial.findMany({
           where: { id: { in: operadorFilialIds(user) } },
@@ -201,15 +276,42 @@ export async function carregarSaldosExport(
           select: { id: true, nome: true, sigla: true },
           orderBy: { nome: "asc" },
         }),
-    opts.categoriaId
+    categoriaId
       ? prisma.categoria.findUnique({
-          where: { id: opts.categoriaId },
+          where: { id: categoriaId },
           select: { nome: true },
         })
       : Promise.resolve(null),
   ]);
 
-  const mapped: SaldoExportRow[] = estoques.map((e) => {
+  const estoques =
+    selecao.ids.length === 0
+      ? []
+      : await prisma.estoque.findMany({
+          where: { id: { in: selecao.ids } },
+          include: {
+            produto: {
+              select: {
+                codigo: true,
+                descricao: true,
+                precoUnitario: true,
+                estoqueMinimo: true,
+                estoqueMaximo: true,
+                ativo: true,
+                categoriaId: true,
+                categoria: { select: { id: true, nome: true } },
+              },
+            },
+            filial: { select: { id: true, nome: true, sigla: true } },
+          },
+        });
+
+  const byId = new Map(estoques.map((e) => [e.id, e]));
+  const ordered = selecao.ids
+    .map((id) => byId.get(id))
+    .filter((e): e is NonNullable<typeof e> => Boolean(e));
+
+  const mapped: SaldoExportRow[] = ordered.map((e) => {
     const saldo = Number(e.saldoAtual);
     const preco = Number(e.produto.precoUnitario);
     const min = e.produto.estoqueMinimo;
@@ -232,10 +334,8 @@ export async function carregarSaldosExport(
     };
   });
 
-  const rows = filtrarSaldosExport(mapped, {
-    ...opts,
-    ids: ids.length > 0 ? ids : null,
-  });
+  // Filtros já aplicados em SQL (ou via ids manuais)
+  const rows = mapped;
   const totais = totaisDasLinhas(rows);
 
   const filialFound = filialId
@@ -255,16 +355,17 @@ export async function carregarSaldosExport(
       perfil: user.perfil,
       escopo,
       consolidado,
-      soAlertas: ids.length > 0 ? false : !!opts.soAlertas,
-      busca: ids.length > 0 ? null : (opts.q || "").trim() || null,
+      soAlertas: alerta != null,
+      alerta,
+      busca: idsManuais.length > 0 ? null : q || null,
       categoria:
-        ids.length > 0
+        idsManuais.length > 0
           ? null
-          : categoria?.nome || (opts.categoriaId ? "Categoria" : null),
-      selecaoManual: ids.length > 0 ? rows.length : null,
-      truncado: totalPosicoes > DASHBOARD_SALDOS_LIMITE,
+          : categoria?.nome || (categoriaId ? "Categoria" : null),
+      selecaoManual: idsManuais.length > 0 ? rows.length : null,
+      truncado: selecao.totalFiltrado > DASHBOARD_SALDOS_LIMITE,
       totalCarregados: mapped.length,
-      totalPosicoes,
+      totalPosicoes: selecao.totalFiltrado,
       limite: DASHBOARD_SALDOS_LIMITE,
       quantidadeTotal: totais.quantidadeTotal,
       valorTotal: totais.valorTotal,
@@ -278,9 +379,12 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
   if (meta.selecaoManual != null) {
     filtros.push(`seleção manual (${meta.selecaoManual} itens)`);
   } else {
-    if (meta.soAlertas) filtros.push("só fora do mín./máx.");
+    if (meta.alerta === "min") filtros.push("só abaixo do mínimo");
+    else if (meta.alerta === "max") filtros.push("só acima do máximo");
+    else if (meta.alerta === "qualquer" || meta.soAlertas)
+      filtros.push("só fora do mín./máx.");
     if (meta.categoria) filtros.push(`categoria: ${escapeHtml(meta.categoria)}`);
-    if (meta.busca) filtros.push(`busca: “${escapeHtml(meta.busca)}”`);
+    if (meta.busca) filtros.push(`produto: “${escapeHtml(meta.busca)}”`);
   }
 
   const bodyRows = rows
@@ -469,9 +573,18 @@ export async function exportarSaldosExcel(
         ? `Seleção manual (${meta.selecaoManual} itens)`
         : "Filtros da tela",
     ],
-    ["Filtro alertas", meta.soAlertas ? "Sim" : "Não"],
+    [
+      "Filtro alertas",
+      meta.alerta === "min"
+        ? "Abaixo do mínimo"
+        : meta.alerta === "max"
+          ? "Acima do máximo"
+          : meta.alerta === "qualquer" || meta.soAlertas
+            ? "Fora do mín./máx."
+            : "Não",
+    ],
     ["Categoria", meta.categoria || "—"],
-    ["Busca", meta.busca || "—"],
+    ["Produto", meta.busca || "—"],
     ["Linhas no relatório", meta.linhas],
     ["Qtd. no relatório", meta.quantidadeTotal],
     ["Valor no relatório (R$)", meta.valorTotal],

@@ -20,10 +20,21 @@ export type AuthedRequest = Request & {
   permissoesResolved?: import("@teep/shared").PermissoesUsuario;
 };
 
-const accessSecret = () =>
-  process.env.JWT_ACCESS_SECRET || "dev-access-secret-change-me-32chars";
-const refreshSecret = () =>
-  process.env.JWT_REFRESH_SECRET || "dev-refresh-secret-change-me-32chars";
+const accessSecret = () => {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (!secret) {
+    throw new Error("JWT_ACCESS_SECRET não configurado. Configure em apps/api/.env");
+  }
+  return secret;
+};
+
+const refreshSecret = () => {
+  const secret = process.env.JWT_REFRESH_SECRET;
+  if (!secret) {
+    throw new Error("JWT_REFRESH_SECRET não configurado. Configure em apps/api/.env");
+  }
+  return secret;
+};
 
 export function signAccessToken(user: AuthUser): string {
   return jwt.sign(

@@ -246,7 +246,7 @@ export async function processarAlertasRetornoVencidos(): Promise<{
       if (!agenda) continue;
 
       const m = agenda.movimentacao;
-      const titulo = ALERTA_EVENTO_LABELS.ALERTA_RETORNO_MOVIMENTACAO;
+      const titulo = `${ALERTA_EVENTO_LABELS.ALERTA_RETORNO_MOVIMENTACAO} · ${m.produto.codigo}`;
       const mensagem = [
         `Alerta de retorno (${agenda.dias} dias) — ${m.tipo.nome}.`,
         `Produto: ${m.produto.codigo} — ${m.produto.descricao}.`,
@@ -261,6 +261,7 @@ export async function processarAlertasRetornoVencidos(): Promise<{
         .join(" ");
 
       sideEffectsStarted = true;
+      // Sino para quem tem o tick; e-mail NÃO vai no fanout (evita duplicata com emailsDestino).
       emitirNotificacaoEvento({
         tipo: "ALERTA_RETORNO_MOVIMENTACAO",
         titulo,
@@ -272,20 +273,29 @@ export async function processarAlertasRetornoVencidos(): Promise<{
           qtyRestante: restante,
         },
         dedupeKey: `${m.id}|${agenda.dias}`,
+        tryEmail: false,
       });
 
+      // Canal operacional: e-mail só para a lista digitada no lançamento.
       if (isEmailEnabledForType("ALERTA_RETORNO_MOVIMENTACAO")) {
-        const emails = agenda.emailsDestino
-          .split(",")
-          .map((e) => e.trim())
-          .filter(Boolean);
-        const prepared = await buildAlertaEmail({
-          type: "ALERTA_RETORNO_MOVIMENTACAO",
-          destinatarioNome: "Financeiro",
-          mensagem,
-        });
-        for (const to of emails) {
-          sendPreparedMailAsync(to, prepared);
+        const emails = [
+          ...new Set(
+            agenda.emailsDestino
+              .split(",")
+              .map((e) => e.trim().toLowerCase())
+              .filter(Boolean)
+          ),
+        ];
+        if (emails.length > 0) {
+          const prepared = await buildAlertaEmail({
+            type: "ALERTA_RETORNO_MOVIMENTACAO",
+            destinatarioNome: "Financeiro",
+            mensagem,
+            titulo,
+          });
+          for (const to of emails) {
+            sendPreparedMailAsync(to, prepared);
+          }
         }
       }
 

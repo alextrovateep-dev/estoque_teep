@@ -2,6 +2,10 @@
 const nextConfig = {
   transpilePackages: ["@teep/shared"],
   poweredByHeader: false,
+  // Evita cobrir o botão "Sair" do menu (padrão do Next é bottom-left).
+  devIndicators: {
+    position: "bottom-right",
+  },
   async headers() {
     return [
       {

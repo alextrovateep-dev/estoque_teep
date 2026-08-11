@@ -25,6 +25,17 @@ const STATUS_LABEL: Record<string, string> = {
   REJEITADO: "Rejeitado",
 };
 
+function statusClass(status: string) {
+  if (status === "PENDENTE_APROVACAO" || status === "EM_TRANSITO") {
+    return "font-medium text-amber-800";
+  }
+  if (status === "PARCIAL") return "text-orange-700";
+  if (status === "CANCELADO" || status === "REJEITADO") {
+    return "text-slate-400";
+  }
+  return "text-emerald-800";
+}
+
 export default function TransferenciasPage() {
   const [lista, setLista] = useState<Transferencia[]>([]);
   const [meta, setMeta] = useState<{
@@ -36,6 +47,9 @@ export default function TransferenciasPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
     api<{
       data: Transferencia[];
       total: number;
@@ -43,6 +57,7 @@ export default function TransferenciasPage() {
       truncado: boolean;
     }>("/transferencias")
       .then((res) => {
+        if (cancelled) return;
         setLista(res.data);
         setMeta({
           total: res.total,
@@ -50,19 +65,32 @@ export default function TransferenciasPage() {
           take: res.take,
         });
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (cancelled) return;
+        setError(
+          e instanceof Error ? e.message : "Falha ao carregar transferências"
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
     <>
-    <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">Confirmar Recebimento</h1>
+          <h1 className="text-2xl font-semibold">Transferências</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Verificação e confirmação de cargas em trânsito. Novas transferências
-            saem de{" "}
-            <Link href="/lancamentos/novo" className="text-brand hover:underline">
+            Acompanhe cargas e confirme o recebimento. Novas transferências saem
+            de{" "}
+            <Link
+              href="/lancamentos/novo"
+              className="text-brand hover:underline"
+            >
               Novo Lançamento
             </Link>
             .
@@ -99,7 +127,7 @@ export default function TransferenciasPage() {
           <tbody>
             {lista.map((t) => (
               <tr key={t.id} className="border-t">
-                <td className="px-3 py-2 whitespace-nowrap">
+                <td className="whitespace-nowrap px-3 py-2">
                   {new Date(t.criadoEm).toLocaleString("pt-BR")}
                 </td>
                 <td className="px-3 py-2">
@@ -107,20 +135,7 @@ export default function TransferenciasPage() {
                 </td>
                 <td className="px-3 py-2">{t.itens.length}</td>
                 <td className="px-3 py-2">
-                  <span
-                    className={
-                      t.status === "PENDENTE_APROVACAO"
-                        ? "font-medium text-amber-800"
-                        : t.status === "EM_TRANSITO"
-                          ? "text-amber-800"
-                          : t.status === "PARCIAL"
-                            ? "text-orange-700"
-                            : t.status === "CANCELADO" ||
-                                t.status === "REJEITADO"
-                              ? "text-slate-400"
-                              : "text-emerald-800"
-                    }
-                  >
+                  <span className={statusClass(t.status)}>
                     {STATUS_LABEL[t.status] || t.status}
                   </span>
                   {t.status === "PENDENTE_APROVACAO" && (
@@ -141,12 +156,12 @@ export default function TransferenciasPage() {
                     href={`/transferencias/${t.id}`}
                     className="text-brand hover:underline"
                   >
-                    Abrir
+                    {t.status === "EM_TRANSITO" ? "Conferir" : "Abrir"}
                   </Link>
                 </td>
               </tr>
             ))}
-            {!loading && lista.length === 0 && (
+            {!loading && !error && lista.length === 0 && (
               <tr>
                 <td
                   colSpan={6}

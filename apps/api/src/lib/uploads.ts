@@ -10,7 +10,16 @@ const MIME_EXT: Record<string, string> = {
   "image/gif": "gif",
   "image/webp": "webp",
   "application/pdf": "pdf",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+    "docx",
 };
+
+const DOCUMENT_MIMES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+]);
 
 export function getUploadRoot(): string {
   const configured = process.env.UPLOAD_DIR;
@@ -28,6 +37,7 @@ export function ensureUploadDirs(): void {
   fs.mkdirSync(path.join(root, "conteudo", "produtos"), { recursive: true });
   fs.mkdirSync(path.join(root, "notas-fiscais"), { recursive: true });
   fs.mkdirSync(path.join(root, "movimentacao-anexos"), { recursive: true });
+  fs.mkdirSync(path.join(root, "rma", "_tmp"), { recursive: true });
 }
 
 export function getMaxUploadBytes(): number {
@@ -38,9 +48,19 @@ export function extFromMime(mime: string): string | null {
   return MIME_EXT[mime] || null;
 }
 
-export function isAllowedMime(mime: string, allowPdf = false): boolean {
-  if (MIME_EXT[mime] === "pdf") return allowPdf;
-  return Boolean(MIME_EXT[mime]) && mime !== "application/pdf";
+export function isAllowedMime(
+  mime: string,
+  opts: { pdf?: boolean; word?: boolean } = {}
+): boolean {
+  if (mime === "application/pdf") return Boolean(opts.pdf);
+  if (
+    mime === "application/msword" ||
+    mime ===
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
+    return Boolean(opts.word);
+  }
+  return Boolean(MIME_EXT[mime]) && !DOCUMENT_MIMES.has(mime);
 }
 
 /** Valida magic bytes básicos (não confiar só no Content-Type). */
@@ -75,14 +95,61 @@ export function detectPdfMime(buf: Buffer): string | null {
   return null;
 }
 
-/** Imagem ou PDF (nota fiscal). */
+/** .doc (OLE com stream WordDocument) ou .docx (ZIP com word/document.xml). */
+export function detectWordMime(buf: Buffer): string | null {
+  if (buf.length < 8) return null;
+
+  // OLE Compound File Binary (.doc e outros Office antigos)
+  if (
+    buf[0] === 0xd0 &&
+    buf[1] === 0xcf &&
+    buf[2] === 0x11 &&
+    buf[3] === 0xe0
+  ) {
+    const probe = buf.subarray(0, Math.min(buf.length, 65536));
+    const asLatin1 = probe.toString("latin1");
+    // Nome do stream em ASCII ou UTF-16LE
+    const utf16 = "W\0o\0r\0d\0D\0o\0c\0u\0m\0e\0n\0t\0";
+    if (asLatin1.includes("WordDocument") || asLatin1.includes(utf16)) {
+      return "application/msword";
+    }
+    return null;
+  }
+
+  // ZIP local file header (.docx)
+  if (
+    buf[0] === 0x50 &&
+    buf[1] === 0x4b &&
+    (buf[2] === 0x03 || buf[2] === 0x05 || buf[2] === 0x07)
+  ) {
+    const probe = buf
+      .subarray(0, Math.min(buf.length, 16384))
+      .toString("latin1");
+    // Exige estrutura típica de Word OOXML (não qualquer ZIP com "word/")
+    if (
+      probe.includes("word/document.xml") ||
+      (probe.includes("[Content_Types].xml") &&
+        probe.includes("word/") &&
+        probe.includes("document.xml"))
+    ) {
+      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    }
+  }
+  return null;
+}
+
+/** Imagem; opcionalmente PDF e/ou Word. */
 export function detectUploadMime(
   buf: Buffer,
-  allowPdf: boolean
+  opts: { pdf?: boolean; word?: boolean } = {}
 ): string | null {
   const img = detectImageMime(buf);
   if (img) return img;
-  if (allowPdf) return detectPdfMime(buf);
+  if (opts.pdf) {
+    const pdf = detectPdfMime(buf);
+    if (pdf) return pdf;
+  }
+  if (opts.word) return detectWordMime(buf);
   return null;
 }
 
@@ -191,7 +258,7 @@ export function isValidUploadPath(
   if (kind === "documento") {
     if (!entityId || !UUID_RE.test(entityId)) return false;
     return new RegExp(
-      `^/uploads/movimentacao-anexos/${entityId}-[0-9a-f]{12}\\.(jpg|png|gif|webp|pdf)$`,
+      `^/uploads/movimentacao-anexos/${entityId}-[0-9a-f]{12}\\.(jpg|png|gif|webp|pdf|doc|docx)$`,
       "i"
     ).test(publicUrl);
   }

@@ -1,0 +1,17 @@
+# Lab — HTTPS com CA interna do Caddy (VM / sem DNS público)
+# Uso: copiar sobre deploy/Caddyfile no ensaio local, ou montar este arquivo.
+# Em produção/go-live use o Caddyfile padrão (Let's Encrypt).
+#
+# Variáveis WEB_HOST / API_HOST vêm do compose (.env.production).
+
+{$WEB_HOST} {
+	tls internal
+	encode gzip
+	reverse_proxy web:3000
+}
+
+{$API_HOST} {
+	tls internal
+	encode gzip
+	reverse_proxy api:4000
+}

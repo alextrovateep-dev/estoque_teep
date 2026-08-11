@@ -54,7 +54,7 @@ function disposeRecognition(recognition: SpeechRecognitionLike | null): void {
 }
 
 /**
- * Ditado por voz (Web Speech API) — padrão ChamadoPro.
+ * Ditado por voz (Web Speech API).
  * Front-only: sem Whisper, sem upload, sem backend.
  */
 export function useSpeechRecognition(options: UseSpeechRecognitionOptions) {

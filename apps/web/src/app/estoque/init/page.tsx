@@ -1,7 +1,7 @@
 "use client";
 
 import { api } from "@/lib/api";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { SeriesInput } from "@/components/SeriesInput";
 
 type Filial = { id: string; nome: string; sigla: string };
@@ -31,6 +31,7 @@ export default function InitEstoquePage() {
   const [loading, setLoading] = useState(false);
   const [estoquesTruncado, setEstoquesTruncado] = useState(false);
   const [expandSerie, setExpandSerie] = useState<string | null>(null);
+  const [produtoFiltro, setProdutoFiltro] = useState("");
 
   useEffect(() => {
     api<Filial[]>("/filiais")
@@ -43,6 +44,7 @@ export default function InitEstoquePage() {
 
   useEffect(() => {
     if (!filialId) return;
+    setProdutoFiltro("");
     Promise.all([
       api<Produto[]>("/produtos"),
       api<{
@@ -74,6 +76,16 @@ export default function InitEstoquePage() {
       })
       .catch((e) => setError(e.message));
   }, [filialId]);
+
+  const rowsFiltradas = useMemo(() => {
+    const q = produtoFiltro.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (r) =>
+        r.codigo.toLowerCase().includes(q) ||
+        r.descricao.toLowerCase().includes(q)
+    );
+  }, [rows, produtoFiltro]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -157,24 +169,56 @@ export default function InitEstoquePage() {
       </p>
 
       <form onSubmit={onSubmit} className="mt-4 space-y-4">
-        <label className="block max-w-md text-sm">
-          Filial
-          <select
-            className="mt-1 w-full rounded-lg border px-3 py-2"
-            value={filialId}
-            onChange={(e) => setFilialId(e.target.value)}
-          >
-            {filiais.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.sigla} — {f.nome}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block min-w-[14rem] flex-1 max-w-md text-sm">
+            Filial
+            <select
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+              value={filialId}
+              onChange={(e) => setFilialId(e.target.value)}
+            >
+              {filiais.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.sigla} — {f.nome}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block min-w-[16rem] flex-1 max-w-lg text-sm">
+            Produto
+            <div className="mt-1 flex gap-1">
+              <input
+                type="search"
+                value={produtoFiltro}
+                onChange={(e) => setProdutoFiltro(e.target.value)}
+                placeholder="Código ou descrição…"
+                className="w-full rounded-lg border px-3 py-2"
+                autoComplete="off"
+              />
+              {produtoFiltro ? (
+                <button
+                  type="button"
+                  onClick={() => setProdutoFiltro("")}
+                  className="shrink-0 rounded-lg border px-2 text-slate-500 hover:bg-slate-50"
+                  title="Limpar filtro"
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          </label>
+        </div>
 
         {estoquesTruncado ? (
           <p className="text-sm text-amber-700">
             Lista truncada — nem todos os saldos foram carregados.
+          </p>
+        ) : null}
+
+        {produtoFiltro.trim() ? (
+          <p className="text-xs text-slate-500">
+            Exibindo {rowsFiltradas.length} de {rows.length} produto
+            {rows.length === 1 ? "" : "s"}
           </p>
         ) : null}
 
@@ -190,85 +234,105 @@ export default function InitEstoquePage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
-                const delta = Number(r.novoSaldo) - r.saldoAtual;
-                const needsSeries = r.controlaSerie && delta !== 0;
-                return (
-                  <tr key={r.produtoId} className="border-t align-top">
-                    <td className="px-3 py-2 font-mono text-xs">
-                      {r.codigo}
-                      {r.controlaSerie ? (
-                        <span className="ml-1 rounded bg-teal-50 px-1 text-[10px] uppercase text-teal-800">
-                          Série
-                        </span>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-2">{r.descricao}</td>
-                    <td className="px-3 py-2">{r.saldoAtual}</td>
-                    <td className="px-3 py-2">
-                      <input
-                        type="number"
-                        min={0}
-                        step={r.controlaSerie ? 1 : "any"}
-                        className="w-28 rounded border px-2 py-1"
-                        value={r.novoSaldo}
-                        onChange={(e) =>
-                          setRows((prev) =>
-                            prev.map((x) =>
-                              x.produtoId === r.produtoId
-                                ? { ...x, novoSaldo: e.target.value }
-                                : x
-                            )
-                          )
-                        }
-                      />
-                    </td>
-                    <td className="px-3 py-2 min-w-[14rem]">
-                      {needsSeries ? (
-                        expandSerie === r.produtoId ? (
-                          <SeriesInput
-                            value={r.series}
-                            onChange={(series) =>
-                              setRows((prev) =>
-                                prev.map((x) =>
-                                  x.produtoId === r.produtoId
-                                    ? { ...x, series }
-                                    : x
-                                )
+              {rowsFiltradas.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={5}
+                    className="px-3 py-8 text-center text-slate-500"
+                  >
+                    Nenhum produto encontrado.
+                  </td>
+                </tr>
+              ) : (
+                rowsFiltradas.map((r) => {
+                  const delta = Number(r.novoSaldo) - r.saldoAtual;
+                  const needsSeries = r.controlaSerie && delta !== 0;
+                  return (
+                    <tr key={r.produtoId} className="border-t align-top">
+                      <td className="px-3 py-2 font-mono text-xs">
+                        {r.codigo}
+                        {r.controlaSerie ? (
+                          <span className="ml-1 rounded bg-teal-50 px-1 text-[10px] uppercase text-teal-800">
+                            Série
+                          </span>
+                        ) : null}
+                      </td>
+                      <td className="px-3 py-2">{r.descricao}</td>
+                      <td className="px-3 py-2">{r.saldoAtual}</td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          min={0}
+                          step={r.controlaSerie ? 1 : "any"}
+                          className="w-28 rounded border px-2 py-1"
+                          value={r.novoSaldo}
+                          onChange={(e) =>
+                            setRows((prev) =>
+                              prev.map((x) =>
+                                x.produtoId === r.produtoId
+                                  ? { ...x, novoSaldo: e.target.value }
+                                  : x
                               )
-                            }
-                            label={`Séries do Δ (${Math.abs(delta)})`}
-                          />
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="px-3 py-2 min-w-[14rem]">
+                        {needsSeries ? (
+                          expandSerie === r.produtoId ? (
+                            <SeriesInput
+                              value={r.series}
+                              onChange={(series) =>
+                                setRows((prev) =>
+                                  prev.map((x) =>
+                                    x.produtoId === r.produtoId
+                                      ? { ...x, series }
+                                      : x
+                                  )
+                                )
+                              }
+                              label={`Séries do Δ (${Math.abs(delta)})`}
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              className="text-sm text-teal-800 underline"
+                              onClick={() => setExpandSerie(r.produtoId)}
+                            >
+                              Informar {Math.abs(delta)} série(s)
+                              {r.series.length
+                                ? ` (${r.series.length})`
+                                : ""}
+                            </button>
+                          )
                         ) : (
-                          <button
-                            type="button"
-                            className="text-sm text-teal-800 underline"
-                            onClick={() => setExpandSerie(r.produtoId)}
-                          >
-                            Informar {Math.abs(delta)} série(s)
-                            {r.series.length
-                              ? ` (${r.series.length})`
-                              : ""}
-                          </button>
-                        )
-                      ) : (
-                        <span className="text-slate-400">—</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
 
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"
+            className="mt-0.5"
             checked={confirmarReinit}
             onChange={(e) => setConfirmarReinit(e.target.checked)}
           />
-          Confirmar reinicialização quando já houver saldo
+          <span>
+            <span className="font-medium text-slate-800">
+              Permitir alterar produtos que já têm saldo
+            </span>
+            <span className="mt-0.5 block text-xs text-slate-500">
+              Sem este tique, só é possível definir saldo em produtos zerados.
+              Marque apenas se quiser mesmo ajustar estoque já existente.
+            </span>
+          </span>
         </label>
 
         {error && (

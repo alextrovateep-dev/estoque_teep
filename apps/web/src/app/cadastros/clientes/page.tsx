@@ -1,13 +1,11 @@
 "use client";
 
-import { api } from "@/lib/api";
-import {
-  formatCepInput,
-  formatCnpj,
-  matchNomeOuDocumento,
-  onlyDigits,
-} from "@/lib/documento";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { api, getStoredUser } from "@/lib/api";
+import { userCanEditCadastro } from "@/lib/access";
+import { matchNomeOuDocumento } from "@/lib/documento";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 
 type Cliente = {
   id: string;
@@ -25,30 +23,6 @@ type Cliente = {
   cidade?: string | null;
   estado?: string | null;
   ativo: boolean;
-};
-
-type CnpjLookup = {
-  documento: string;
-  nome: string;
-  nomeFantasia: string | null;
-  email: string | null;
-  telefone: string | null;
-  cep: string | null;
-  logradouro: string | null;
-  numero: string | null;
-  complemento: string | null;
-  bairro: string | null;
-  cidade: string | null;
-  estado: string | null;
-};
-
-type CepLookup = {
-  cep: string;
-  logradouro: string | null;
-  bairro: string | null;
-  cidade: string | null;
-  estado: string | null;
-  complemento: string | null;
 };
 
 type ResumoItem = {
@@ -75,22 +49,6 @@ type Relacionamentos = {
   vendidos: ProdutoRel[];
 };
 
-const emptyForm = {
-  nome: "",
-  nomeFantasia: "",
-  tipo: "CLIENTE",
-  documento: "",
-  email: "",
-  telefone: "",
-  cep: "",
-  logradouro: "",
-  numero: "",
-  complemento: "",
-  bairro: "",
-  cidade: "",
-  estado: "",
-};
-
 function formatData(iso: string) {
   try {
     return new Intl.DateTimeFormat("pt-BR", {
@@ -107,28 +65,31 @@ function formatQty(n: number) {
   }).format(n);
 }
 
-function nullish(s: string): string | null {
-  const t = s.trim();
-  return t ? t : null;
+export default function ClientesPage() {
+  return (
+    <Suspense
+      fallback={<p className="text-sm text-slate-500">Carregando…</p>}
+    >
+      <ClientesPageInner />
+    </Suspense>
+  );
 }
 
-export default function ClientesPage() {
+function ClientesPageInner() {
+  const searchParams = useSearchParams();
+  const canEdit = (() => {
+    const u = getStoredUser();
+    return u ? userCanEditCadastro(u, "clientes") : false;
+  })();
   const [lista, setLista] = useState<Cliente[]>([]);
   const [resumo, setResumo] = useState<Record<string, ResumoItem>>({});
   const [busca, setBusca] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
-  const [cnpjLoading, setCnpjLoading] = useState(false);
-  const [cepLoading, setCepLoading] = useState(false);
-  const [warn, setWarn] = useState("");
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [relCache, setRelCache] = useState<Record<string, Relacionamentos>>({});
   const [loadingRel, setLoadingRel] = useState<string | null>(null);
-  const lastCnpjLookup = useRef("");
-  const lastCepLookup = useRef("");
 
   async function load() {
     const [clientes, resumos] = await Promise.all([
@@ -147,6 +108,12 @@ export default function ClientesPage() {
     load().catch((e) => setError(e.message));
   }, []);
 
+  useEffect(() => {
+    const ok = searchParams.get("ok");
+    if (ok === "criado") setMsg("Cadastro criado");
+    else if (ok === "atualizado") setMsg("Cadastro atualizado");
+  }, [searchParams]);
+
   const filtrados = useMemo(() => {
     const q = busca.trim();
     return lista.filter((c) => {
@@ -159,169 +126,6 @@ export default function ClientesPage() {
       return c.tipo.toLowerCase().includes(q.toLowerCase());
     });
   }, [lista, busca, filtroTipo]);
-
-  function cancelEdit() {
-    setEditId(null);
-    setForm(emptyForm);
-    lastCnpjLookup.current = "";
-    lastCepLookup.current = "";
-    setWarn("");
-  }
-
-  function startEdit(c: Cliente) {
-    setEditId(c.id);
-    setForm({
-      nome: c.nome,
-      nomeFantasia: c.nomeFantasia || "",
-      tipo: c.tipo,
-      documento: c.documento || "",
-      email: c.email || "",
-      telefone: c.telefone || "",
-      cep: c.cep || "",
-      logradouro: c.logradouro || "",
-      numero: c.numero || "",
-      complemento: c.complemento || "",
-      bairro: c.bairro || "",
-      cidade: c.cidade || "",
-      estado: c.estado || "",
-    });
-    lastCnpjLookup.current = onlyDigits(c.documento || "");
-    lastCepLookup.current = onlyDigits(c.cep || "");
-    setError("");
-    setWarn("");
-    setMsg("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  async function buscarCnpj(opts?: { silent?: boolean; documento?: string }) {
-    const digits = onlyDigits(opts?.documento ?? form.documento);
-    if (digits.length !== 14) {
-      if (!opts?.silent) {
-        setError("Informe um CNPJ com 14 dígitos para consultar");
-      }
-      return;
-    }
-    if (digits === lastCnpjLookup.current && opts?.silent) return;
-
-    setError("");
-    setWarn("");
-    if (!opts?.silent) setMsg("");
-    setCnpjLoading(true);
-    try {
-      const data = await api<CnpjLookup>(`/clientes/cnpj/${digits}`);
-      lastCnpjLookup.current = digits;
-      setForm((prev) => ({
-        ...prev,
-        documento: data.documento || prev.documento,
-        nome: data.nome || prev.nome,
-        nomeFantasia: data.nomeFantasia || prev.nomeFantasia,
-        email: data.email || prev.email,
-        telefone: data.telefone || prev.telefone,
-        cep: data.cep || prev.cep,
-        logradouro: data.logradouro || prev.logradouro,
-        numero: data.numero || prev.numero,
-        complemento: data.complemento || prev.complemento,
-        bairro: data.bairro || prev.bairro,
-        cidade: data.cidade || prev.cidade,
-        estado: data.estado || prev.estado,
-      }));
-      if (data.cep) lastCepLookup.current = onlyDigits(data.cep);
-      setMsg("Dados do CNPJ preenchidos — revise e salve");
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Falha na consulta CNPJ";
-      if (opts?.silent) {
-        setWarn(`${message}. Preencha manualmente se preferir.`);
-      } else {
-        setError(message);
-      }
-    } finally {
-      setCnpjLoading(false);
-    }
-  }
-
-  async function buscarCep(opts?: { silent?: boolean; cep?: string }) {
-    const digits = onlyDigits(opts?.cep ?? form.cep);
-    if (digits.length !== 8 || /^0+$/.test(digits)) {
-      if (!opts?.silent) setError("Informe um CEP com 8 dígitos");
-      return;
-    }
-    if (digits === lastCepLookup.current && opts?.silent) return;
-
-    setError("");
-    setWarn("");
-    setCepLoading(true);
-    try {
-      const data = await api<CepLookup>(`/clientes/cep/${digits}`);
-      lastCepLookup.current = digits;
-      setForm((prev) => ({
-        ...prev,
-        cep: data.cep || prev.cep,
-        logradouro: data.logradouro || prev.logradouro,
-        bairro: data.bairro || prev.bairro,
-        cidade: data.cidade || prev.cidade,
-        estado: data.estado || prev.estado,
-        complemento: prev.complemento || data.complemento || "",
-      }));
-      setMsg("Endereço do CEP preenchido — confira o número");
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Falha na consulta CEP";
-      if (opts?.silent) {
-        setWarn(`${message}. Preencha o endereço manualmente.`);
-      } else {
-        setError(message);
-      }
-    } finally {
-      setCepLoading(false);
-    }
-  }
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError("");
-    setMsg("");
-    const digits = onlyDigits(form.documento);
-    const documento =
-      digits.length === 14
-        ? formatCnpj(digits)
-        : nullish(form.documento);
-
-    const body = {
-      nome: form.nome.trim(),
-      nomeFantasia: nullish(form.nomeFantasia),
-      tipo: form.tipo,
-      documento,
-      email: nullish(form.email),
-      telefone: nullish(form.telefone),
-      cep: nullish(form.cep),
-      logradouro: nullish(form.logradouro),
-      numero: nullish(form.numero),
-      complemento: nullish(form.complemento),
-      bairro: nullish(form.bairro),
-      cidade: nullish(form.cidade),
-      estado: nullish(form.estado)?.toUpperCase() || null,
-    };
-    try {
-      if (editId) {
-        await api(`/clientes/${editId}`, {
-          method: "PATCH",
-          body: JSON.stringify(body),
-        });
-        setMsg("Cadastro atualizado");
-      } else {
-        await api("/clientes", {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        setMsg("Cadastro criado");
-      }
-      cancelEdit();
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
-    }
-  }
 
   async function toggleAtivo(c: Cliente) {
     setError("");
@@ -363,262 +167,35 @@ export default function ClientesPage() {
 
   return (
     <>
-      <h1 className="text-2xl font-semibold">Clientes / Fornecedores</h1>
-
-      <form
-        onSubmit={onSubmit}
-        className="mt-4 space-y-3 rounded-xl border bg-white p-4"
-      >
-        <p className="text-sm font-medium text-slate-800">
-          {editId ? "Editar cadastro" : "Novo cadastro"}
-          {cnpjLoading ? (
-            <span className="ml-2 font-normal text-slate-500">
-              · consultando CNPJ…
-            </span>
-          ) : null}
-        </p>
-
-        <div className="grid gap-2 md:grid-cols-4">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Tipo
-            </span>
-            <select
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-              value={form.tipo}
-              onChange={(e) => setForm({ ...form, tipo: e.target.value })}
-            >
-              <option value="CLIENTE">CLIENTE</option>
-              <option value="FORNECEDOR">FORNECEDOR</option>
-              <option value="INTERNO">INTERNO</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              CNPJ / documento
-            </span>
-            <input
-              placeholder="00.000.000/0000-00"
-              className="w-full rounded-lg border px-3 py-2 font-mono text-sm"
-              value={form.documento}
-              onChange={(e) => {
-                const raw = e.target.value;
-                const digits = onlyDigits(raw);
-                const masked =
-                  digits.length >= 3 &&
-                  digits.length <= 14 &&
-                  !/[a-zA-Z]/.test(raw)
-                    ? formatCnpj(raw)
-                    : raw;
-                setForm({ ...form, documento: masked });
-                if (digits.length === 14 && digits !== lastCnpjLookup.current) {
-                  void buscarCnpj({ silent: true, documento: digits });
-                }
-              }}
-              onBlur={() => {
-                const d = onlyDigits(form.documento);
-                if (d.length === 14) {
-                  void buscarCnpj({ silent: true, documento: d });
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                const d = onlyDigits(form.documento);
-                if (d.length === 14) {
-                  void buscarCnpj({ silent: true, documento: d });
-                }
-              }}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Nome fantasia
-            </span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.nomeFantasia}
-              onChange={(e) =>
-                setForm({ ...form, nomeFantasia: e.target.value })
-              }
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Razão social / nome *
-            </span>
-            <input
-              required
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.nome}
-              onChange={(e) => setForm({ ...form, nome: e.target.value })}
-            />
-          </label>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-2">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              E-mail
-            </span>
-            <input
-              type="email"
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.email}
-              onChange={(e) => setForm({ ...form, email: e.target.value })}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Telefone
-            </span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.telefone}
-              onChange={(e) => setForm({ ...form, telefone: e.target.value })}
-            />
-          </label>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-[8rem_1fr_5rem]">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              CEP {cepLoading ? "· …" : ""}
-            </span>
-            <input
-              placeholder="00000-000"
-              className="w-full rounded-lg border px-3 py-2 font-mono text-sm"
-              value={form.cep}
-              onChange={(e) => {
-                const masked = formatCepInput(e.target.value);
-                setForm({ ...form, cep: masked });
-                const digits = onlyDigits(masked);
-                if (digits.length === 8 && digits !== lastCepLookup.current) {
-                  void buscarCep({ silent: true, cep: digits });
-                }
-              }}
-              onBlur={() => {
-                const d = onlyDigits(form.cep);
-                if (d.length === 8) {
-                  void buscarCep({ silent: true, cep: d });
-                }
-              }}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter") return;
-                e.preventDefault();
-                const d = onlyDigits(form.cep);
-                if (d.length === 8) {
-                  void buscarCep({ silent: true, cep: d });
-                }
-              }}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Logradouro
-            </span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.logradouro}
-              onChange={(e) => setForm({ ...form, logradouro: e.target.value })}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Nº
-            </span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.numero}
-              onChange={(e) => setForm({ ...form, numero: e.target.value })}
-            />
-          </label>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_4.5rem]">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Complemento
-            </span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.complemento}
-              onChange={(e) =>
-                setForm({ ...form, complemento: e.target.value })
-              }
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Bairro
-            </span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.bairro}
-              onChange={(e) => setForm({ ...form, bairro: e.target.value })}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              Cidade
-            </span>
-            <input
-              className="w-full rounded-lg border px-3 py-2"
-              value={form.cidade}
-              onChange={(e) => setForm({ ...form, cidade: e.target.value })}
-            />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-slate-600">
-              UF
-            </span>
-            <input
-              maxLength={2}
-              className="w-full rounded-lg border px-3 py-2 uppercase"
-              value={form.estado}
-              onChange={(e) =>
-                setForm({ ...form, estado: e.target.value.toUpperCase() })
-              }
-            />
-          </label>
-        </div>
-
-        {error && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold">Clientes / Fornecedores</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Lista e histórico de produtos por cadastro.
           </p>
-        )}
-        {warn && (
-          <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            {warn}
-          </p>
-        )}
-        {msg && (
-          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            {msg}
-          </p>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="submit"
-            className="rounded-lg bg-brand px-4 py-2 text-white"
+        </div>
+        {canEdit && (
+          <Link
+            href="/cadastros/clientes/novo"
+            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white"
           >
-            {editId ? "Salvar alterações" : "Cadastrar"}
-          </button>
-          {editId && (
-            <button
-              type="button"
-              onClick={cancelEdit}
-              className="rounded-lg border px-4 py-2"
-            >
-              Cancelar
-            </button>
-          )}
-        </div>
-      </form>
+            Cadastrar
+          </Link>
+        )}
+      </div>
 
-      <div className="mt-6 flex flex-col gap-2 rounded-xl border bg-white p-4 sm:flex-row">
+      {error && (
+        <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+      {msg && (
+        <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {msg}
+        </p>
+      )}
+
+      <div className="mt-4 flex flex-col gap-2 rounded-xl border bg-white p-4 sm:flex-row">
         <input
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
@@ -739,20 +316,21 @@ export default function ClientesPage() {
                   </div>
                 </div>
                 <div className="flex shrink-0 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => startEdit(c)}
+                  <Link
+                    href={`/cadastros/clientes/${c.id}`}
                     className="text-brand hover:underline"
                   >
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleAtivo(c)}
-                    className="text-brand hover:underline"
-                  >
-                    {c.ativo ? "Desativar" : "Ativar"}
-                  </button>
+                    {canEdit ? "Editar" : "Ver"}
+                  </Link>
+                  {canEdit && (
+                    <button
+                      type="button"
+                      onClick={() => toggleAtivo(c)}
+                      className="text-brand hover:underline"
+                    >
+                      {c.ativo ? "Desativar" : "Ativar"}
+                    </button>
+                  )}
                 </div>
               </div>
 

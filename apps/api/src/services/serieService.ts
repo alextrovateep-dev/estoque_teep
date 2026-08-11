@@ -1,5 +1,9 @@
 import { Prisma } from "@prisma/client";
 import { AppError } from "../middleware/error";
+import {
+  confirmarAlocacoesPorIds,
+  prepararEntradaComAlocacoes,
+} from "./geracaoSerieService";
 
 type Tx = Prisma.TransactionClient;
 
@@ -139,6 +143,11 @@ export async function aplicarSeriesEntrada(
   const series = normalizarSeries(opts.series);
   assertQuantidadeInteiraSerie(opts.quantidade, series.length);
 
+  const alocacoesParaConfirmar = await prepararEntradaComAlocacoes(tx, {
+    produtoId: opts.produtoId,
+    series,
+  });
+
   for (const numeroSerie of series) {
     const existente = await tx.unidadeSerie.findUnique({
       where: {
@@ -190,17 +199,18 @@ export async function aplicarSeriesEntrada(
       },
     });
   }
+
+  await confirmarAlocacoesPorIds(tx, alocacoesParaConfirmar);
 }
 
 /**
  * Retorno vinculado: séries devem estar SAIDO e preferencialmente na saída origem.
+ * Só valida — não altera estado (use em PENDENTE).
  */
-export async function aplicarSeriesRetorno(
+export async function validarSeriesRetorno(
   tx: Tx,
   opts: {
-    movimentacaoId: string;
     produtoId: string;
-    filialId: string;
     series: string[];
     quantidade: number;
     movimentacaoOrigemId: string;
@@ -224,7 +234,7 @@ export async function aplicarSeriesRetorno(
 
   for (const numeroSerie of series) {
     const key = numeroSerie.toUpperCase();
-    let unidade = await tx.unidadeSerie.findUnique({
+    const unidade = await tx.unidadeSerie.findUnique({
       where: {
         uniq_produto_serie: {
           produtoId: opts.produtoId,
@@ -257,6 +267,47 @@ export async function aplicarSeriesRetorno(
         400,
         `Série ${numeroSerie} está vinculada a outro cliente`
       );
+    }
+  }
+  return series;
+}
+
+/**
+ * Retorno vinculado: séries devem estar SAIDO e preferencialmente na saída origem.
+ */
+export async function aplicarSeriesRetorno(
+  tx: Tx,
+  opts: {
+    movimentacaoId: string;
+    produtoId: string;
+    filialId: string;
+    series: string[];
+    quantidade: number;
+    movimentacaoOrigemId: string;
+    clienteId?: string | null;
+  }
+) {
+  await validarSeriesRetorno(tx, {
+    produtoId: opts.produtoId,
+    series: opts.series,
+    quantidade: opts.quantidade,
+    movimentacaoOrigemId: opts.movimentacaoOrigemId,
+    clienteId: opts.clienteId,
+  });
+
+  const series = normalizarSeries(opts.series);
+
+  for (const numeroSerie of series) {
+    const unidade = await tx.unidadeSerie.findUnique({
+      where: {
+        uniq_produto_serie: {
+          produtoId: opts.produtoId,
+          numeroSerie,
+        },
+      },
+    });
+    if (!unidade) {
+      throw new AppError(400, `Série não encontrada: ${numeroSerie}`);
     }
 
     await tx.unidadeSerie.update({

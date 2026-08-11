@@ -2,14 +2,17 @@ import { Router } from "express";
 import {
   createTransferenciaSchema,
   conferirTransferenciaSchema,
+  rejeitarMovimentacaoSchema,
 } from "@teep/shared";
 import {
   authenticate,
   requireFilialOperador,
+  requirePerfil,
   AuthedRequest,
 } from "../middleware/auth";
 import { requirePermissao } from "../middleware/permissoes";
 import { validateBody } from "../middleware/error";
+import { requireEstoqueParaOperar } from "../lib/estoqueGate";
 import {
   listarTransferencias,
   obterTransferencia,
@@ -23,7 +26,11 @@ import {
 } from "../services/transferenciaService";
 
 export const transferenciasRouter = Router();
-transferenciasRouter.use(authenticate, requireFilialOperador);
+transferenciasRouter.use(
+  authenticate,
+  requireFilialOperador,
+  requireEstoqueParaOperar
+);
 
 transferenciasRouter.get(
   "/",
@@ -125,6 +132,7 @@ transferenciasRouter.post(
 
 transferenciasRouter.post(
   "/:id/aprovar",
+  requirePerfil("ADMIN", "GERENTE"),
   requirePermissao("aprovacoes"),
   async (req: AuthedRequest, res, next) => {
     try {
@@ -137,12 +145,14 @@ transferenciasRouter.post(
 
 transferenciasRouter.post(
   "/:id/rejeitar",
+  requirePerfil("ADMIN", "GERENTE"),
   requirePermissao("aprovacoes"),
+  validateBody(rejeitarMovimentacaoSchema),
   async (req: AuthedRequest, res, next) => {
     try {
-      const motivo =
-        typeof req.body?.motivo === "string" ? req.body.motivo : undefined;
-      res.json(await rejeitarTransferencia(req.user!, req.params.id, motivo));
+      res.json(
+        await rejeitarTransferencia(req.user!, req.params.id, req.body.motivo)
+      );
     } catch (e) {
       next(e);
     }

@@ -3,6 +3,8 @@
 **Status:** entregáveis de infra no repo. Cutover no VPS/DNS fica a cargo da operação.  
 **Plano:** D13, D46, RNF13/RNF16; fase F11.
 
+**Instalação passo a passo (Debian / Docker / VM):** [INSTALACAO.md](./INSTALACAO.md) — este F11 cobre hardening e cutover; o INSTALACAO é a regra oficial de subir o stack.
+
 ## Objetivo
 
 Subir staging/produção com HTTPS, secrets fortes, backup (DB + `uploads/`) e checklist de cutover Go-Live A ou B.

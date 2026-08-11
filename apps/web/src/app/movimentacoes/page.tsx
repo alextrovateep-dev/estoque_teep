@@ -4,8 +4,9 @@ import { ConfirmMotivoPanel } from "@/components/ConfirmMotivoPanel";
 import { api, apiDownload, apiUpload, getStoredUser, User, userFilialIds } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import { matchNomeOuDocumento, onlyDigits } from "@/lib/documento";
+import { useSerieFiltro } from "@/hooks/useSerieFiltro";
 import Link from "next/link";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 type Mov = {
   id: string;
@@ -108,7 +109,7 @@ export default function MovimentacoesPage() {
   const [tipos, setTipos] = useState<Tipo[]>([]);
 
   const [operacaoFiltro, setOperacaoFiltro] = useState<
-    "" | "ENTRADA" | "SAIDA"
+    "" | "ENTRADA" | "SAIDA" | "TRANSFERENCIA"
   >("");
 
   const [parceiroModo, setParceiroModo] = useState<
@@ -116,9 +117,24 @@ export default function MovimentacoesPage() {
   >("");
   const [parceiroId, setParceiroId] = useState("");
   const [parceiroLabel, setParceiroLabel] = useState("");
+  const [parceiroTipoLabel, setParceiroTipoLabel] = useState("");
   const [parceiroQuery, setParceiroQuery] = useState("");
   const [parceiroOpen, setParceiroOpen] = useState(false);
   const [parceiros, setParceiros] = useState<Parceiro[]>([]);
+
+  const {
+    serieQ,
+    serieFiltro,
+    serieAtiva,
+    limparSerie,
+    aplicarSerie,
+    onSerieChange,
+    onSerieKeyDown,
+  } = useSerieFiltro({
+    replacePath: "/movimentacoes",
+    bootstrapFromUrl: true,
+    onFiltroChange: () => setPage(1),
+  });
 
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -131,6 +147,7 @@ export default function MovimentacoesPage() {
   >(null);
   const [motivo, setMotivo] = useState("");
   const [acting, setActing] = useState(false);
+  const actingRef = useRef(false);
   const [termoUploading, setTermoUploading] = useState(false);
   const [resumo, setResumo] = useState<ResumoProduto | null>(null);
   const [resumoLoading, setResumoLoading] = useState(false);
@@ -145,6 +162,7 @@ export default function MovimentacoesPage() {
       const sp = new URLSearchParams(window.location.search);
       if (sp.get("retornoOk") === "1") {
         setMsg("Retorno lançado com sucesso.");
+        // preserva ?serie= se o hook já limpou; só remove retornoOk
         window.history.replaceState({}, "", "/movimentacoes");
       }
     }
@@ -158,7 +176,11 @@ export default function MovimentacoesPage() {
         setTipos(t);
         setParceiros(c);
       })
-      .catch((e) => setError(e.message));
+      .catch((e) =>
+        setError(
+          e instanceof Error ? e.message : "Falha ao carregar filtros"
+        )
+      );
   }, []);
 
   const produtosFiltrados = useMemo(() => {
@@ -208,14 +230,17 @@ export default function MovimentacoesPage() {
   }, [parceiros, parceiroQuery, parceiroModo]);
 
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
     setError("");
     const params = new URLSearchParams({
       page: String(page),
       pageSize: "20",
     });
-    if (dataInicio) params.set("dataInicio", dataInicio);
-    if (dataFim) params.set("dataFim", dataFim);
+    if (!serieAtiva) {
+      if (dataInicio) params.set("dataInicio", dataInicio);
+      if (dataFim) params.set("dataFim", dataFim);
+    }
     if (produtoId) params.set("produtoId", produtoId);
     if (tipoId) params.set("tipoId", tipoId);
     if (operacaoFiltro) params.set("operacao", operacaoFiltro);
@@ -224,14 +249,28 @@ export default function MovimentacoesPage() {
     } else if (parceiroModo) {
       params.set("parceiroTipo", parceiroModo);
     }
+    if (serieAtiva) {
+      params.set("numeroSerie", serieFiltro.trim());
+    }
 
     api<{ data: Mov[]; total: number }>(`/movimentacoes?${params}`)
       .then((r) => {
+        if (cancelled) return;
         setData(r.data);
         setTotal(r.total);
       })
-      .catch((e) => setError(e.message))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (cancelled) return;
+        setError(
+          e instanceof Error ? e.message : "Falha ao carregar movimentações"
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [
     page,
     dataInicio,
@@ -241,6 +280,8 @@ export default function MovimentacoesPage() {
     operacaoFiltro,
     parceiroId,
     parceiroModo,
+    serieAtiva,
+    serieFiltro,
     reloadKey,
   ]);
 
@@ -252,8 +293,11 @@ export default function MovimentacoesPage() {
     let cancelled = false;
     setResumoLoading(true);
     const params = new URLSearchParams({ produtoId });
-    if (dataInicio) params.set("dataInicio", dataInicio);
-    if (dataFim) params.set("dataFim", dataFim);
+    // Com série, a lista ignora período — o resumo acompanha
+    if (!serieAtiva) {
+      if (dataInicio) params.set("dataInicio", dataInicio);
+      if (dataFim) params.set("dataFim", dataFim);
+    }
     api<ResumoProduto>(`/movimentacoes/resumo?${params}`)
       .then((r) => {
         if (!cancelled) setResumo(r);
@@ -270,7 +314,7 @@ export default function MovimentacoesPage() {
     return () => {
       cancelled = true;
     };
-  }, [produtoId, dataInicio, dataFim, reloadKey]);
+  }, [produtoId, dataInicio, dataFim, serieAtiva, reloadKey]);
 
   function abrirPainel(id: string, acao: "rejeitar" | "estornar" | "termo") {
     setPainelId(id);
@@ -285,6 +329,8 @@ export default function MovimentacoesPage() {
   }
 
   async function anexarTermo(id: string, file: File) {
+    if (actingRef.current) return;
+    actingRef.current = true;
     setTermoUploading(true);
     setActing(true);
     setError("");
@@ -308,12 +354,15 @@ export default function MovimentacoesPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao anexar termo");
     } finally {
+      actingRef.current = false;
       setTermoUploading(false);
       setActing(false);
     }
   }
 
   async function confirmarEstorno(id: string) {
+    if (actingRef.current) return;
+    actingRef.current = true;
     setActing(true);
     setError("");
     setMsg("");
@@ -328,11 +377,14 @@ export default function MovimentacoesPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro");
     } finally {
+      actingRef.current = false;
       setActing(false);
     }
   }
 
   async function aprovar(id: string) {
+    if (actingRef.current) return;
+    actingRef.current = true;
     setActing(true);
     setError("");
     setMsg("");
@@ -359,11 +411,14 @@ export default function MovimentacoesPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro");
     } finally {
+      actingRef.current = false;
       setActing(false);
     }
   }
 
   async function confirmarRejeicao(id: string) {
+    if (actingRef.current) return;
+    actingRef.current = true;
     setActing(true);
     setError("");
     setMsg("");
@@ -378,6 +433,7 @@ export default function MovimentacoesPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro");
     } finally {
+      actingRef.current = false;
       setActing(false);
     }
   }
@@ -416,6 +472,9 @@ export default function MovimentacoesPage() {
     setParceiroId(c.id);
     const label = c.documento ? `${c.nome} · ${c.documento}` : c.nome;
     setParceiroLabel(label);
+    setParceiroTipoLabel(
+      c.tipo === "FORNECEDOR" ? "Forn." : "Cliente"
+    );
     setParceiroQuery(label);
     setParceiroOpen(false);
     setPage(1);
@@ -424,6 +483,7 @@ export default function MovimentacoesPage() {
   function limparParceiro() {
     setParceiroId("");
     setParceiroLabel("");
+    setParceiroTipoLabel("");
     setParceiroQuery("");
     setPage(1);
   }
@@ -442,13 +502,18 @@ export default function MovimentacoesPage() {
     limparParceiro();
     setParceiroModo("");
     setOperacaoFiltro("");
+    limparSerie();
     setPage(1);
   }
 
   function buildExportQuery(): string {
     const params = new URLSearchParams();
-    if (dataInicio) params.set("dataInicio", dataInicio);
-    if (dataFim) params.set("dataFim", dataFim);
+    if (serieAtiva) {
+      params.set("numeroSerie", serieFiltro.trim());
+    } else {
+      if (dataInicio) params.set("dataInicio", dataInicio);
+      if (dataFim) params.set("dataFim", dataFim);
+    }
     if (produtoId) params.set("produtoId", produtoId);
     if (tipoId) params.set("tipoId", tipoId);
     if (operacaoFiltro) params.set("operacao", operacaoFiltro);
@@ -485,14 +550,48 @@ export default function MovimentacoesPage() {
 
   return (
     <>
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <h1 className="text-2xl font-semibold">Movimentações</h1>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <div
+          className="flex shrink-0 items-center gap-1"
+          title={
+            serieAtiva
+              ? "Período ignorado enquanto o filtro de série está ativo"
+              : undefined
+          }
+        >
+          <input
+            type="date"
+            value={dataInicio}
+            max={dataFim || undefined}
+            disabled={serieAtiva}
+            onChange={(e) => {
+              setDataInicio(e.target.value);
+              setPage(1);
+            }}
+            className="w-[7.75rem] rounded-md border border-slate-200 bg-white px-1.5 py-1.5 text-xs tabular-nums disabled:bg-slate-50 disabled:text-slate-400"
+            aria-label="Data início"
+          />
+          <span className="text-[11px] text-slate-400">–</span>
+          <input
+            type="date"
+            value={dataFim}
+            min={dataInicio || undefined}
+            disabled={serieAtiva}
+            onChange={(e) => {
+              setDataFim(e.target.value);
+              setPage(1);
+            }}
+            className="w-[7.75rem] rounded-md border border-slate-200 bg-white px-1.5 py-1.5 text-xs tabular-nums disabled:bg-slate-50 disabled:text-slate-400"
+            aria-label="Data fim"
+          />
+        </div>
         <button
           type="button"
           disabled={!!exporting || (!loading && data.length === 0)}
           onClick={() => void exportMovimentacoes("pdf")}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
         >
           {exporting === "pdf" ? "Gerando…" : "Exportar PDF"}
         </button>
@@ -500,43 +599,16 @@ export default function MovimentacoesPage() {
           type="button"
           disabled={!!exporting || (!loading && data.length === 0)}
           onClick={() => void exportMovimentacoes("xlsx")}
-          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
+          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700 hover:border-brand/40 disabled:opacity-50"
         >
           {exporting === "xlsx" ? "Gerando…" : "Exportar Excel"}
         </button>
       </div>
     </div>
 
-      <div className="mt-3 rounded-xl border bg-white p-2.5">
-        <div className="flex flex-col gap-2 md:flex-row md:flex-wrap md:items-center lg:flex-nowrap">
-          <div className="flex items-center gap-1.5">
-            <span className="shrink-0 text-xs text-slate-500">De</span>
-            <input
-              type="date"
-              value={dataInicio}
-              max={dataFim || undefined}
-              onChange={(e) => {
-                setDataInicio(e.target.value);
-                setPage(1);
-              }}
-              className="w-[9.5rem] rounded-md border px-2 py-1.5 text-sm"
-              aria-label="Data início"
-            />
-            <span className="shrink-0 text-xs text-slate-500">até</span>
-            <input
-              type="date"
-              value={dataFim}
-              min={dataInicio || undefined}
-              onChange={(e) => {
-                setDataFim(e.target.value);
-                setPage(1);
-              }}
-              className="w-[9.5rem] rounded-md border px-2 py-1.5 text-sm"
-              aria-label="Data fim"
-            />
-          </div>
-
-          <div className="relative min-w-0 flex-1 basis-[12rem]">
+      <div className="mt-3 rounded-xl border bg-white px-3 py-2.5">
+        <div className="grid grid-cols-2 items-center gap-2 sm:grid-cols-4 lg:grid-cols-12">
+          <div className="relative col-span-2 min-w-0 sm:col-span-2 lg:col-span-3">
             <div className="flex gap-1">
               <input
                 value={produtoQuery}
@@ -545,18 +617,19 @@ export default function MovimentacoesPage() {
                   setProdutoId("");
                   setProdutoLabel("");
                   setProdutoOpen(true);
+                  setPage(1);
                 }}
                 onFocus={() => setProdutoOpen(true)}
                 onBlur={() => setTimeout(() => setProdutoOpen(false), 150)}
-                placeholder="Produto: código ou descrição…"
-                className="w-full min-w-0 rounded-md border px-2 py-1.5 text-sm"
+                placeholder="Produto…"
+                className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
                 autoComplete="off"
               />
               {(produtoId || produtoQuery) && (
                 <button
                   type="button"
                   onClick={limparProduto}
-                  className="shrink-0 rounded-md border px-2 text-slate-500 hover:bg-slate-50"
+                  className="shrink-0 rounded-md border border-slate-200 px-2 text-slate-500 hover:bg-slate-50"
                   title="Limpar produto"
                 >
                   ×
@@ -564,7 +637,7 @@ export default function MovimentacoesPage() {
               )}
             </div>
             {produtoOpen && produtoQuery.trim() && !produtoId && (
-              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-lg">
+              <ul className="absolute z-20 mt-1 max-h-56 w-full min-w-[14rem] overflow-auto rounded-lg border bg-white shadow-lg">
                 {produtosFiltrados.length === 0 ? (
                   <li className="px-3 py-2 text-sm text-slate-500">
                     Nenhum produto encontrado
@@ -590,7 +663,7 @@ export default function MovimentacoesPage() {
             )}
           </div>
 
-          <div className="relative min-w-0 basis-[10rem] md:w-[11rem] md:flex-none">
+          <div className="relative col-span-1 min-w-0 sm:col-span-1 lg:col-span-2">
             <div className="flex gap-1">
               <input
                 value={tipoQuery}
@@ -599,18 +672,19 @@ export default function MovimentacoesPage() {
                   setTipoId("");
                   setTipoLabel("");
                   setTipoOpen(true);
+                  setPage(1);
                 }}
                 onFocus={() => setTipoOpen(true)}
                 onBlur={() => setTimeout(() => setTipoOpen(false), 150)}
                 placeholder="Tipo…"
-                className="w-full min-w-0 rounded-md border px-2 py-1.5 text-sm"
+                className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
                 autoComplete="off"
               />
               {(tipoId || tipoQuery) && (
                 <button
                   type="button"
                   onClick={limparTipo}
-                  className="shrink-0 rounded-md border px-2 text-slate-500 hover:bg-slate-50"
+                  className="shrink-0 rounded-md border border-slate-200 px-1.5 text-slate-500 hover:bg-slate-50"
                   title="Limpar tipo"
                 >
                   ×
@@ -618,7 +692,7 @@ export default function MovimentacoesPage() {
               )}
             </div>
             {tipoOpen && tipoQuery.trim() && !tipoId && (
-              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-lg">
+              <ul className="absolute z-20 mt-1 max-h-56 w-full min-w-[12rem] overflow-auto rounded-lg border bg-white shadow-lg">
                 {tiposFiltrados.length === 0 ? (
                   <li className="px-3 py-2 text-sm text-slate-500">
                     Nenhum tipo encontrado
@@ -651,20 +725,23 @@ export default function MovimentacoesPage() {
             onChange={(e) => {
               const v = e.target.value;
               setOperacaoFiltro(
-                v === "ENTRADA" || v === "SAIDA" ? v : ""
+                v === "ENTRADA" || v === "SAIDA" || v === "TRANSFERENCIA"
+                  ? v
+                  : ""
               );
               setPage(1);
             }}
-            className="shrink-0 rounded-md border px-2 py-1.5 text-sm md:w-[7.5rem]"
+            className="col-span-1 min-w-0 rounded-md border border-slate-200 px-2 py-1.5 text-sm sm:col-span-1 lg:col-span-1"
             title="Filtrar por operação"
             aria-label="Operação"
           >
-            <option value="">Operação: todas</option>
+            <option value="">Operação</option>
             <option value="ENTRADA">Entrada</option>
             <option value="SAIDA">Saída</option>
+            <option value="TRANSFERENCIA">Transferência</option>
           </select>
 
-          <div className="relative min-w-0 flex-1 basis-[14rem]">
+          <div className="relative col-span-2 min-w-0 sm:col-span-2 lg:col-span-3">
             <div className="flex gap-1">
               <select
                 value={parceiroModo}
@@ -678,7 +755,7 @@ export default function MovimentacoesPage() {
                         : ""
                   );
                 }}
-                className="shrink-0 rounded-md border px-2 py-1.5 text-sm"
+                className="w-[5.5rem] shrink-0 rounded-md border border-slate-200 px-1.5 py-1.5 text-sm"
                 title="Filtrar por cliente ou fornecedor"
                 aria-label="Tipo de parceiro"
               >
@@ -692,25 +769,27 @@ export default function MovimentacoesPage() {
                   setParceiroQuery(e.target.value);
                   setParceiroId("");
                   setParceiroLabel("");
+                  setParceiroTipoLabel("");
                   setParceiroOpen(true);
+                  setPage(1);
                 }}
                 onFocus={() => setParceiroOpen(true)}
                 onBlur={() => setTimeout(() => setParceiroOpen(false), 150)}
                 placeholder={
                   parceiroModo === "FORNECEDOR"
-                    ? "Fornecedor: nome ou CNPJ…"
+                    ? "Fornecedor…"
                     : parceiroModo === "CLIENTE"
-                      ? "Cliente: nome ou CNPJ…"
-                      : "Parceiro: nome ou CNPJ…"
+                      ? "Cliente…"
+                      : "Parceiro…"
                 }
-                className="w-full min-w-0 rounded-md border px-2 py-1.5 text-sm"
+                className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
                 autoComplete="off"
               />
               {(parceiroId || parceiroQuery) && (
                 <button
                   type="button"
                   onClick={limparParceiro}
-                  className="shrink-0 rounded-md border px-2 text-slate-500 hover:bg-slate-50"
+                  className="shrink-0 rounded-md border border-slate-200 px-2 text-slate-500 hover:bg-slate-50"
                   title="Limpar parceiro"
                 >
                   ×
@@ -718,7 +797,7 @@ export default function MovimentacoesPage() {
               )}
             </div>
             {parceiroOpen && parceiroQuery.trim() && !parceiroId && (
-              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-lg">
+              <ul className="absolute z-20 mt-1 max-h-56 w-full min-w-[14rem] overflow-auto rounded-lg border bg-white shadow-lg">
                 {parceirosFiltrados.length === 0 ? (
                   <li className="px-3 py-2 text-sm text-slate-500">
                     Nenhum{" "}
@@ -758,16 +837,46 @@ export default function MovimentacoesPage() {
             )}
           </div>
 
+          <div className="col-span-1 flex min-w-0 items-center gap-1 sm:col-span-1 lg:col-span-2">
+            <input
+              value={serieQ}
+              onChange={(e) => onSerieChange(e.target.value)}
+              onKeyDown={onSerieKeyDown}
+              onBlur={() => {
+                if (serieQ.trim().length >= 2) aplicarSerie(serieQ);
+              }}
+              placeholder="Nº série…"
+              className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1.5 font-mono text-sm"
+              autoComplete="off"
+              title="Filtra ao digitar (mín. 2 caracteres). Com série, o período é ignorado."
+            />
+            {(serieQ || serieFiltro) && (
+              <button
+                type="button"
+                onClick={() => limparSerie()}
+                className="shrink-0 rounded-md border border-slate-200 px-1.5 text-slate-500 hover:bg-slate-50"
+                title="Limpar série"
+              >
+                ×
+              </button>
+            )}
+          </div>
+
           <button
             type="button"
-            className="shrink-0 rounded-md border px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+            className="col-span-1 justify-self-end self-center rounded-md px-2 py-1.5 text-xs text-slate-500 underline-offset-2 hover:text-slate-800 hover:underline sm:col-span-1 lg:col-span-1"
             onClick={resetFiltros}
           >
             Limpar
           </button>
         </div>
-        {(produtoId || tipoId || parceiroId || parceiroModo || operacaoFiltro) && (
-          <p className="mt-1.5 truncate text-[11px] text-slate-500">
+        {(produtoId ||
+          tipoId ||
+          parceiroId ||
+          parceiroModo ||
+          operacaoFiltro ||
+          serieAtiva) && (
+          <p className="mt-2 truncate border-t border-slate-100 pt-1.5 text-[11px] text-slate-500">
             {[
               produtoId ? `Produto: ${produtoLabel}` : null,
               tipoId ? `Tipo: ${tipoLabel}` : null,
@@ -775,14 +884,19 @@ export default function MovimentacoesPage() {
                 ? "Operação: entrada"
                 : operacaoFiltro === "SAIDA"
                   ? "Operação: saída"
-                  : null,
+                  : operacaoFiltro === "TRANSFERENCIA"
+                    ? "Operação: transferência"
+                    : null,
               parceiroId
-                ? `${parceiroModo === "FORNECEDOR" ? "Forn." : "Cliente"}: ${parceiroLabel}`
+                ? `${parceiroTipoLabel || (parceiroModo === "FORNECEDOR" ? "Forn." : "Cliente")}: ${parceiroLabel}`
                 : parceiroModo === "FORNECEDOR"
                   ? "Somente fornecedores"
                   : parceiroModo === "CLIENTE"
                     ? "Somente clientes"
                     : null,
+              serieAtiva
+                ? `Série: ${serieFiltro} (histórico completo)`
+                : null,
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -932,12 +1046,16 @@ export default function MovimentacoesPage() {
                     (canLancamentos && !!m.termoPendente) ||
                     canConfirmarRecebimento;
                   const painelAberto = painelId === m.id;
-                  const accent =
-                    m.operacao === "ENTRADA"
+                  const isTransfLinha = Boolean(
+                    m.operacao === "TRANSFERENCIA" ||
+                      m.filialDestino ||
+                      m.aguardandoRecebimento
+                  );
+                  const accent = isTransfLinha
+                    ? "border-l-amber-500"
+                    : m.operacao === "ENTRADA"
                       ? "border-l-emerald-500"
-                      : m.operacao === "SAIDA"
-                        ? "border-l-red-500"
-                        : "border-l-amber-500";
+                      : "border-l-red-500";
                   const destaque =
                     m.retornoPendente ||
                     m.termoPendente ||
@@ -956,16 +1074,18 @@ export default function MovimentacoesPage() {
                           <div className="flex flex-nowrap items-center gap-1">
                             <span
                               className={
-                                m.operacao === "ENTRADA"
-                                  ? "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800"
-                                  : m.operacao === "SAIDA"
-                                    ? "rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-800"
-                                    : "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900"
+                                isTransfLinha
+                                  ? "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900"
+                                  : m.operacao === "ENTRADA"
+                                    ? "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800"
+                                    : "rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-800"
                               }
                             >
-                              {m.operacao === "TRANSFERENCIA"
+                              {isTransfLinha
                                 ? "TRANSF."
-                                : m.operacao}
+                                : m.operacao === "ENTRADA"
+                                  ? "ENT."
+                                  : "SAÍDA"}
                             </span>
                             {m.status !== "CONCLUIDO" && (
                               <span
@@ -1015,7 +1135,7 @@ export default function MovimentacoesPage() {
                             {m.produto.descricao}
                           </div>
                           {m.series && m.series.length > 0 ? (
-                            <div className="mt-0.5 truncate font-mono text-[10px] text-teal-800">
+                            <div className="mt-0.5 truncate font-mono text-[10px] text-slate-600">
                               S/N:{" "}
                               {m.series
                                 .map((s) => s.unidadeSerie.numeroSerie)
@@ -1070,7 +1190,7 @@ export default function MovimentacoesPage() {
                                   <Link
                                     href={`/transferencias/${m.aguardandoRecebimento.transferenciaId}`}
                                     className="rounded border border-amber-300/80 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-900 hover:bg-amber-100"
-                                    title="Abrir Confirmar Recebimento desta carga"
+                                    title="Abrir Transferências desta carga"
                                   >
                                     Confirmar recebimento
                                   </Link>

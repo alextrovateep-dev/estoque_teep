@@ -79,6 +79,17 @@ export function AssistenteEstoque({
   const [links, setLinks] = useState<{ href: string; label: string }[]>([]);
   const [downloadingToken, setDownloadingToken] = useState<string | null>(null);
   const chatListRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  /** Evita rolar a página quando só ajustamos o scroll interno do chat. */
+  const stickChatScroll = useCallback(() => {
+    const el = chatListRef.current;
+    if (!el) return;
+    const winY = window.scrollY;
+    el.scrollTop = el.scrollHeight;
+    if (window.scrollY !== winY) {
+      window.scrollTo(window.scrollX, winY);
+    }
+  }, []);
 
   const onFinalTranscript = useCallback((text: string) => {
     setInput((prev) => appendTranscript(prev, text));
@@ -147,10 +158,8 @@ export function AssistenteEstoque({
   }, [busy, isRecording, stopSpeech]);
 
   useEffect(() => {
-    const el = chatListRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [turns, busy]);
+    stickChatScroll();
+  }, [turns, busy, stickChatScroll]);
 
   async function downloadExport(d: ChatDownload) {
     setError("");
@@ -192,6 +201,10 @@ export function AssistenteEstoque({
     const nextTurns = [...turns, { role: "user" as const, content: text }];
     setTurns(nextTurns);
     setInput("");
+    // Mantém o cursor no campo sem puxar a página para baixo
+    requestAnimationFrame(() => {
+      inputRef.current?.focus({ preventScroll: true });
+    });
     try {
       const r = await api<ChatResponse>("/assistente/chat", {
         method: "POST",
@@ -223,6 +236,10 @@ export function AssistenteEstoque({
       ]);
     } finally {
       setBusy(false);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus({ preventScroll: true });
+        stickChatScroll();
+      });
     }
   }
 
@@ -312,7 +329,7 @@ export function AssistenteEstoque({
 
       <div
         ref={chatListRef}
-        className="mt-3 max-h-72 space-y-2 overflow-y-auto px-4"
+        className="mt-3 max-h-72 space-y-2 overflow-y-auto overscroll-contain px-4"
       >
         {turns.map((t, i) => (
           <div key={`${t.role}-${i}`}>
@@ -403,9 +420,10 @@ export function AssistenteEstoque({
         className="mt-3 flex items-end gap-2 border-t border-slate-100 p-4"
       >
         <textarea
+          ref={inputRef}
           value={displayValue}
           onChange={(e) => {
-            if (isRecording) return;
+            if (isRecording || busy) return;
             setInput(e.target.value);
           }}
           onKeyDown={(e) => {
@@ -418,12 +436,13 @@ export function AssistenteEstoque({
               }
             }
           }}
-          disabled={busy || !enabled}
-          readOnly={isRecording}
+          disabled={!enabled}
+          readOnly={busy || isRecording}
           rows={2}
           placeholder="Pergunte sobre o estoque… ou use o microfone"
-          className="min-h-[3.25rem] min-w-0 flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-snug outline-none focus:border-brand focus:ring-2 focus:ring-brand/25"
+          className="min-h-[3.25rem] min-w-0 flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-snug outline-none focus:border-brand focus:ring-2 focus:ring-brand/25 read-only:bg-slate-50/80"
           aria-label="Mensagem para o assistente"
+          aria-busy={busy}
         />
         <button
           type="button"

@@ -17,6 +17,11 @@ export type User = {
   dataNascimento?: string | null;
   perfilCompleto?: boolean;
   aniversarioHoje?: boolean;
+  /**
+   * Há estoque (filial) ativo no sistema.
+   * Sem isso o admin pode navegar/cadastrar, mas operações de estoque ficam bloqueadas.
+   */
+  temEstoque?: boolean;
   /** Resolvidas no login/me (defaults do perfil + overrides) */
   permissoes?: import("@teep/shared").PermissoesUsuario;
 };
@@ -163,9 +168,37 @@ export async function api<T>(
 
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || `Erro ${res.status}`);
+    throw new Error(formatApiError(body, res.status));
   }
   return body as T;
+}
+
+function formatApiError(body: unknown, status: number): string {
+  if (!body || typeof body !== "object") return `Erro ${status}`;
+  const b = body as {
+    error?: unknown;
+    details?: {
+      formErrors?: string[];
+      fieldErrors?: Record<string, string[] | undefined>;
+    };
+  };
+  const isUseless = (m: string) => {
+    const t = m.trim().toLowerCase();
+    return !t || t === "required" || t === "invalid" || t === "dados inválidos";
+  };
+  if (typeof b.error === "string" && b.error.trim() && !isUseless(b.error)) {
+    return b.error.trim();
+  }
+  const fromFields = Object.values(b.details?.fieldErrors || {})
+    .flat()
+    .find((m) => typeof m === "string" && !isUseless(m));
+  if (fromFields) return fromFields;
+  const fromForm = (b.details?.formErrors || []).find(
+    (m) => typeof m === "string" && !isUseless(m)
+  );
+  if (fromForm) return fromForm;
+  if (typeof b.error === "string" && b.error.trim()) return b.error.trim();
+  return `Erro ${status}`;
 }
 
 /** Upload multipart (não define Content-Type — o browser seta boundary). */
@@ -201,7 +234,7 @@ export async function apiUpload<T>(
 
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(body.error || `Erro ${res.status}`);
+    throw new Error(formatApiError(body, res.status));
   }
   return body as T;
 }

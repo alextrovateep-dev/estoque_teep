@@ -31,6 +31,8 @@ export type CreateNotificationInput = {
 
 /**
  * Fanout: para cada usuário com tick do evento → DB → socket → e-mail opcional.
+ * `tryEmail: false` = só inbox/toast (usado quando o e-mail sai por outro canal,
+ * ex.: lista `emailsDestino` do alerta de retorno).
  * Nunca await no request path.
  */
 export function emitirNotificacaoEvento(
@@ -141,6 +143,7 @@ async function createNotificationForUser(opts: {
       type: opts.tipo,
       destinatarioNome: opts.nome,
       mensagem: opts.mensagem,
+      titulo: opts.titulo,
     });
     sendPreparedMailAsync(opts.email, prepared);
   } catch (e) {
@@ -151,7 +154,7 @@ async function createNotificationForUser(opts: {
   }
 }
 
-/** Só in-app (DB + socket), sem e-mail. */
+/** Só in-app (DB + socket), sem e-mail — destinatário único (não consulta preferências). */
 export function createInAppNotification(
   usuarioId: string,
   input: Omit<CreateNotificationInput, "tryEmail">
@@ -166,9 +169,10 @@ export function createInAppNotification(
             email: true,
             nome: true,
             receberAlertasEmail: true,
+            ativo: true,
           },
         });
-        if (!u) return;
+        if (!u || !u.ativo) return;
         await createNotificationForUser({
           usuarioId: u.id,
           email: u.email,

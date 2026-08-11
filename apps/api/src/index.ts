@@ -4,6 +4,7 @@ import http from "http";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import { logger } from "./lib/logger";
 
 /** Sempre carrega apps/api/.env (não depende do cwd do pnpm). */
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
@@ -27,6 +28,8 @@ import {
 import { uploadRouter } from "./routes/upload";
 import { assistenteRouter } from "./routes/assistente";
 import { seriesRouter } from "./routes/series";
+import { rmaRouter } from "./routes/rma";
+import { relatoriosRouter } from "./routes/relatorios";
 
 assertProductionEnv();
 ensureUploadDirs();
@@ -103,6 +106,8 @@ app.use(cadastrosRouter);
 app.use(estoqueRouter);
 app.use("/transferencias", transferenciasRouter);
 app.use("/series", seriesRouter);
+app.use("/rma", rmaRouter);
+app.use("/relatorios", relatoriosRouter);
 app.use("/notificacoes", notificacoesRouter);
 app.use("/admin/email", emailAdminRouter);
 app.use("/assistente", assistenteRouter);
@@ -113,8 +118,8 @@ const server = http.createServer(app);
 initRealtime(server);
 
 server.listen(port, () => {
-  console.log(`API listening on :${port} (http + socket.io)`);
-  console.log(`Uploads dir: ${path.resolve(getUploadRoot())}`);
+  logger.startup(`API listening on :${port} (http + socket.io)`);
+  logger.startup(`Uploads dir: ${path.resolve(getUploadRoot())}`);
   startEmailQueueWorker();
   startAlertaRetornoJob();
 });

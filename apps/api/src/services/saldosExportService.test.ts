@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   dateStampSaoPaulo,
   filtrarSaldosExport,
+  resolveAlertaFiltro,
   totaisDasLinhas,
   type SaldoExportRow,
 } from "./saldosExportService";
@@ -77,6 +78,49 @@ describe("saldosExport totais e filtros", () => {
     });
     assert.equal(out.length, 1);
     assert.equal(out[0]!.codigo, "CABO");
+  });
+
+  it("filtro alerta=min e alerta=max separam abaixo/acima", () => {
+    const rows = [
+      row({ id: "1", codigo: "MIN", abaixoMinimo: true, acimaMaximo: false }),
+      row({ id: "2", codigo: "MAX", abaixoMinimo: false, acimaMaximo: true }),
+      row({ id: "3", codigo: "OK", abaixoMinimo: false, acimaMaximo: false }),
+    ];
+    const soMin = filtrarSaldosExport(rows, { alerta: "min" });
+    assert.equal(soMin.length, 1);
+    assert.equal(soMin[0]!.codigo, "MIN");
+    const soMax = filtrarSaldosExport(rows, { alerta: "max" });
+    assert.equal(soMax.length, 1);
+    assert.equal(soMax[0]!.codigo, "MAX");
+    const qualquer = filtrarSaldosExport(rows, { alerta: "qualquer" });
+    assert.equal(qualquer.length, 2);
+  });
+
+  it("resolveAlertaFiltro: alerta tem prioridade sobre soAlertas", () => {
+    assert.equal(resolveAlertaFiltro({ alerta: "min", soAlertas: true }), "min");
+    assert.equal(resolveAlertaFiltro({ soAlertas: true }), "qualquer");
+    assert.equal(resolveAlertaFiltro({}), null);
+  });
+
+  it("busca q filtra só código/descrição do produto", () => {
+    const rows = [
+      row({
+        id: "1",
+        codigo: "X1",
+        descricao: "Item A",
+        filialSigla: "CABO",
+        filialNome: "Filial Cabo",
+        categoriaNome: "Cabos",
+      }),
+      row({
+        id: "2",
+        codigo: "CABO-01",
+        descricao: "Cabo HDMI",
+      }),
+    ];
+    const out = filtrarSaldosExport(rows, { q: "cabo" });
+    assert.equal(out.length, 1);
+    assert.equal(out[0]!.codigo, "CABO-01");
   });
 
   it("ids tem prioridade sobre filtros", () => {

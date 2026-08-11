@@ -11,9 +11,11 @@ import {
   alertasUiDeLimiares,
   notificarDivergenciaTransferencia,
   notificarLimiaresEstoque,
+  notificarTransferenciaDecisao,
+  notificarTransferenciaPendenteAprovacao,
   type AlertaUi,
 } from "./alertaService";
-import { aplicarSaldo, obterSaldo } from "./estoqueService";
+import { aplicarSaldo, obterSaldo, qtyReservadaTransferenciaPendente } from "./estoqueService";
 import {
   assertOperadorPodeFilial,
   operadorFilialIds,
@@ -27,6 +29,12 @@ import {
   reservarSeriesTransferenciaPendente,
   SERIE_STATUS,
 } from "./serieService";
+import {
+  aplicarConsumoMontagem,
+  assertSaldoComponentes,
+  carregarBomProduto,
+  linhasConsumoMontagem,
+} from "./montagemService";
 
 const LIST_LIMITE = 200;
 
@@ -94,29 +102,6 @@ async function tiposSistema() {
 
 type Tx = import("@prisma/client").Prisma.TransactionClient;
 
-/** Qty em cargas PENDENTE_APROVACAO que “reservam” saldo da origem (sem baixar estoque ainda). */
-async function qtyReservadaPendenteAprovacao(
-  db: Tx | typeof prisma,
-  produtoId: string,
-  origemFilialId: string,
-  excludeTransferenciaId?: string | null
-): Promise<number> {
-  const rows = await db.transferenciaItem.findMany({
-    where: {
-      produtoId,
-      transferencia: {
-        status: "PENDENTE_APROVACAO",
-        origemFilialId,
-        ...(excludeTransferenciaId
-          ? { id: { not: excludeTransferenciaId } }
-          : {}),
-      },
-    },
-    select: { qtdEnviada: true },
-  });
-  return rows.reduce((s, r) => s + Number(r.qtdEnviada), 0);
-}
-
 /** Trava estoque e garante saldo livre (saldo − reservas pendentes). */
 async function assertSaldoDisponivelOrigem(
   tx: Tx,
@@ -136,7 +121,7 @@ async function assertSaldoDisponivelOrigem(
     FOR UPDATE
   `;
   const saldo = await obterSaldo(tx, opts.produtoId, opts.origemFilialId);
-  const reservada = await qtyReservadaPendenteAprovacao(
+  const reservada = await qtyReservadaTransferenciaPendente(
     tx,
     opts.produtoId,
     opts.origemFilialId,
@@ -242,6 +227,8 @@ export async function criarTransferencia(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    /** Tipo com baixaPorArvore: baixa BOM na origem e entra só o pai no destino */
+    baixaPorArvore?: boolean;
   }
 ) {
   return criarTransferenciaInterna(user, input, "AGUARDAR_RECEBIMENTO", false);
@@ -255,6 +242,7 @@ export async function criarTransferenciaImediata(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    baixaPorArvore?: boolean;
   }
 ) {
   return criarTransferenciaInterna(user, input, "IMEDIATO", false);
@@ -271,6 +259,7 @@ export async function criarTransferenciaPendenteAprovacao(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    baixaPorArvore?: boolean;
   },
   creditoDestino: "IMEDIATO" | "AGUARDAR_RECEBIMENTO"
 ) {
@@ -284,10 +273,18 @@ async function criarTransferenciaInterna(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    baixaPorArvore?: boolean;
   },
   creditoDestino: "IMEDIATO" | "AGUARDAR_RECEBIMENTO",
   pendenteAprovacao: boolean
 ) {
+  const baixaPorArvore = input.baixaPorArvore === true;
+  if (baixaPorArvore && pendenteAprovacao) {
+    throw new AppError(
+      400,
+      "Transferência com baixa pela árvore não pode ficar pendente de aprovação"
+    );
+  }
   let origemFilialId = input.origemFilialId;
   if (user.perfil === "OPERADOR") {
     origemFilialId = resolveOperadorFilialId(user, input.origemFilialId);
@@ -368,14 +365,35 @@ async function criarTransferenciaInterna(
         quantidade = series.length;
       }
 
-      await assertSaldoDisponivelOrigem(tx, {
-        produtoId: item.produtoId,
-        produtoCodigo: produto.codigo,
-        origemFilialId,
-        origemSigla: origem.sigla,
-        quantidade,
-        excludeTransferenciaId: null,
-      });
+      if (baixaPorArvore) {
+        if (produto.controlaSerie) {
+          throw new AppError(
+            400,
+            `O produto ${produto.codigo} controla série — transferência com baixa pela árvore ainda não suporta série`
+          );
+        }
+        const bom = await carregarBomProduto(tx, item.produtoId);
+        const consumo = linhasConsumoMontagem(bom, quantidade);
+        if (consumo.length === 0) {
+          throw new AppError(
+            400,
+            `Produto ${produto.codigo}: árvore sem componentes que baixem estoque (só fantasmas)`
+          );
+        }
+        await assertSaldoComponentes(tx, {
+          filialComponentesId: origemFilialId,
+          consumo,
+        });
+      } else {
+        await assertSaldoDisponivelOrigem(tx, {
+          produtoId: item.produtoId,
+          produtoCodigo: produto.codigo,
+          origemFilialId,
+          origemSigla: origem.sigla,
+          quantidade,
+          excludeTransferenciaId: null,
+        });
+      }
 
       const itemRow = await tx.transferenciaItem.create({
         data: {
@@ -415,6 +433,7 @@ async function criarTransferenciaInterna(
         imediato,
         enviadaId: enviada.id,
         recebidaId: recebida.id,
+        baixaPorArvore,
       });
       alertas.push(...efeitos);
     }
@@ -434,6 +453,17 @@ async function criarTransferenciaInterna(
   });
 
   const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw);
+
+  if (result.pendenteAprovacao) {
+    const t = result.transferencia;
+    notificarTransferenciaPendenteAprovacao({
+      transferenciaId: t.id,
+      origemNome: t.origemFilial.nome,
+      destinoNome: t.destinoFilial.nome,
+      criadoPorNome: t.criadoPor?.nome,
+      qtdItens: t.itens.length,
+    });
+  }
 
   return {
     transferencia: result.transferencia,
@@ -473,6 +503,11 @@ async function aplicarEfeitosItemTransferencia(
     recebidaId: string;
     /** Se true, séries já reservadas — só efetivar status */
     seriesJaReservadas?: boolean;
+    /**
+     * Baixa BOM na origem (componentes) e credita só o item pai no destino.
+     * Não debita saldo do pai na origem.
+     */
+    baixaPorArvore?: boolean;
   }
 ) {
   const alertas: Array<{
@@ -485,21 +520,27 @@ async function aplicarEfeitosItemTransferencia(
     filialNome: string;
   }> = [];
 
-  const saldoOrigem = await aplicarSaldo(tx, {
-    produtoId: opts.produto.id,
-    filialId: opts.origemFilialId,
-    operacao: "SAIDA",
-    quantidade: opts.quantidade,
-  });
-  alertas.push({
-    produtoId: opts.produto.id,
-    produtoCodigo: opts.produto.codigo,
-    produtoDescricao: opts.produto.descricao,
-    abaixoMinimo: saldoOrigem.abaixoMinimo,
-    acimaMaximo: saldoOrigem.acimaMaximo,
-    saldoAtual: Number(saldoOrigem.saldoAtual),
-    filialNome: opts.origemNome,
-  });
+  const baixaPorArvore = opts.baixaPorArvore === true;
+
+  if (!baixaPorArvore) {
+    const saldoOrigem = await aplicarSaldo(tx, {
+      produtoId: opts.produto.id,
+      filialId: opts.origemFilialId,
+      operacao: "SAIDA",
+      quantidade: opts.quantidade,
+      // Se a carga estava PENDENTE_APROVACAO, não conte a própria reserva.
+      excludeTransferenciaId: opts.transfId,
+    });
+    alertas.push({
+      produtoId: opts.produto.id,
+      produtoCodigo: opts.produto.codigo,
+      produtoDescricao: opts.produto.descricao,
+      abaixoMinimo: saldoOrigem.abaixoMinimo,
+      acimaMaximo: saldoOrigem.acimaMaximo,
+      saldoAtual: Number(saldoOrigem.saldoAtual),
+      filialNome: opts.origemNome,
+    });
+  }
 
   const movEnviada = await tx.movimentacao.create({
     data: {
@@ -508,16 +549,38 @@ async function aplicarEfeitosItemTransferencia(
       usuarioId: opts.userId,
       filialId: opts.origemFilialId,
       filialDestinoId: opts.destinoFilialId,
+      /** Marker: transferência com baixa pela árvore (origem dos componentes). */
+      filialComponentesId: baixaPorArvore ? opts.origemFilialId : null,
       quantidade: opts.quantidade,
       precoUnitario: opts.produto.precoUnitario,
       operacao: "SAIDA",
-      observacao: opts.imediato
-        ? `Transferência ${opts.transfId.slice(0, 8)} (crédito imediato)`
-        : `Transferência ${opts.transfId.slice(0, 8)} enviada`,
+      observacao: baixaPorArvore
+        ? `Transferência ${opts.transfId.slice(0, 8)} — baixa árvore na origem`
+        : opts.imediato
+          ? `Transferência ${opts.transfId.slice(0, 8)} (crédito imediato)`
+          : `Transferência ${opts.transfId.slice(0, 8)} enviada`,
       status: "CONCLUIDO",
       transferenciaItemId: opts.itemId,
     },
   });
+
+  if (baixaPorArvore) {
+    const result = await aplicarConsumoMontagem(tx, {
+      montagemMovimentacaoId: movEnviada.id,
+      usuarioId: opts.userId,
+      filialComponentesId: opts.origemFilialId,
+      quantidadeMontada: opts.quantidade,
+      produtoPaiId: opts.produto.id,
+      observacao: `Transferência ${opts.transfId.slice(0, 8)} — componentes da árvore`,
+      excludeTransferenciaId: opts.transfId,
+    });
+    if (!result.consumos.length) {
+      throw new AppError(
+        400,
+        `Produto ${opts.produto.codigo}: árvore sem componentes que baixem estoque (só fantasmas)`
+      );
+    }
+  }
 
   let movRecebidaId: string | null = null;
 
@@ -548,7 +611,9 @@ async function aplicarEfeitosItemTransferencia(
         quantidade: opts.quantidade,
         precoUnitario: opts.produto.precoUnitario,
         operacao: "ENTRADA",
-        observacao: `Transferência ${opts.transfId.slice(0, 8)} recebida (imediato)`,
+        observacao: baixaPorArvore
+          ? `Transferência ${opts.transfId.slice(0, 8)} — entra item único no destino`
+          : `Transferência ${opts.transfId.slice(0, 8)} recebida (imediato)`,
         status: "CONCLUIDO",
         transferenciaItemId: opts.itemId,
       },
@@ -688,6 +753,16 @@ export async function aprovarTransferencia(user: AuthUser, id: string) {
 
   const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw);
 
+  const t = result.transferencia;
+  notificarTransferenciaDecisao({
+    transferenciaId: t.id,
+    origemNome: t.origemFilial.nome,
+    destinoNome: t.destinoFilial.nome,
+    aprovado: true,
+    decididoPorNome: user.nome,
+    criadoPorId: t.criadoPor?.id,
+  });
+
   return {
     transferencia: result.transferencia,
     creditoDestino: result.creditoDestino,
@@ -707,7 +782,7 @@ export async function rejeitarTransferencia(
     throw new AppError(403, "Apenas Admin ou Gerente podem rejeitar");
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM transferencias WHERE id = ${id}::uuid FOR UPDATE`;
     const transf = await tx.transferencia.findUnique({
       where: { id },
@@ -724,20 +799,35 @@ export async function rejeitarTransferencia(
       },
     });
 
+    const motivoFinal = (motivo?.trim() || "Rejeitado na aprovação").slice(
+      0,
+      2000
+    );
+
     const updated = await tx.transferencia.update({
       where: { id },
       data: {
         status: "REJEITADO",
-        motivoRejeicao: (motivo?.trim() || "Rejeitado na aprovação").slice(
-          0,
-          2000
-        ),
+        motivoRejeicao: motivoFinal,
       },
       include: transfInclude,
     });
 
-    return { transferencia: updated };
+    return { transferencia: updated, motivo: motivoFinal };
   });
+
+  const t = result.transferencia;
+  notificarTransferenciaDecisao({
+    transferenciaId: t.id,
+    origemNome: t.origemFilial.nome,
+    destinoNome: t.destinoFilial.nome,
+    aprovado: false,
+    motivo: result.motivo,
+    decididoPorNome: user.nome,
+    criadoPorId: t.criadoPor?.id,
+  });
+
+  return { transferencia: t };
 }
 
 /** Destino confere: +destino com qtdRecebida; RECEBIDO ou PARCIAL */
@@ -753,7 +843,7 @@ export async function conferirTransferencia(
     }>;
   }
 ) {
-  const { recebida } = await tiposSistema();
+  const { recebida, enviada, estorno } = await tiposSistema();
 
   const result = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM transferencias WHERE id = ${id}::uuid FOR UPDATE`;
@@ -761,10 +851,13 @@ export async function conferirTransferencia(
     const transf = await tx.transferencia.findUnique({
       where: { id },
       include: {
+        origemFilial: true,
+        destinoFilial: true,
         itens: {
           include: {
             produto: true,
             series: { include: { unidadeSerie: true } },
+            movimentacoes: true,
           },
         },
       },
@@ -793,6 +886,7 @@ export async function conferirTransferencia(
       abaixoMinimo: boolean;
       acimaMaximo: boolean;
       saldoAtual: number;
+      filialNome: string;
     }> = [];
 
     // CONFERINDO marca intenção; commit só no fim (rollback se falhar)
@@ -819,14 +913,26 @@ export async function conferirTransferencia(
         : [];
 
       if (item.produto.controlaSerie) {
-        if (conf.seriesRecebidas === undefined && Number.isFinite(rec)) {
-          // allow deriving from length if series provided
+        if (conf.seriesRecebidas === undefined) {
+          throw new AppError(
+            400,
+            `Informe as séries recebidas de ${item.produto.codigo}`
+          );
         }
         rec = seriesRecebidas.length;
       }
 
       if (!Number.isFinite(rec) || rec < 0) {
-        throw new AppError(400, `Quantidade recebida inválida (${item.produto.codigo})`);
+        throw new AppError(
+          400,
+          `Quantidade recebida inválida (${item.produto.codigo})`
+        );
+      }
+      if (rec > enviadaQtd + 1e-9) {
+        throw new AppError(
+          400,
+          `Recebido não pode ser maior que enviado (${item.produto.codigo}: enviado ${enviadaQtd})`
+        );
       }
 
       if (!qtdIguais(rec, enviadaQtd)) {
@@ -858,6 +964,7 @@ export async function conferirTransferencia(
           abaixoMinimo: saldoResult.abaixoMinimo,
           acimaMaximo: saldoResult.acimaMaximo,
           saldoAtual: Number(saldoResult.saldoAtual),
+          filialNome: transf.destinoFilial.nome,
         });
 
         const movRec = await tx.movimentacao.create({
@@ -889,7 +996,7 @@ export async function conferirTransferencia(
           seriesRecebidas,
           qtdRecebida: rec,
         });
-        // Séries não confirmadas voltam à origem — recredita saldo
+        // Séries não confirmadas voltam à origem — recredita saldo + estorno
         if (qtdNaoRecebida > 0) {
           const saldoOrig = await aplicarSaldo(tx, {
             produtoId: item.produtoId,
@@ -904,6 +1011,88 @@ export async function conferirTransferencia(
             abaixoMinimo: saldoOrig.abaixoMinimo,
             acimaMaximo: saldoOrig.acimaMaximo,
             saldoAtual: Number(saldoOrig.saldoAtual),
+            filialNome: transf.origemFilial.nome,
+          });
+
+          const enviadaMov = item.movimentacoes.find(
+            (m) =>
+              m.status === "CONCLUIDO" &&
+              m.operacao === "SAIDA" &&
+              m.tipoId === enviada.id
+          );
+          const estornoMov = await tx.movimentacao.create({
+            data: {
+              produtoId: item.produtoId,
+              tipoId: estorno.id,
+              usuarioId: user.id,
+              filialId: transf.origemFilialId,
+              filialDestinoId: transf.destinoFilialId,
+              quantidade: qtdNaoRecebida,
+              precoUnitario: item.produto.precoUnitario,
+              operacao: "ENTRADA",
+              observacao: `Divergência transferência ${transf.id.slice(0, 8)}: séries não recebidas`,
+              status: "CONCLUIDO",
+              estornoDeId: enviadaMov?.id || null,
+              transferenciaItemId: item.id,
+            },
+          });
+          const voltaram = await tx.transferenciaItemSerie.findMany({
+            where: {
+              transferenciaItemId: item.id,
+              recebido: false,
+            },
+            select: { unidadeSerieId: true },
+          });
+          for (const link of voltaram) {
+            await tx.movimentacaoSerie.create({
+              data: {
+                movimentacaoId: estornoMov.id,
+                unidadeSerieId: link.unidadeSerieId,
+              },
+            });
+          }
+        }
+      } else {
+        // Sem série: qty não recebida volta à origem (mesmo critério das séries).
+        const qtdVolta = enviadaQtd - rec;
+        if (qtdVolta > 1e-9) {
+          const saldoOrig = await aplicarSaldo(tx, {
+            produtoId: item.produtoId,
+            filialId: transf.origemFilialId,
+            operacao: "ENTRADA",
+            quantidade: qtdVolta,
+          });
+          alertas.push({
+            produtoId: item.produtoId,
+            produtoCodigo: item.produto.codigo,
+            produtoDescricao: item.produto.descricao,
+            abaixoMinimo: saldoOrig.abaixoMinimo,
+            acimaMaximo: saldoOrig.acimaMaximo,
+            saldoAtual: Number(saldoOrig.saldoAtual),
+            filialNome: transf.origemFilial.nome,
+          });
+
+          const enviadaMov = item.movimentacoes.find(
+            (m) =>
+              m.status === "CONCLUIDO" &&
+              m.operacao === "SAIDA" &&
+              m.tipoId === enviada.id
+          );
+          await tx.movimentacao.create({
+            data: {
+              produtoId: item.produtoId,
+              tipoId: estorno.id,
+              usuarioId: user.id,
+              filialId: transf.origemFilialId,
+              filialDestinoId: transf.destinoFilialId,
+              quantidade: qtdVolta,
+              precoUnitario: item.produto.precoUnitario,
+              operacao: "ENTRADA",
+              observacao: `Divergência transferência ${transf.id.slice(0, 8)}: ${conf.justificativa?.trim() || "não recebido"}`,
+              status: "CONCLUIDO",
+              estornoDeId: enviadaMov?.id || null,
+              transferenciaItemId: item.id,
+            },
           });
         }
       }
@@ -934,12 +1123,7 @@ export async function conferirTransferencia(
     };
   });
 
-  const alertasUi = emitirAlertasLimiaresTransferencia(
-    result.alertasRaw.map((a) => ({
-      ...a,
-      filialNome: result.transferencia.destinoFilial.nome,
-    }))
-  );
+  const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw);
 
   if (result.temDivergencia) {
     notificarDivergenciaTransferencia({
@@ -1034,56 +1218,121 @@ export async function cancelarTransferencia(user: AuthUser, id: string) {
         );
       }
 
-      const saldoResult = await aplicarSaldo(tx, {
-        produtoId: item.produtoId,
-        filialId: transf.origemFilialId,
-        operacao: "ENTRADA",
-        quantidade: Number(item.qtdEnviada),
-      });
-      alertas.push({
-        produtoCodigo: item.produto.codigo,
-        produtoDescricao: item.produto.descricao,
-        abaixoMinimo: saldoResult.abaixoMinimo,
-        acimaMaximo: saldoResult.acimaMaximo,
-        saldoAtual: Number(saldoResult.saldoAtual),
-      });
-
-      const estornoMov = await tx.movimentacao.create({
-        data: {
-          produtoId: item.produtoId,
-          tipoId: estorno.id,
-          usuarioId: user.id,
-          filialId: transf.origemFilialId,
-          filialDestinoId: transf.destinoFilialId,
-          quantidade: item.qtdEnviada,
-          precoUnitario: item.produto.precoUnitario,
-          operacao: "ENTRADA",
-          observacao: `Cancelamento transferência ${transf.id.slice(0, 8)}`,
+      const consumosArvore = await tx.movimentacao.findMany({
+        where: {
+          movimentacaoMontagemId: enviadaMov.id,
           status: "CONCLUIDO",
-          estornoDeId: enviadaMov.id,
-          transferenciaItemId: item.id,
+          estornoDeId: null,
         },
+        include: { produto: true },
       });
+      // Marker gravado no envio com árvore (não inferir só por consumos — BOM só-fantasma)
+      const baixaPorArvore = Boolean(enviadaMov.filialComponentesId);
 
-      if (item.produto.controlaSerie) {
-        const links = await tx.transferenciaItemSerie.findMany({
-          where: { transferenciaItemId: item.id },
+      if (baixaPorArvore) {
+        for (const cons of consumosArvore) {
+          const saldoCons = await aplicarSaldo(tx, {
+            produtoId: cons.produtoId,
+            filialId: cons.filialId,
+            operacao: "ENTRADA",
+            quantidade: Number(cons.quantidade),
+          });
+          alertas.push({
+            produtoCodigo: cons.produto.codigo,
+            produtoDescricao: cons.produto.descricao,
+            abaixoMinimo: saldoCons.abaixoMinimo,
+            acimaMaximo: saldoCons.acimaMaximo,
+            saldoAtual: Number(saldoCons.saldoAtual),
+          });
+          await tx.movimentacao.create({
+            data: {
+              produtoId: cons.produtoId,
+              tipoId: estorno.id,
+              usuarioId: user.id,
+              filialId: cons.filialId,
+              quantidade: cons.quantidade,
+              precoUnitario: cons.precoUnitario,
+              operacao: "ENTRADA",
+              observacao: `Cancelamento transferência ${transf.id.slice(0, 8)} — devolve componente da árvore`,
+              status: "CONCLUIDO",
+              estornoDeId: cons.id,
+              movimentacaoMontagemId: enviadaMov.id,
+              transferenciaItemId: item.id,
+            },
+          });
+          await tx.movimentacao.update({
+            where: { id: cons.id },
+            data: { status: "ESTORNADO" },
+          });
+        }
+        await tx.movimentacao.create({
+          data: {
+            produtoId: item.produtoId,
+            tipoId: estorno.id,
+            usuarioId: user.id,
+            filialId: transf.origemFilialId,
+            filialDestinoId: transf.destinoFilialId,
+            quantidade: item.qtdEnviada,
+            precoUnitario: item.produto.precoUnitario,
+            operacao: "ENTRADA",
+            observacao: `Cancelamento transferência ${transf.id.slice(0, 8)} — baixa árvore (sem repor o produto na origem)`,
+            status: "CONCLUIDO",
+            estornoDeId: enviadaMov.id,
+            transferenciaItemId: item.id,
+          },
         });
-        for (const link of links) {
-          await tx.unidadeSerie.update({
-            where: { id: link.unidadeSerieId },
-            data: {
-              status: SERIE_STATUS.EM_ESTOQUE,
-              filialId: transf.origemFilialId,
-              clienteId: null,
-            },
+      } else {
+        const saldoResult = await aplicarSaldo(tx, {
+          produtoId: item.produtoId,
+          filialId: transf.origemFilialId,
+          operacao: "ENTRADA",
+          quantidade: Number(item.qtdEnviada),
+        });
+        alertas.push({
+          produtoCodigo: item.produto.codigo,
+          produtoDescricao: item.produto.descricao,
+          abaixoMinimo: saldoResult.abaixoMinimo,
+          acimaMaximo: saldoResult.acimaMaximo,
+          saldoAtual: Number(saldoResult.saldoAtual),
+        });
+
+        const estornoMov = await tx.movimentacao.create({
+          data: {
+            produtoId: item.produtoId,
+            tipoId: estorno.id,
+            usuarioId: user.id,
+            filialId: transf.origemFilialId,
+            filialDestinoId: transf.destinoFilialId,
+            quantidade: item.qtdEnviada,
+            precoUnitario: item.produto.precoUnitario,
+            operacao: "ENTRADA",
+            observacao: `Cancelamento transferência ${transf.id.slice(0, 8)}`,
+            status: "CONCLUIDO",
+            estornoDeId: enviadaMov.id,
+            transferenciaItemId: item.id,
+          },
+        });
+
+        if (item.produto.controlaSerie) {
+          const links = await tx.transferenciaItemSerie.findMany({
+            where: { transferenciaItemId: item.id },
           });
-          await tx.movimentacaoSerie.create({
-            data: {
-              movimentacaoId: estornoMov.id,
-              unidadeSerieId: link.unidadeSerieId,
-            },
-          });
+          for (const link of links) {
+            await tx.unidadeSerie.update({
+              where: { id: link.unidadeSerieId },
+              data: {
+                status: SERIE_STATUS.EM_ESTOQUE,
+                filialId: transf.origemFilialId,
+                clienteId: null,
+              },
+            });
+            await tx.movimentacaoSerie.create({
+              data: {
+                movimentacaoId: estornoMov.id,
+                unidadeSerieId: link.unidadeSerieId,
+              },
+            });
+          }
         }
       }
 
@@ -1113,6 +1362,168 @@ export async function cancelarTransferencia(user: AuthUser, id: string) {
     transferencia: result.transferencia,
     alertas: alertasUi,
   };
+}
+
+/**
+ * Reverte transferência RECEBIDO com crédito IMEDIATO (saldo + séries + status CANCELADO).
+ * Usado na compensação de troca RMA — não passa por estornarMovimentacao (bloqueia transf).
+ */
+export async function reverterTransferenciaImediata(
+  user: AuthUser,
+  id: string,
+  opts?: { bypassPerfil?: boolean; motivo?: string }
+) {
+  if (!opts?.bypassPerfil && user.perfil === "OPERADOR") {
+    throw new AppError(
+      403,
+      "Operador não reverte transferência imediata — peça ao Gerente"
+    );
+  }
+
+  const { estorno, enviada, recebida } = await tiposSistema();
+  const motivo =
+    opts?.motivo?.trim() ||
+    `Reversão transferência imediata ${id.slice(0, 8)}`;
+
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM transferencias WHERE id = ${id}::uuid FOR UPDATE`;
+
+    const transf = await tx.transferencia.findUnique({
+      where: { id },
+      include: {
+        itens: {
+          include: {
+            produto: true,
+            series: true,
+            movimentacoes: true,
+          },
+        },
+      },
+    });
+    if (!transf) throw new AppError(404, "Transferência não encontrada");
+    if (transf.status === "CANCELADO") {
+      return { transferencia: transf, jaCancelada: true as const };
+    }
+    if (transf.status !== "RECEBIDO" || transf.creditoDestino !== "IMEDIATO") {
+      throw new AppError(
+        400,
+        "Só é possível reverter transferência RECEBIDO com crédito imediato"
+      );
+    }
+
+    for (const item of transf.itens) {
+      const enviadaMov = item.movimentacoes.find(
+        (m) =>
+          m.status === "CONCLUIDO" &&
+          m.operacao === "SAIDA" &&
+          m.tipoId === enviada.id
+      );
+      const recebidaMov = item.movimentacoes.find(
+        (m) =>
+          m.status === "CONCLUIDO" &&
+          m.operacao === "ENTRADA" &&
+          m.tipoId === recebida.id
+      );
+      if (!enviadaMov || !recebidaMov) {
+        throw new AppError(
+          500,
+          `Carga inconsistente para reverter produto ${item.produto.codigo}`
+        );
+      }
+
+      const qtd = Number(item.qtdEnviada);
+
+      // Desfaz entrada no destino
+      await aplicarSaldo(tx, {
+        produtoId: item.produtoId,
+        filialId: transf.destinoFilialId,
+        operacao: "SAIDA",
+        quantidade: qtd,
+      });
+      // Devolve à origem
+      await aplicarSaldo(tx, {
+        produtoId: item.produtoId,
+        filialId: transf.origemFilialId,
+        operacao: "ENTRADA",
+        quantidade: qtd,
+      });
+
+      const estornoDest = await tx.movimentacao.create({
+        data: {
+          produtoId: item.produtoId,
+          tipoId: estorno.id,
+          usuarioId: user.id,
+          filialId: transf.destinoFilialId,
+          quantidade: item.qtdEnviada,
+          precoUnitario: item.produto.precoUnitario,
+          operacao: "SAIDA",
+          observacao: motivo,
+          status: "CONCLUIDO",
+          estornoDeId: recebidaMov.id,
+          transferenciaItemId: item.id,
+        },
+      });
+      const estornoOrig = await tx.movimentacao.create({
+        data: {
+          produtoId: item.produtoId,
+          tipoId: estorno.id,
+          usuarioId: user.id,
+          filialId: transf.origemFilialId,
+          filialDestinoId: transf.destinoFilialId,
+          quantidade: item.qtdEnviada,
+          precoUnitario: item.produto.precoUnitario,
+          operacao: "ENTRADA",
+          observacao: motivo,
+          status: "CONCLUIDO",
+          estornoDeId: enviadaMov.id,
+          transferenciaItemId: item.id,
+        },
+      });
+
+      if (item.produto.controlaSerie) {
+        for (const link of item.series) {
+          await tx.unidadeSerie.update({
+            where: { id: link.unidadeSerieId },
+            data: {
+              status: SERIE_STATUS.EM_ESTOQUE,
+              filialId: transf.origemFilialId,
+              clienteId: null,
+            },
+          });
+          await tx.movimentacaoSerie.create({
+            data: {
+              movimentacaoId: estornoDest.id,
+              unidadeSerieId: link.unidadeSerieId,
+            },
+          });
+          await tx.movimentacaoSerie.create({
+            data: {
+              movimentacaoId: estornoOrig.id,
+              unidadeSerieId: link.unidadeSerieId,
+            },
+          });
+        }
+      }
+
+      await tx.movimentacao.update({
+        where: { id: enviadaMov.id },
+        data: { status: "ESTORNADO" },
+      });
+      await tx.movimentacao.update({
+        where: { id: recebidaMov.id },
+        data: { status: "ESTORNADO" },
+      });
+    }
+
+    const completa = await tx.transferencia.update({
+      where: { id },
+      data: { status: "CANCELADO" },
+      include: transfInclude,
+    });
+    return { transferencia: completa, jaCancelada: false as const };
+  });
+
+  return result;
 }
 
 /**

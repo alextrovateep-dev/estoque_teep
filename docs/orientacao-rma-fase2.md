@@ -1,57 +1,161 @@
-# Orientação — RMA (Fase 2)
+# Orientação — RMA
 
-Documento de planejamento. **Processo RMA completo (laudo/cobrança) ainda não implementado.**  
-**Rastreio por número de série** já existe no núcleo de estoque (produtos com `controlaSerie`).
+## Status
 
-## Contexto
+**MVP + Sem manutenção / Troca (Fases A–C) + defaults Fase D:** abertura (Entrada RMA), **Sem manutenção**, devolução/retorno (Saída RMA), **Troca**, links de histórico no detalhe, defaults de filiais via env (`RMA_FILIAL_*`) + `GET /rma/defaults`.
 
-Solicitação do financeiro: controlar entrada e saída de RMA com laudo técnico, cobrança e notas fiscais, tratando **itens de forma individual** (mesmo que a entrada inicial traga vários SKUs).
+**Fora deste plano:** OS/etapas de manutenção, envio a fornecedor, relatórios gerenciais, troca com “aguardar recebimento”.
 
-## Requisitos levantados
+---
 
-1. **Anexo do laudo técnico** (Larissa) por item em processo.
-2. **Cobrança Sim/Não** por item; se Sim: valor cobrado + número da NF de cobrança.
-3. **NF de entrada e NF de saída** do RMA no histórico (financeiro).
-4. **Status do item**: em análise / interno / descartado / devolvido ao cliente / enviado a fornecedor, etc.
-5. **Cliente dono** do item rastreável do início ao fim.
-6. Entrada pode agrupar vários itens; o processo RMA é **por unidade/linha**.
+## Princípios
 
-## Por que não cabe só em “Novo Lançamento”
+1. **Estoque = motor padrão** — transferência/lançamento entre filiais (`Filial`). Nada de “descarte paralelo”.
+2. **RMA = processo de negócio** — decide o caminho do item; fecha com observação quando o caso com o cliente encerra.
+3. **Fechar processo ≠ destino do item** — dá para trocar/descartar a série ruim e fechar o RMA depois (“substituído por SN xxx”).
+4. **Estoques configuráveis** — `RMA`, `DESC`, `PLN`, `TBO` (ou outros) só existem se cadastrados em Admin → Estoques. Origem da peça boa e destino de preparação **não são fixos** no código.
 
-- Um único anexo NF por movimentação não cobre laudo + orçamento por item.
-- Ciclo de vida longo (entrada → laudo → cobrança → saída/descarte) precisa de tela de gestão.
-- Séries já são obrigatórias nos lançamentos/retornos quando o produto tem `controlaSerie`; o que falta é o **workflow** RMA (status, laudo, cobrança).
+Cadastro dos locais: Admin → **Estoques** (model `Filial`).
 
-## Direção sugerida (fase 2)
+---
 
-### Modelo
+## Fluxo operacional acordado
 
-- `RmaProcesso` (cabeçalho: cliente, NF entrada, datas, responsável).
-- `RmaItem` (produto, vínculo com `UnidadeSerie` quando aplicável, status, laudo arquivo, cobrou?, valor, NF cobrança, NF saída, vínculos de movimentação de estoque).
+```text
+Cliente envia material
+        │
+        ▼
+ Expedição / Entrada RMA  →  série no estoque RMA (item EM_ESTOQUE)
+        │
+        ▼
+   Vai para manutenção? ──────────── Sim ──► (futuro: OS / etapas)
+        │
+       Não
+        │
+        ▼
+  [Sem manutenção]  (decisão no processo)
+        │
+        ├── Retornar ao cliente
+        │      └─ Saída RMA da mesma série (já existe)
+        │
+        └── Trocar
+               ├─ 1) Transferência configurável:
+               │      estoque origem (PLN | TBO | outro)
+               │         → destino preparação (em geral RMA)
+               │      série BOA
+               ├─ 2) Saída RMA / expedição da série BOA ao cliente
+               └─ 3) Transferência série RUIM: RMA → estoque descarte (DESC ou outro)
+```
 
-### Fluxos
+### Papel de cada peça na troca
 
-1. Abrir processo RMA (entrada no estoque “quarentena” ou filial) — reutilizar séries do lançamento de entrada/retorno.
-2. Registrar laudo/orçamento por item.
-3. Decidir: cobrar / devolver / descartar / enviar a fornecedor.
-4. Gerar/vincular movimentações de estoque e NFs.
+| Peça | O que acontece |
+|------|----------------|
+| Série **ruim** (entrou no RMA) | Transferência padrão → estoque de descarte (ex. `DESC`) |
+| Série **boa** (substituta) | Transferência padrão origem operacional → preparação (ex. `RMA`), depois sai para o cliente |
 
-### UI
+### Fechamento do processo
 
-- Lista de processos RMA + detalhe por item.
-- Filtros: cliente, status, cobrado, período.
-- Integração com upload tipado (`MovimentacaoAnexo` / anexos do item).
-- Consulta de série (`/estoque/series`) já disponível para rastreio operacional.
+- Independente do descarte.
+- Observação livre (ex.: “produto substituído pelo SN …”).
+- Itens podem estar `DEVOLVIDO`, `DESCARTADO` ou mistos; processo `FECHADO` quando o caso com o cliente encerra.
 
-### Fora de escopo imediato
+---
 
-- Integração fiscal automática (só registro dos números).
+## MVP já coberto
 
-## Relação com o estoque atual
+| Momento | Movimentação | Saldo |
+|---------|--------------|-------|
+| Cliente envia | **Entrada RMA** | Sobe no estoque RMA |
+| Devolve mesma série | **Saída RMA** (UI: Devolução) | Desce do RMA |
+| Cancelar | Estorno entradas (regras atuais) | — |
+| Financeiro | Laudo, cobrança, NFs | — |
 
-Reaproveitar: `UnidadeSerie` / `MovimentacaoSerie`, `MovimentacaoAnexo`, tipos com `requerCliente` / `ehRetornoDe`, e-mail/notificações, histórico por cliente.  
-Não reutilizar o vínculo demo/comodato como substituto do RMA — domínio diferente.
+## O que este plano adiciona
 
-## Próximo passo
+| Momento | UI (decisão) | Motor de estoque |
+|---------|--------------|------------------|
+| Sem manutenção | Ação no item/processo | Só muda estado de decisão (sem mover saldo) |
+| Retornar | Atalho (reusa devolução) | Saída RMA existente |
+| Trocar — trazer boa | Formulário: origem, destino prep., série boa | **Transferência padrão** |
+| Trocar — enviar ao cliente | Expedição / Saída | Saída RMA da série boa |
+| Trocar — destino da ruim | Destino configurável (ex. DESC) | **Transferência padrão** RMA → destino |
 
-Workshop com financeiro + operações para fechar status do item; depois backlog de implementação do processo RMA (laudo/cobrança) em cima do rastreio de série já entregue.
+---
+
+## Plano de implementação (fases)
+
+### Fase A — Modelo e estados (sem inventar estoque)
+
+- Revisar status de **item** para caber a decisão:
+  - Hoje: `ABERTO | EM_ESTOQUE | DEVOLVIDO | DESCARTADO | CANCELADO`
+  - Incluir algo como `SEM_MANUTENCAO` (ou flag/decisão) após o botão, **antes** de retornar/trocar.
+- Na troca, registrar vínculos:
+  - série ruim → movimento de transferência para descarte (`movDescarteId` ou id da transferência)
+  - série boa → série/movimentação de saída ao cliente
+- **Não** hardcodar siglas `PLN`/`DESC` na regra de negócio: resolver por `filialId` escolhido (seed só sugere RMA/DESC).
+
+### Fase B — API reusando transferência
+
+- Endpoint(s) no `/rma/...` que **orquestram** (não duplicam saldo):
+  1. `POST .../itens/:id/sem-manutencao`
+  2. `POST .../itens/:id/retornar` → delega à devolução atual
+  3. `POST .../itens/:id/trocar` com payload:
+     - `origemFilialId`, `destinoPreparacaoFilialId` (default RMA se configurado)
+     - `numeroSerieBoa` (ou `unidadeSerieId`)
+     - `destinoDescarteFilialId` (default DESC se existir no cadastro)
+- Internamente: chamar o **mesmo** serviço de transferência/movimentação usado no Novo Lançamento / transferências (respeitar série, saldo, conferência se aplicável).
+- Preferência na 1ª entrega: transferência **crédito imediato** na preparação (evitar travar troca em “aguardar recebimento”), configurável depois.
+
+### Fase C — UI no detalhe do RMA
+
+- No item `EM_ESTOQUE`: botão **Sem manutenção**.
+- Depois: **Retornar ao cliente** | **Trocar**.
+- Fluxo **Trocar**: picker de estoque origem (PLN/TBO/…), série boa disponível, destino descarte; confirmar.
+- **Histórico do item:** links Entrada / Saída / Transf. descarte (e série boa) → Movimentações ou Transferências.
+- Fechar processo: observação (já existe / reforçar) sem exigir descarte.
+
+### Fase D — Configuração leve (**implementado**)
+
+- Defaults por instalação via env (opcional):
+  - `RMA_FILIAL_PREPARACAO_ID` (estoque RMA)
+  - `RMA_FILIAL_DESCARTE_ID` (estoque descarte)
+  - `RMA_FILIAIS_ORIGEM_TROCA_IDS` (lista UUID separada por vírgula)
+- `GET /rma/defaults` — resolve env → fallback sigla `RMA`/`DESC` → estoques operacionais.
+- Sem defaults obrigatórios: usuário escolhe na hora; instalação sem DESC/RMA continua possível.
+- UI de troca pré-preenche origem/descarte a partir dos defaults.
+
+### Fora / depois
+
+- Manutenção com OS e etapas
+- Envio a fornecedor
+- Relatórios
+- Troca com transferência “aguardar recebimento” + conferência
+
+---
+
+## Critérios de aceite (Fases A–C)
+
+1. Item em RMA marcado **Sem manutenção** sem alterar saldo.
+2. **Retornar** continua baixando a mesma série do RMA (comportamento atual).
+3. **Trocar**:
+   - série boa sai do estoque origem e chega ao destino de preparação via transferência real;
+   - série boa é expedida ao cliente;
+   - série ruim vai ao estoque de descarte via transferência real;
+   - saldos e `UnidadeSerie.filialId` batem com o Dashboard.
+4. Processo pode ser **fechado** com observação após troca, sem botão mágico de estoque.
+5. Instalação sem filial `DESC`/`RMA`: não quebra; troca exige estoques escolhidos/cadastrados.
+
+---
+
+## Telas / API (referência)
+
+- UI: `/rma`, `/rma/novo`, `/rma/[id]`
+- API: `/rma/*`
+- Permissões: `rma`, `rma_cobranca`
+
+## Financeiro (já no MVP)
+
+- Anexo de **laudo** técnico
+- **Cobrança** Sim/Não; se Sim: valor + nº NF cobrança (`rma_cobranca`)
+- **NF entrada** e **NF saída** no histórico do processo

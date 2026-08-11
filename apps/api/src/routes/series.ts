@@ -1,16 +1,28 @@
 import { Router } from "express";
+import {
+  alocarSeriesSchema,
+  desfazerAlocacaoSerieSchema,
+} from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import {
   authenticate,
   requireFilialOperador,
   AuthedRequest,
 } from "../middleware/auth";
-import { AppError } from "../middleware/error";
+import { AppError, validateBody } from "../middleware/error";
 import { operadorFilialIds } from "../lib/filialScope";
+import { requireEstoqueParaOperar } from "../lib/estoqueGate";
+import {
+  alocarSeriesProduto,
+  consultarContadorSerie,
+  desfazerAlocacaoSerie,
+} from "../services/geracaoSerieService";
 
 export const seriesRouter = Router();
 
-seriesRouter.use(authenticate, requireFilialOperador);
+seriesRouter.use(authenticate, requireFilialOperador, requireEstoqueParaOperar);
+
+const BUSCA_LIMIT = 50;
 
 /** Busca unidades por número de série (parcial). */
 seriesRouter.get("/", async (req: AuthedRequest, res, next) => {
@@ -47,22 +59,24 @@ seriesRouter.get("/", async (req: AuthedRequest, res, next) => {
         cliente: { select: { id: true, nome: true } },
       },
       orderBy: { numeroSerie: "asc" },
-      take: 50,
+      take: BUSCA_LIMIT + 1,
     });
 
+    let data = rows;
     if (req.user!.perfil === "OPERADOR") {
       const ids = operadorFilialIds(req.user!);
-      res.json(
-        rows.filter(
-          (r) =>
-            r.status !== "EM_ESTOQUE" ||
-            (r.filialId && ids.includes(r.filialId))
-        )
+      data = rows.filter(
+        (r) =>
+          r.status !== "EM_ESTOQUE" ||
+          (r.filialId && ids.includes(r.filialId))
       );
-      return;
     }
 
-    res.json(rows);
+    const truncado = data.length > BUSCA_LIMIT;
+    res.json({
+      data: truncado ? data.slice(0, BUSCA_LIMIT) : data,
+      truncado,
+    });
   } catch (e) {
     next(e);
   }
@@ -101,6 +115,110 @@ seriesRouter.get("/disponiveis", async (req: AuthedRequest, res, next) => {
     next(e);
   }
 });
+
+/**
+ * Valida se um número de série está EM_ESTOQUE no produto/filial
+ * (uso no Novo Lançamento — feedback live em SAÍDA/TRANSFERÊNCIA).
+ */
+seriesRouter.post("/validar-saida", async (req: AuthedRequest, res, next) => {
+  try {
+    const produtoId = String(req.body?.produtoId || "");
+    const filialId = String(req.body?.filialId || "");
+    const numero = String(req.body?.numero || "").trim();
+    if (!produtoId || !filialId || !numero) {
+      throw new AppError(400, "produtoId, filialId e numero são obrigatórios");
+    }
+    if (req.user!.perfil === "OPERADOR") {
+      const ids = operadorFilialIds(req.user!);
+      if (!ids.includes(filialId)) {
+        throw new AppError(403, "Acesso negado a esta filial");
+      }
+    }
+
+    const unidade = await prisma.unidadeSerie.findFirst({
+      where: {
+        produtoId,
+        numeroSerie: { equals: numero, mode: "insensitive" },
+      },
+      select: {
+        id: true,
+        numeroSerie: true,
+        status: true,
+        filialId: true,
+      },
+    });
+
+    const ok =
+      !!unidade &&
+      unidade.status === "EM_ESTOQUE" &&
+      unidade.filialId === filialId;
+
+    res.json({
+      ok,
+      numeroSerie: unidade?.numeroSerie ?? numero,
+      status: unidade?.status ?? null,
+      filialId: unidade?.filialId ?? null,
+      motivo: ok
+        ? null
+        : !unidade
+          ? "Série não cadastrada para este produto"
+          : unidade.status !== "EM_ESTOQUE"
+            ? `Série com status ${unidade.status}`
+            : "Série não está neste estoque",
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+/**
+ * Aloca bloco de séries no contador (não cria UnidadeSerie).
+ * Use no Novo Lançamento (entrada) e confirme com a movimentação.
+ */
+seriesRouter.post(
+  "/alocar",
+  validateBody(alocarSeriesSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const out = await alocarSeriesProduto({
+        ...req.body,
+        usuarioId: req.user!.id,
+      });
+      res.status(201).json(out);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** Desfaz última alocação pendente (reverte contador se for o topo). */
+seriesRouter.post(
+  "/alocar/desfazer",
+  validateBody(desfazerAlocacaoSerieSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const out = await desfazerAlocacaoSerie({
+        alocacaoId: req.body.alocacaoId,
+        usuarioId: req.user!.id,
+        perfil: req.user!.perfil,
+      });
+      res.json(out);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+seriesRouter.get(
+  "/contador/:produtoId",
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await consultarContadorSerie(req.params.produtoId));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 seriesRouter.get("/:id/historico", async (req: AuthedRequest, res, next) => {
   try {
