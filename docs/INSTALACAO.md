@@ -1,4 +1,4 @@
-# Instalação — TEEP Estoque
+﻿# Instalação — TEEP Estoque
 
 **Regra do projeto:** a instalação **correta e confiável** é sempre a de **produção Docker** (`docker-compose.prod.yml` + `.env.production` + Caddy).  
 Não use `pnpm`/Postgres embutido nem o `docker-compose.yml` de desenvolvimento como “instalação do sistema” em servidor ou VM de validação.
@@ -71,7 +71,7 @@ docker compose version
 sudo mkdir -p /opt
 sudo chown "$USER:$USER" /opt
 cd /opt
-git clone <URL-DO-REPOSITORIO> estoque-teep
+git clone https://github.com/alextrovateep-dev/estoque_teep.git estoque-teep
 cd estoque-teep
 ```
 
@@ -137,7 +137,7 @@ Depois que o admin existir e a senha for trocada no sistema:
 | Bloco | Quando |
 |-------|--------|
 | `SMTP_*` / `EMAIL_*` | E-mail real (senha provisória, alertas) |
-| `ASSISTENTE_LLM_ENABLED` + chaves LLM | Assistente no Dashboard (F14) |
+| `ASSISTENTE_LLM_ENABLED` + chaves LLM | Assistente no Dashboard |
 | `RMA_FILIAL_*` | Só se precisar fixar UUIDs de estoque RMA/DESC |
 
 Referência completa comentada: `deploy/env.production.example`.
@@ -317,10 +317,15 @@ docker compose "${ENVF[@]}" up -d --build
 ./scripts/backup-prod.sh
 ```
 
-Gera pasta em `backups/<timestamp>/` (dump Postgres + uploads).  
-Cron sugerido: ver [F11-hardening-golive.md](./F11-hardening-golive.md).
+Gera `backups/<timestamp>/` com `postgres.dump`, `uploads.tar.gz` (se houver) e `MANIFEST.txt`.  
+Cron: [F11-hardening-golive.md](./F11-hardening-golive.md).  
+Restore / emergência: [recuperacao-backup.md](./recuperacao-backup.md).
 
-Restore: `./scripts/restore-prod.sh backups/<timestamp>`.
+```bash
+RESTORE_UPLOADS=1 ./scripts/restore-prod.sh backups/<timestamp>
+```
+
+Status rápido: `./scripts/check-status.sh` — [monitoramento-basico.md](./monitoramento-basico.md).
 
 ### 7.3 Atualizar o sistema
 
@@ -370,8 +375,9 @@ Mantenha `SEED_ON_START=0` em updates.
 | `deploy/env.production.example` | Modelo → `.env.production` |
 | `deploy/Caddyfile` | HTTPS Let's Encrypt (produção) |
 | `deploy/Caddyfile.lab` | HTTPS interno (VM lab) |
-| `scripts/backup-prod.sh` | Backup |
+| `scripts/backup-prod.sh` | Backup (`postgres.dump` + uploads) |
 | `scripts/restore-prod.sh` | Restore |
+| `scripts/check-status.sh` | Health / containers / último backup |
 | `apps/api/.env.example` | Só desenvolvimento local da API |
 | `docker-compose.yml` | Só desenvolvimento — **não** é instalação de servidor |
 

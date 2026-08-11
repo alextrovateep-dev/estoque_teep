@@ -1,4 +1,4 @@
-# Estoque TEEP
+﻿# Estoque TEEP
 
 Sistema de Controle de Estoque TEEP (greenfield).
 
@@ -30,9 +30,13 @@ Ou use Docker Compose com Postgres/Redis/API/Web (`docker compose up --build`).
 - Web: http://localhost:3000 (abre em login)
 - API: http://localhost:4000/health
 
-Login seed: `admin@teep.com.br` / `Admin@123`
+Login seed: `admin@teep.com.br` / `Admin@123` (ou `SEED_ADMIN_*`).
 
-Usuários de homologação (após `db:seed`):
+**Homologação / smoke F10** — estoques PLN/TBO, usuários gerente/operador e produtos demo **só** com:
+
+```bash
+SEED_DEMO=1 pnpm --filter @teep/api db:seed
+```
 
 | E-mail | Senha | Perfil |
 |--------|-------|--------|
@@ -40,7 +44,7 @@ Usuários de homologação (após `db:seed`):
 | `operador@teep.com.br` | `Oper@123` | OPERADOR (PLN) |
 | `operador.tbo@teep.com.br` | `Oper@123` | OPERADOR (TBO) |
 
-Demo de produtos/fornecedor (opcional): `SEED_DEMO=1 pnpm db:seed`
+Sem `SEED_DEMO`, o seed cria admin + tipos/categorias; estoques nascem no cadastro (Admin → Estoques).
 
 ## Homologação (F10)
 
@@ -52,7 +56,8 @@ Com a API no ar:
 pnpm smoke:f10
 ```
 
-Valida health → login → produto → init → compra/venda → saldo → transferência PLN→TBO.
+Valida health → login → produto → init → compra/venda → saldo → (se TBO) transferência PLN→TBO.  
+Requer seed com `SEED_DEMO=1` (ou PLN/TBO equivalentes). Detalhe: [`docs/F10-homologacao-checklist.md`](docs/F10-homologacao-checklist.md).
 
 ## Hardening / Go-Live (F11)
 
@@ -70,23 +75,27 @@ Produção: `https://estoque.teep.com.br` (web) · `https://api.estoque.teep.com
 
 ## Documentação
 
+Índice da pasta: [`docs/README.md`](docs/README.md) · telas: [`docs/mapa-telas.md`](docs/mapa-telas.md)
+
 | Doc | Conteúdo |
 |-----|----------|
-| [docs/INSTALACAO.md](docs/INSTALACAO.md) | **Instalação oficial** — Debian, Docker Compose prod, VM lab, `.env.production` |
-| [docs/F10-homologacao-checklist.md](docs/F10-homologacao-checklist.md) | Checklist de homologação / carga inicial |
-| [docs/F11-hardening-golive.md](docs/F11-hardening-golive.md) | F11 — staging, HTTPS, backup, cutover |
-| [docs/orientacao-senha-provisoria.md](docs/orientacao-senha-provisoria.md) | Senha provisória + troca no 1º acesso |
-| [docs/orientacao-email-notificacoes.md](docs/orientacao-email-notificacoes.md) | F9 + F9.1 (inbox, e-mail tipado, preview admin) — orientação Alex Trova |
-| [docs/orientacao-upload-midia.md](docs/orientacao-upload-midia.md) | F13 — avatar + fotos de produto |
-| [docs/orientacao-assistente-estoque-llm.md](docs/orientacao-assistente-estoque-llm.md) | F14 — assistente LLM no Dashboard |
-| [docs/orientacao-lancamento-unificado-f15.md](docs/orientacao-lancamento-unificado-f15.md) | F15 — lançamento unificado + transferência só conferência |
-| [docs/orientacao-recuperacao-backup.md](docs/orientacao-recuperacao-backup.md) | Procedimentos de recuperação de backup e emergência |
-| [docs/orientacao-monitoramento-basico.md](docs/orientacao-monitoramento-basico.md) | Monitoramento básico para sistemas internos |
-| [docs/orientacao-geracao-numero-serie.md](docs/orientacao-geracao-numero-serie.md) | Orientação — geração de séries no Novo Lançamento (**implementado**; impressão Zebra em standby) |
-| [docs/orientacao-impressao-zebra.md](docs/orientacao-impressao-zebra.md) | Orientação — impressão Zebra (**standby** — etiquetas no software da impressora) |
-| [docs/orientacao-rma-fase2.md](docs/orientacao-rma-fase2.md) | RMA — MVP + backlog |
+| [docs/mapa-telas.md](docs/mapa-telas.md) | Índice de telas → docs / permissões |
+| [docs/INSTALACAO.md](docs/INSTALACAO.md) | Instalação oficial (Docker prod / VM) |
+| [docs/F10-homologacao-checklist.md](docs/F10-homologacao-checklist.md) | Homologação / carga inicial |
+| [docs/F11-hardening-golive.md](docs/F11-hardening-golive.md) | Cutover / hardening |
+| [docs/recuperacao-backup.md](docs/recuperacao-backup.md) | Restore e emergência |
+| [docs/monitoramento-basico.md](docs/monitoramento-basico.md) | `/health`, `/ready`, `check-status` |
+| [docs/senha-provisoria.md](docs/senha-provisoria.md) | Senha provisória, 1º acesso e perfil |
+| [docs/alertas-email.md](docs/alertas-email.md) | Sino, fanout, e-mail, Admin E-mail |
+| [docs/upload-midia.md](docs/upload-midia.md) | Avatar, fotos, NF/docs/RMA |
+| [docs/assistente-llm.md](docs/assistente-llm.md) | Assistente LLM |
+| [docs/lancamento.md](docs/lancamento.md) | Novo Lançamento, transferências, aprovações |
+| [docs/geracao-numero-serie.md](docs/geracao-numero-serie.md) | Séries (alocar / desfazer) |
+| [docs/arvore-produto.md](docs/arvore-produto.md) | Árvore / BOM |
+| [docs/rma.md](docs/rma.md) | RMA + backlog curto |
+| [docs/backlog-impressao-zebra.md](docs/backlog-impressao-zebra.md) | Zebra ZD220 — backlog (a retomar) |
 
-Após F9.1: sino no header · Admin → **E-mail**. F13: foto no cadastro. F14: assistente no Dashboard (flag `ASSISTENTE_LLM_ENABLED`). F15: transferências criadas no Novo Lançamento. RMA: menu **RMA**.
+Sino no header · Admin → E-mail · fotos no cadastro · assistente no Dashboard (`ASSISTENTE_LLM_ENABLED`) · transferências pelo Novo Lançamento · menu RMA.
 
 ## Segurança Importante
 

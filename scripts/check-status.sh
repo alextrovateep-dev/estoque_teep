@@ -21,16 +21,17 @@ fi
 
 # 2. Verificar containers
 echo "1. Containers:"
+COMPOSE_ARGS=()
 if [ -f "docker-compose.prod.yml" ]; then
-    $DOCKER_COMPOSE_CMD -f docker-compose.prod.yml ps 2>/dev/null || echo "  (docker-compose.prod.yml não encontrado ou erro)"
+    COMPOSE_ARGS=(-f docker-compose.prod.yml)
+    if [ -f ".env.production" ]; then
+        COMPOSE_ARGS+=(--env-file .env.production)
+    fi
+    $DOCKER_COMPOSE_CMD "${COMPOSE_ARGS[@]}" ps 2>/dev/null || echo "  (erro ao listar containers prod)"
+elif [ -f "docker-compose.yml" ]; then
+    $DOCKER_COMPOSE_CMD -f docker-compose.yml ps 2>/dev/null || echo "  (erro ao listar containers)"
 else
-    echo "  docker-compose.prod.yml não encontrado"
-fi
-
-if [ -f "docker-compose.yml" ]; then
-    $DOCKER_COMPOSE_CMD ps 2>/dev/null || echo "  (docker-compose.yml não encontrado ou erro)"
-else
-    echo "  docker-compose.yml não encontrado"
+    echo "  Nenhum docker-compose encontrado"
 fi
 
 echo ""
@@ -46,10 +47,11 @@ if [ -d "backups" ]; then
         LATEST_DATE=$(basename "$LATEST_BACKUP")
         echo "  Último backup: $LATEST_DATE"
         
-        # Verificar integridade básica
-        if [ -f "$LATEST_BACKUP/database.dump" ]; then
-            DB_SIZE=$(du -h "$LATEST_BACKUP/database.dump" | cut -f1)
+        if [ -f "$LATEST_BACKUP/postgres.dump" ]; then
+            DB_SIZE=$(du -h "$LATEST_BACKUP/postgres.dump" | cut -f1)
             echo "  Tamanho DB: $DB_SIZE"
+        elif [ -f "$LATEST_BACKUP/database.dump" ]; then
+            echo "  ⚠️  Encontrado database.dump (nome antigo); script atual usa postgres.dump"
         fi
         
         if [ -f "$LATEST_BACKUP/uploads.tar.gz" ]; then
@@ -67,19 +69,22 @@ echo ""
 
 # 4. Verificar logs recentes (apenas erros)
 echo "3. Logs recentes (últimas 24h, apenas erros):"
-if [ -f "docker-compose.yml" ] || [ -f "docker-compose.prod.yml" ]; then
-    # Tentar pegar logs do serviço api
-    for compose_file in "docker-compose.prod.yml" "docker-compose.yml"; do
-        if [ -f "$compose_file" ]; then
-            echo "  Usando $compose_file:"
-            $DOCKER_COMPOSE_CMD -f "$compose_file" logs --since=24h api 2>/dev/null | \
-                grep -i -E "(error|fail|exception|warn)" | \
-                tail -5 | \
-                while read line; do echo "    $line"; done || \
-                echo "    ✅ Nenhum erro encontrado"
-            break
-        fi
-    done
+if [ -f "docker-compose.prod.yml" ]; then
+    LOG_ARGS=(-f docker-compose.prod.yml)
+    [ -f ".env.production" ] && LOG_ARGS+=(--env-file .env.production)
+    echo "  Usando docker-compose.prod.yml:"
+    $DOCKER_COMPOSE_CMD "${LOG_ARGS[@]}" logs --since=24h api 2>/dev/null | \
+        grep -i -E "(error|fail|exception|warn)" | \
+        tail -5 | \
+        while read -r line; do echo "    $line"; done || \
+        echo "    ✅ Nenhum erro encontrado"
+elif [ -f "docker-compose.yml" ]; then
+    echo "  Usando docker-compose.yml:"
+    $DOCKER_COMPOSE_CMD -f docker-compose.yml logs --since=24h api 2>/dev/null | \
+        grep -i -E "(error|fail|exception|warn)" | \
+        tail -5 | \
+        while read -r line; do echo "    $line"; done || \
+        echo "    ✅ Nenhum erro encontrado"
 else
     echo "  Nenhum arquivo docker-compose encontrado"
 fi

@@ -63,10 +63,12 @@ if (Test-Path "backups") {
         Write-Host "  Último backup: $($latestBackup.Name)" -ForegroundColor Gray
         
         # Verificar integridade básica
-        $dbFile = Join-Path $latestBackup.FullName "database.dump"
+        $dbFile = Join-Path $latestBackup.FullName "postgres.dump"
         if (Test-Path $dbFile) {
             $dbSize = (Get-Item $dbFile).Length / 1MB
             Write-Host "  Tamanho DB: {0:N2} MB" -f $dbSize -ForegroundColor Gray
+        } elseif (Test-Path (Join-Path $latestBackup.FullName "database.dump")) {
+            Write-Host "  ⚠️  Encontrado database.dump (nome antigo); script atual usa postgres.dump" -ForegroundColor Yellow
         }
         
         $uploadsFile = Join-Path $latestBackup.FullName "uploads.tar.gz"

@@ -1,50 +1,42 @@
-# F11 — Hardening e Go-Live
+﻿# F11 — Hardening e Go-Live
 
-**Status:** entregáveis de infra no repo. Cutover no VPS/DNS fica a cargo da operação.  
-**Plano:** D13, D46, RNF13/RNF16; fase F11.
+**Status:** entregáveis de infra no repo. Cutover no VPS/DNS fica a cargo da operação.
 
-**Instalação passo a passo (Debian / Docker / VM):** [INSTALACAO.md](./INSTALACAO.md) — este F11 cobre hardening e cutover; o INSTALACAO é a regra oficial de subir o stack.
+**Instalação passo a passo (Debian / Docker / VM):** [INSTALACAO.md](./INSTALACAO.md) — **não** repetir o `up` aqui; este arquivo é só hardening + checklist de cutover.
 
 ## Objetivo
 
-Subir staging/produção com HTTPS, secrets fortes, backup (DB + `uploads/`) e checklist de cutover Go-Live A ou B.
+Confirmar HTTPS, secrets fortes, backup (DB + uploads) e cutover Go-Live A ou B **depois** que o stack já sobe conforme o INSTALACAO.
 
-## Arquivos
+## Arquivos (referência)
 
 | Item | Caminho |
 |------|---------|
 | Compose produção | `docker-compose.prod.yml` |
-| Caddy (HTTPS) | `deploy/Caddyfile` |
-| Env de exemplo (prod) | `deploy/env.production.example` → `.env.production` |
-| Env de exemplo (dev API) | `apps/api/.env.example` → `apps/api/.env` |
-| Env de exemplo (dev Web) | `apps/web/.env.local.example` → `apps/web/.env.local` |
-| Backup | `scripts/backup-prod.sh` |
-| Restore | `scripts/restore-prod.sh` |
+| Caddy (HTTPS) | `deploy/Caddyfile` (lab: `deploy/Caddyfile.lab`) |
+| Env | `deploy/env.production.example` → `.env.production` |
+| Backup / restore | `scripts/backup-prod.sh`, `scripts/restore-prod.sh` |
+| Status rápido | `scripts/check-status.sh` / `scripts/check-status.ps1` |
 
-## Domínios (D13)
+Detalhe operacional: [recuperacao-backup.md](./recuperacao-backup.md) · [monitoramento-basico.md](./monitoramento-basico.md).
+
+## Domínios
 
 | Host | Serviço |
 |------|---------|
 | `estoque.teep.com.br` | Web (Next.js) |
-| `api.estoque.teep.com.br` | API + Socket.io |
+| `api.estoque.teep.com.br` | API + Socket.io + `/uploads` |
 
-DNS: registros **A** (e **AAAA** se IPv6) do VPS para os dois hosts. Caddy emite certificado Let's Encrypt automaticamente (portas 80/443 abertas).
+DNS **A** (e **AAAA** se IPv6) → IP do VPS. Caddy emite Let's Encrypt com portas 80/443 abertas.
 
-## Subir produção
+## Hardening na API (já no código / compose)
 
-1. No VPS: clone do repo + Docker instalado.
-2. `cp deploy/env.production.example .env.production` e preencha JWT (≥32 chars), `POSTGRES_PASSWORD`, `SEED_ADMIN_PASSWORD`.
-3. Primeiro boot: `SEED_ON_START=1` no `.env.production`.
-4. Subir:
+- `helmet` + `trust proxy` em produção
+- `assertProductionEnv`: rejeita JWT fraco/`change-me` e `CORS_ORIGIN` com localhost
+- Seed só com `SEED_ON_START=1` (depois `0`)
+- Postgres/Redis **sem** portas públicas no compose de prod
 
-```bash
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-```
-
-5. Após admin criado e senhas trocadas: `SEED_ON_START=0` e `docker compose ... up -d` (recria só a API se necessário).
-6. Smoke: `curl -sS https://api.estoque.teep.com.br/health` e login em `https://estoque.teep.com.br`.
-
-## Backup (D46)
+## Backup
 
 Cron diário no host (exemplo 02:30 UTC):
 
@@ -52,42 +44,35 @@ Cron diário no host (exemplo 02:30 UTC):
 0 2 * * * cd /opt/estoque-teep && ./scripts/backup-prod.sh >> /var/log/teep-backup.log 2>&1
 ```
 
-Inclui `pg_dump` (`-Fc`) + tarball do volume `api_uploads`. Retenção padrão: 14 dias (`RETAIN_DAYS`).
+Gera `backups/<stamp>/` com `postgres.dump`, `uploads.tar.gz` (se houver volume) e `MANIFEST.txt`. Retenção padrão: 14 dias (`RETAIN_DAYS`).
 
-Restore:
-
-```bash
-./scripts/restore-prod.sh backups/20260101T120000Z
-RESTORE_UPLOADS=1 ./scripts/restore-prod.sh backups/20260101T120000Z
-```
-
-## Hardening na API
-
-- `helmet` + `trust proxy` em produção
-- `assertProductionEnv`: rejeita JWT fraco/`change-me` e `CORS_ORIGIN` com localhost
-- Seed **não** roda em todo start (`SEED_ON_START`)
-- Postgres/Redis sem portas públicas no compose de prod
+Restore e emergência: [recuperacao-backup.md](./recuperacao-backup.md).
 
 ## Checklist de cutover
 
 ### Pré
-- [ ] Go-Live **A** (1 filial) ou **B** (≥2 filiais + F8/F15)
+
+- [ ] Stack no ar via [INSTALACAO.md](./INSTALACAO.md)
+- [ ] Go-Live **A** (1 estoque/filial) ou **B** (≥2 + transferência)
 - [ ] DNS propagado; HTTPS verde nos dois hosts
-- [ ] Secrets fortes; senha admin seed trocada
-- [ ] Backup dry-run OK
-- [ ] `pnpm smoke:f10` apontando para a API de staging (`API_URL=...`)
+- [ ] Secrets fortes; senha admin seed trocada; `SEED_ON_START=0`
+- [ ] Backup dry-run OK (`./scripts/backup-prod.sh`)
+- [ ] Smoke: `API_URL=https://api.… pnpm smoke:f10` (máquina com pnpm)
 
 ### Go-Live A
+
 - [ ] Cadastros + init da filial
 - [ ] Compra/venda + saldo
 - [ ] Smoke PC + mobile no navegador
 
 ### Go-Live B (além de A)
+
 - [ ] 2ª filial ativa
 - [ ] Transferência via Novo Lançamento (imediato + aguardar) + conferência
-- [ ] Alertas F9 recomendados
+- [ ] Alertas / e-mail conforme operação
 
 ### Pós
+
 - [ ] Cron de backup ativo
-- [ ] SMTP real (opcional) + preview admin F9.1
-- [ ] Monitorar `/ready` e logs da API
+- [ ] SMTP real (opcional) + Admin → E-mail
+- [ ] Monitorar `/health`, `/ready` e logs da API ([monitoramento](./monitoramento-basico.md))
