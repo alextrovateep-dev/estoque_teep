@@ -1,5 +1,5 @@
 /**
- * Smoke RMA — Sem manutenção + Troca
+ * Smoke RMA — fluxo por item: laudo → notificar → aprovar → manutenção → troca
  *
  * Pré: API no ar, migrate + seed (SEED_DEMO=1 recomendado).
  * Uso: pnpm exec tsx scripts/smoke-rma-troca.ts
@@ -13,6 +13,12 @@ dotenv.config({ path: path.resolve(__dirname, "../.env") });
 const API = process.env.API_URL || "http://localhost:4000";
 const EMAIL = process.env.SEED_ADMIN_EMAIL || "admin@teep.com.br";
 const SENHA = process.env.SEED_ADMIN_PASSWORD || "Admin@123";
+
+/** PDF mínimo válido para upload de laudo */
+const MIN_PDF = Buffer.from(
+  "%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n",
+  "utf8"
+);
 
 type Json = Record<string, unknown>;
 
@@ -65,19 +71,44 @@ async function req<T = Json>(
   return data as T;
 }
 
+async function uploadLaudo(token: string): Promise<string> {
+  const fd = new FormData();
+  fd.append(
+    "file",
+    new Blob([MIN_PDF], { type: "application/pdf" }),
+    "smoke-laudo.pdf"
+  );
+  fd.append("context", "rma");
+  fd.append("kind", "laudo");
+  const res = await fetch(`${API}/upload`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: fd,
+  });
+  const data = (await res.json()) as { url?: string };
+  if (!res.ok || !data.url) fail("upload laudo falhou", data);
+  return data.url;
+}
+
 async function main() {
-  console.log(`\nRMA troca smoke → ${API}\n`);
+  console.log(`\nRMA troca smoke (etapas por item) → ${API}\n`);
 
   await req("/health");
   ok("health");
 
-  const login = await req<{ accessToken: string }>("/auth/login", {
-    method: "POST",
-    body: { email: EMAIL, senha: SENHA },
-  });
+  const login = await req<{ accessToken: string; user: { id: string } }>(
+    "/auth/login",
+    {
+      method: "POST",
+      body: { email: EMAIL, senha: SENHA },
+    }
+  );
   const token = login.accessToken;
+  const comercialId = login.user?.id;
   if (!token) fail("login sem accessToken");
+  if (!comercialId) fail("login sem user.id");
   ok("login admin");
+  ok(`comercial ${comercialId.slice(0, 8)}`);
 
   const filiais = await req<
     Array<{ id: string; sigla: string; nome: string }>
@@ -109,7 +140,6 @@ async function main() {
   }
   ok(`cliente ${clienteId}`);
 
-  // Produto com série + estoque em PLN
   const cats = await req<Array<{ id: string }>>("/categorias", { token });
   if (!cats.length) fail("Sem categorias — rode seed");
   const suf = Date.now().toString(36).slice(-6).toUpperCase();
@@ -138,7 +168,6 @@ async function main() {
   const snRuim = `RUIM-${suf}-001`;
   const snBoa = `BOA-${suf}-001`;
 
-  // Peça boa disponível em PLN
   await req("/movimentacoes", {
     method: "POST",
     token,
@@ -154,13 +183,13 @@ async function main() {
   });
   ok(`peça boa ${snBoa} em PLN`);
 
-  // Abre RMA com série ruim NOVA (entrada RMA cria no estoque RMA)
   const processo = await req<{
     id: string;
     status: string;
     itens: Array<{
       id: string;
       status: string;
+      etapa?: string;
       unidadeSerie?: { numeroSerie: string };
     }>;
   }>("/rma", {
@@ -168,6 +197,7 @@ async function main() {
     token,
     body: {
       clienteId,
+      responsavelComercialId: comercialId,
       itens: [{ produtoId: prod.id, series: [snRuim] }],
     },
     expectStatus: 201,
@@ -180,28 +210,61 @@ async function main() {
       processo.itens[0]
     );
   }
-  ok(`RMA aberto ${processo.id.slice(0, 8)} — ${snRuim} EM_ESTOQUE`);
+  if ((processo.itens[0].etapa || "") !== "AGUARDANDO_LAUDO") {
+    fail(
+      `etapa esperada AGUARDANDO_LAUDO, veio ${processo.itens[0].etapa}`,
+      processo.itens[0]
+    );
+  }
+  ok(`RMA aberto ${processo.id.slice(0, 8)} — ${snRuim} AGUARDANDO_LAUDO`);
 
-  // Sem manutenção
-  const aposSem = await req<{
-    itens: Array<{ id: string; status: string }>;
-  }>(`/rma/${processo.id}/sem-manutencao`, {
+  const laudoUrl = await uploadLaudo(token);
+  await req(`/rma/${processo.id}/anexos`, {
     method: "POST",
     token,
-    body: { itemIds: [itemId] },
+    body: {
+      tipo: "LAUDO",
+      arquivo: laudoUrl,
+      label: "smoke-laudo.pdf",
+      itemId,
+    },
   });
-  const stSem = aposSem.itens.find((i) => i.id === itemId)?.status;
-  if (stSem !== "SEM_MANUTENCAO") {
-    fail(`esperado SEM_MANUTENCAO, veio ${stSem}`, aposSem.itens);
-  }
-  ok("sem manutenção");
+  ok("laudo anexado");
 
-  // Troca: boa de PLN → RMA → cliente; ruim → DESC
+  await req(`/rma/${processo.id}/notificar-laudos`, {
+    method: "POST",
+    token,
+  });
+  ok("laudos notificados");
+
+  const aposNotify = await req<{
+    itens: Array<{ id: string; etapa?: string }>;
+  }>(`/rma/${processo.id}`, { token });
+  const etNotify = aposNotify.itens.find((i) => i.id === itemId)?.etapa;
+  if (etNotify !== "AGUARDANDO_APROVACAO") {
+    fail(`esperado AGUARDANDO_APROVACAO, veio ${etNotify}`, aposNotify.itens);
+  }
+  ok("etapa AGUARDANDO_APROVACAO");
+
+  await req(`/rma/${processo.id}/itens/${itemId}/aprovacao`, {
+    method: "POST",
+    token,
+    body: { decisao: "APROVADA", observacao: "Smoke: aprovação item" },
+  });
+  ok("item APROVADO → AGUARDANDO_MANUTENCAO");
+
+  await req(`/rma/${processo.id}/itens/${itemId}/manutencao-realizada`, {
+    method: "POST",
+    token,
+  });
+  ok("manutenção realizada → AGUARDANDO_ENVIO");
+
   const aposTroca = await req<{
     status: string;
     itens: Array<{
       id: string;
       status: string;
+      etapa?: string;
       movSaidaId?: string | null;
       movDescarteId?: string | null;
       unidadeSerie?: { numeroSerie: string } | null;
@@ -223,6 +286,9 @@ async function main() {
   if (item!.status !== "DESCARTADO") {
     fail(`esperado DESCARTADO, veio ${item!.status}`, item);
   }
+  if (item!.etapa !== "FINALIZADO") {
+    fail(`esperado FINALIZADO, veio ${item!.etapa}`, item);
+  }
   if (!item!.movSaidaId || !item!.movDescarteId) {
     fail("movSaidaId/movDescarteId ausentes", item);
   }
@@ -233,11 +299,13 @@ async function main() {
     `troca OK — ruim ${item!.unidadeSerie?.numeroSerie} → DESC; boa ${snBoa} ao cliente`
   );
 
-  // Séries: boa SAIDO; ruim no DESC
-  const serieBoa = await req<{ data: Array<{ numeroSerie: string; status: string; filial?: { sigla: string } }> }>(
-    `/series?q=${encodeURIComponent(snBoa)}`,
-    { token }
-  );
+  const serieBoa = await req<{
+    data: Array<{
+      numeroSerie: string;
+      status: string;
+      filial?: { sigla: string };
+    }>;
+  }>(`/series?q=${encodeURIComponent(snBoa)}`, { token });
   const boaRow = serieBoa.data?.find(
     (s) => s.numeroSerie.toUpperCase() === snBoa
   );
@@ -264,13 +332,12 @@ async function main() {
   }
   ok(`série ruim EM_ESTOQUE em DESC`);
 
-  // Processo deve fechar (único item resolvido)
   if (aposTroca.status !== "FECHADO") {
     fail(`processo esperado FECHADO, veio ${aposTroca.status}`, aposTroca);
   }
   ok("processo FECHADO");
 
-  console.log("\n✅ Smoke RMA troca passou.\n");
+  console.log("\n✅ Smoke RMA troca (por item) passou.\n");
 }
 
 main().catch((e) => {

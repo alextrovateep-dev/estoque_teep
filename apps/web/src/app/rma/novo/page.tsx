@@ -12,6 +12,8 @@ type Cliente = {
   tipo: string;
   documento?: string | null;
   ativo: boolean;
+  responsavelComercialId?: string | null;
+  responsavelComercial?: { id: string; nome: string } | null;
 };
 type Produto = {
   id: string;
@@ -19,6 +21,8 @@ type Produto = {
   descricao: string;
   controlaSerie: boolean;
 };
+
+type UsuarioDest = { id: string; nome: string; email: string };
 
 type LinhaForm = {
   key: string;
@@ -48,9 +52,15 @@ export default function RmaNovoPage() {
   const [clienteId, setClienteId] = useState("");
   const [clienteQuery, setClienteQuery] = useState("");
   const [clienteOpen, setClienteOpen] = useState(false);
+  const [comercialId, setComercialId] = useState("");
   const [nfEntrada, setNfEntrada] = useState("");
   const [nfArquivo, setNfArquivo] = useState<string | null>(null);
   const [observacao, setObservacao] = useState("");
+  const [destPadrao, setDestPadrao] = useState<UsuarioDest[]>([]);
+  const [destTodos, setDestTodos] = useState<UsuarioDest[]>([]);
+  const [destIds, setDestIds] = useState<string[]>([]);
+  const [incluirAberto, setIncluirAberto] = useState(false);
+  const [incluirQuery, setIncluirQuery] = useState("");
   const [totalNota, setTotalNota] = useState("");
   const [linhas, setLinhas] = useState<LinhaForm[]>([]);
   const [error, setError] = useState("");
@@ -71,6 +81,18 @@ export default function RmaNovoPage() {
         )
       )
       .catch((e) => setError(e instanceof Error ? e.message : "Erro"));
+    Promise.all([
+      api<UsuarioDest[]>("/rma/destinatarios-padrao"),
+      api<UsuarioDest[]>("/rma/usuarios-destinatarios"),
+    ])
+      .then(([padrao, todos]) => {
+        setDestPadrao(padrao);
+        setDestTodos(todos);
+        setDestIds(padrao.map((u) => u.id));
+      })
+      .catch(() => {
+        /* destinatários opcionais na UI — API usa criador se vazio */
+      });
   }, []);
 
   const clientesFiltrados = useMemo(() => {
@@ -253,6 +275,10 @@ export default function RmaNovoPage() {
       setError("Selecione o cliente");
       return;
     }
+    if (!comercialId) {
+      setError("Selecione o responsável comercial");
+      return;
+    }
     if (linhas.length === 0) {
       setError("Informe o total de produtos na nota de RMA");
       return;
@@ -294,17 +320,19 @@ export default function RmaNovoPage() {
         payloadItens.push({ produtoId, series: [sn] });
       }
 
-      const created = await api<{ id: string }>("/rma", {
+      await api<{ id: string }>("/rma", {
         method: "POST",
         body: JSON.stringify({
           clienteId,
+          responsavelComercialId: comercialId,
           nfEntradaNumero: nfEntrada.trim() || null,
           nfEntradaArquivo: nfArquivo,
           observacao: observacao.trim() || null,
+          destinatarioIds: destIds,
           itens: payloadItens,
         }),
       });
-      router.push(`/rma/${created.id}`);
+      router.push("/rma?ok=criado");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
       savingRef.current = false;
@@ -329,49 +357,81 @@ export default function RmaNovoPage() {
         onSubmit={(e) => void onSubmit(e)}
         className="mt-4 space-y-4 rounded-xl border bg-white p-4"
       >
-        <div className="relative">
-          <label className="mb-1 block text-sm font-medium">Cliente *</label>
-          <input
-            className="w-full rounded-lg border px-3 py-2 text-sm"
-            value={clienteQuery}
-            onChange={(e) => {
-              setClienteQuery(e.target.value);
-              setClienteId("");
-              setClienteOpen(true);
-            }}
-            onFocus={() => setClienteOpen(true)}
-            onBlur={() => setTimeout(() => setClienteOpen(false), 150)}
-            placeholder="Buscar cliente…"
-            autoComplete="off"
-          />
-          {clienteOpen && clienteQuery.trim() && !clienteId && (
-            <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-lg border bg-white shadow-lg">
-              {clientesFiltrados.length === 0 ? (
-                <li className="px-3 py-2 text-sm text-slate-500">
-                  Nenhum cliente encontrado
-                </li>
-              ) : (
-                clientesFiltrados.map((c) => (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        setClienteId(c.id);
-                        setClienteQuery(
-                          c.documento ? `${c.nome} · ${c.documento}` : c.nome
-                        );
-                        setClienteOpen(false);
-                      }}
-                    >
-                      {c.nome}
-                    </button>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="relative">
+            <label className="mb-1 block text-sm font-medium">Cliente *</label>
+            <input
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              value={clienteQuery}
+              onChange={(e) => {
+                setClienteQuery(e.target.value);
+                setClienteId("");
+                setComercialId("");
+                setClienteOpen(true);
+              }}
+              onFocus={() => setClienteOpen(true)}
+              onBlur={() => setTimeout(() => setClienteOpen(false), 150)}
+              placeholder="Buscar cliente…"
+              autoComplete="off"
+            />
+            {clienteOpen && clienteQuery.trim() && !clienteId && (
+              <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-lg border bg-white shadow-lg">
+                {clientesFiltrados.length === 0 ? (
+                  <li className="px-3 py-2 text-sm text-slate-500">
+                    Nenhum cliente encontrado
                   </li>
-                ))
-              )}
-            </ul>
-          )}
+                ) : (
+                  clientesFiltrados.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setClienteId(c.id);
+                          setClienteQuery(
+                            c.documento ? `${c.nome} · ${c.documento}` : c.nome
+                          );
+                          setClienteOpen(false);
+                          const padrao =
+                            c.responsavelComercialId ||
+                            c.responsavelComercial?.id ||
+                            "";
+                          setComercialId(padrao);
+                        }}
+                      >
+                        {c.nome}
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            )}
+          </div>
+
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium">
+              Responsável comercial *
+            </span>
+            <select
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              value={comercialId}
+              onChange={(e) => setComercialId(e.target.value)}
+              required
+            >
+              <option value="">Selecione…</option>
+              {destTodos.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {u.nome}
+                  {u.email ? ` · ${u.email}` : ""}
+                </option>
+              ))}
+            </select>
+            <span className="mt-0.5 block text-[11px] text-slate-500">
+              Acompanha a aprovação da manutenção. Pré-preenche do cadastro do
+              cliente.
+            </span>
+          </label>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
@@ -430,8 +490,8 @@ export default function RmaNovoPage() {
             placeholder="Ex.: 3"
           />
           <span className="mt-1 block text-xs text-slate-500">
-            Ao preencher, abre uma linha por produto/série (máx. {MAX_ITENS_NOTA}
-            ).
+            Ao preencher, abre um card por produto/série (máx.{" "}
+            {MAX_ITENS_NOTA}).
           </span>
         </label>
 
@@ -440,98 +500,100 @@ export default function RmaNovoPage() {
             <h2 className="text-sm font-semibold text-slate-900">
               Produtos da nota ({linhas.length})
             </h2>
-            {linhas.map((it, idx) => (
-              <div
-                key={it.key}
-                className="space-y-2 rounded-lg border border-slate-200 bg-slate-50/50 p-3"
-              >
-                <p className="text-xs font-medium text-slate-500">
-                  Item {idx + 1}
-                </p>
-                <div className="relative">
-                  <label className="mb-1 block text-sm font-medium">
-                    Código do produto *
-                  </label>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                    value={it.produtoQuery}
-                    placeholder="Código ou descrição…"
-                    autoComplete="off"
-                    onChange={(e) => onProdutoQuery(idx, e.target.value)}
-                    onFocus={() =>
-                      setLinhas((prev) =>
-                        prev.map((row, i) =>
-                          i === idx ? { ...row, open: true } : row
-                        )
-                      )
-                    }
-                    onBlur={() =>
-                      setTimeout(
-                        () =>
-                          setLinhas((prev) =>
-                            prev.map((row, i) =>
-                              i === idx ? { ...row, open: false } : row
-                            )
-                          ),
-                        150
-                      )
-                    }
-                  />
-                  {it.open && it.produtoQuery.trim() && !it.produtoId && (
-                    <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-lg border bg-white shadow-lg">
-                      {it.sugestoes.length === 0 ? (
-                        <li className="px-3 py-2 text-sm text-slate-500">
-                          Nenhum produto com série encontrado
-                        </li>
-                      ) : (
-                        it.sugestoes.map((p) => (
-                          <li key={p.id}>
-                            <button
-                              type="button"
-                              className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                selecionarProduto(idx, p);
-                              }}
-                            >
-                              <span className="font-mono text-xs">
-                                {p.codigo}
-                              </span>{" "}
-                              — {p.descricao}
-                            </button>
-                          </li>
-                        ))
-                      )}
-                    </ul>
-                  )}
-                </div>
-                <label className="block text-sm">
-                  <span className="mb-1 block font-medium">
-                    Número de série *
-                  </span>
-                  <input
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm"
-                    value={it.numeroSerie}
-                    onChange={(e) =>
-                      setLinhas((prev) =>
-                        prev.map((row, i) =>
-                          i === idx
-                            ? { ...row, numeroSerie: e.target.value }
-                            : row
-                        )
-                      )
-                    }
-                    placeholder="S/N deste equipamento"
-                    autoComplete="off"
-                  />
-                </label>
-                {it.produtoQuery.trim() && !it.produtoId ? (
-                  <p className="text-xs text-amber-800">
-                    Selecione o produto na lista de sugestões (não basta digitar).
+            <div className="grid gap-3 sm:grid-cols-2">
+              {linhas.map((it, idx) => (
+                <div
+                  key={it.key}
+                  className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+                >
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Item {idx + 1}
                   </p>
-                ) : null}
-              </div>
-            ))}
+                  <div className="relative min-w-0">
+                    <label className="mb-1 block text-xs font-medium text-slate-700">
+                      Código do produto *
+                    </label>
+                    <input
+                      className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-sm"
+                      value={it.produtoQuery}
+                      placeholder="Código ou descrição…"
+                      autoComplete="off"
+                      onChange={(e) => onProdutoQuery(idx, e.target.value)}
+                      onFocus={() =>
+                        setLinhas((prev) =>
+                          prev.map((row, i) =>
+                            i === idx ? { ...row, open: true } : row
+                          )
+                        )
+                      }
+                      onBlur={() =>
+                        setTimeout(
+                          () =>
+                            setLinhas((prev) =>
+                              prev.map((row, i) =>
+                                i === idx ? { ...row, open: false } : row
+                              )
+                            ),
+                          150
+                        )
+                      }
+                    />
+                    {it.open && it.produtoQuery.trim() && !it.produtoId && (
+                      <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border bg-white shadow-lg">
+                        {it.sugestoes.length === 0 ? (
+                          <li className="px-3 py-2 text-sm text-slate-500">
+                            Nenhum produto com série encontrado
+                          </li>
+                        ) : (
+                          it.sugestoes.map((p) => (
+                            <li key={p.id}>
+                              <button
+                                type="button"
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  selecionarProduto(idx, p);
+                                }}
+                              >
+                                <span className="font-mono text-xs">
+                                  {p.codigo}
+                                </span>{" "}
+                                — {p.descricao}
+                              </button>
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                  <label className="block min-w-0 text-xs">
+                    <span className="mb-1 block font-medium text-slate-700">
+                      Número de série *
+                    </span>
+                    <input
+                      className="w-full rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-sm"
+                      value={it.numeroSerie}
+                      onChange={(e) =>
+                        setLinhas((prev) =>
+                          prev.map((row, i) =>
+                            i === idx
+                              ? { ...row, numeroSerie: e.target.value }
+                              : row
+                          )
+                        )
+                      }
+                      placeholder="S/N deste equipamento"
+                      autoComplete="off"
+                    />
+                  </label>
+                  {it.produtoQuery.trim() && !it.produtoId ? (
+                    <p className="text-[11px] text-amber-800">
+                      Selecione o produto na lista (não basta digitar).
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -540,6 +602,102 @@ export default function RmaNovoPage() {
             {error}
           </p>
         )}
+
+        <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-slate-800">
+                Quem será notificado
+              </p>
+              <p className="text-[11px] text-slate-500">
+                Pré-selecionados: usuários com alerta global RMA aberto. Inclua
+                outros se precisar.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="rounded-lg border px-3 py-1.5 text-xs text-slate-700"
+              onClick={() => setIncluirAberto((v) => !v)}
+            >
+              {incluirAberto ? "Fechar busca" : "Incluir mais usuário"}
+            </button>
+          </div>
+          <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-sm">
+            {destTodos
+              .filter((u) => destIds.includes(u.id))
+              .map((u) => {
+                const isPadrao = destPadrao.some((p) => p.id === u.id);
+                return (
+                  <li
+                    key={u.id}
+                    className="flex items-center justify-between gap-2 rounded border border-slate-100 bg-white px-2 py-1.5"
+                  >
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked
+                        onChange={() =>
+                          setDestIds((ids) => ids.filter((x) => x !== u.id))
+                        }
+                      />
+                      <span className="truncate">
+                        {u.nome}
+                        <span className="text-slate-400"> · {u.email}</span>
+                        {isPadrao && (
+                          <span className="ml-1 text-[10px] text-slate-500">
+                            (global)
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            {destIds.length === 0 && (
+              <li className="text-xs text-amber-800">
+                Nenhum selecionado — o sistema notificará só quem criou o RMA.
+              </li>
+            )}
+          </ul>
+          {incluirAberto && (
+            <div className="relative mt-2">
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                placeholder="Buscar usuário para incluir…"
+                value={incluirQuery}
+                onChange={(e) => setIncluirQuery(e.target.value)}
+              />
+              <ul className="mt-1 max-h-36 overflow-auto rounded-lg border bg-white shadow">
+                {destTodos
+                  .filter((u) => !destIds.includes(u.id))
+                  .filter((u) => {
+                    const q = incluirQuery.trim().toLowerCase();
+                    if (!q) return true;
+                    return (
+                      u.nome.toLowerCase().includes(q) ||
+                      u.email.toLowerCase().includes(q)
+                    );
+                  })
+                  .slice(0, 12)
+                  .map((u) => (
+                    <li key={u.id}>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                        onClick={() => {
+                          setDestIds((ids) => [...ids, u.id]);
+                          setIncluirQuery("");
+                        }}
+                      >
+                        {u.nome}
+                        <span className="text-slate-400"> · {u.email}</span>
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+        </div>
 
         <button
           type="submit"

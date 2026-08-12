@@ -284,6 +284,11 @@ export const clienteSchema = z.object({
     z.string().length(2).nullable().optional()
   ),
   ativo: z.boolean().optional(),
+  /** Usuário comercial padrão (opcional no cadastro) */
+  responsavelComercialId: z.preprocess(
+    emptyToNull,
+    z.string().uuid().nullable().optional()
+  ),
 });
 
 export const tipoMovimentacaoObjectSchema = z.object({
@@ -579,10 +584,19 @@ const uploadPath = z
 export const createRmaProcessoSchema = z
   .object({
     clienteId: z.string().uuid(),
+    /** Usuário comercial responsável pela aprovação com o cliente */
+    responsavelComercialId: z.string().uuid({
+      message: "Selecione o responsável comercial",
+    }),
     observacao: z.string().max(2000).optional().nullable(),
     nfEntradaNumero: z.string().max(60).optional().nullable(),
     /** Path temporário /uploads/rma/_tmp/... (promovido na abertura) */
     nfEntradaArquivo: uploadPath.optional().nullable(),
+    /**
+     * Usuários que recebem sino/e-mail deste RMA.
+     * Vazio/omitido → só o criador. Preferir pré-carregar ticks RMA_ABERTO na UI.
+     */
+    destinatarioIds: z.array(z.string().uuid()).max(50).optional(),
     itens: z
       .array(
         z.object({
@@ -615,14 +629,28 @@ export const createRmaProcessoSchema = z
     });
   });
 
-export const updateRmaFinanceiroSchema = z
+/** Substitui a lista de destinatários do RMA (processo aberto). */
+export const atualizarRmaDestinatariosSchema = z.object({
+  destinatarioIds: z.array(z.string().uuid()).min(1).max(50),
+});
+
+/** NFs / observação do processo (cobrança de manutenção é por item). */
+export const updateRmaFinanceiroSchema = z.object({
+  nfEntradaNumero: z.string().max(60).optional().nullable(),
+  nfSaidaNumero: z.string().max(60).optional().nullable(),
+  observacao: z.string().max(2000).optional().nullable(),
+  /** @deprecated Cobrança migrou para o item — aceito só por compat. */
+  cobrou: z.boolean().optional().nullable(),
+  valorCobrado: z.coerce.number().min(0).optional().nullable(),
+  nfCobrancaNumero: z.string().max(60).optional().nullable(),
+});
+
+/** Cobrança de manutenção de um item do RMA. */
+export const updateRmaItemFinanceiroSchema = z
   .object({
-    nfEntradaNumero: z.string().max(60).optional().nullable(),
-    nfSaidaNumero: z.string().max(60).optional().nullable(),
     cobrou: z.boolean().optional().nullable(),
     valorCobrado: z.coerce.number().min(0).optional().nullable(),
     nfCobrancaNumero: z.string().max(60).optional().nullable(),
-    observacao: z.string().max(2000).optional().nullable(),
   })
   .superRefine((data, ctx) => {
     if (data.cobrou === true) {
@@ -646,6 +674,56 @@ export const updateRmaFinanceiroSchema = z
       }
     }
   });
+
+/** Corrigir cliente do processo (RMA aberto, sem devolução/troca concluída). */
+export const atualizarRmaClienteSchema = z.object({
+  clienteId: z.string().uuid(),
+});
+
+/** Alterar responsável comercial (só ABERTO + aprovação PENDENTE). */
+export const atualizarRmaComercialSchema = z.object({
+  responsavelComercialId: z.string().uuid(),
+});
+
+/** Decisão comercial de manutenção por item. */
+export const aprovarManutencaoRmaItemSchema = z.object({
+  decisao: z.enum(["APROVADA", "RECUSADA"]),
+  observacao: z
+    .string()
+    .max(500)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      if (v == null) return null;
+      const t = v.trim();
+      return t ? t : null;
+    }),
+});
+
+/** Incluir item/série em RMA aberto. */
+export const adicionarRmaItemSchema = z.object({
+  produtoId: z.string().uuid(),
+  series: z.array(z.string().trim().min(1).max(80)).min(1).max(20),
+  observacao: z
+    .string()
+    .max(500)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      if (v == null) return null;
+      const t = v.trim();
+      return t ? t : null;
+    }),
+});
+
+/** Remover item do RMA (estorna entrada). Motivo obrigatório (auditoria). */
+export const removerRmaItemSchema = z.object({
+  observacao: z
+    .string()
+    .max(500)
+    .transform((v) => v.trim())
+    .pipe(z.string().min(1, "Informe o motivo da remoção").max(500)),
+});
 
 /** Nome de arquivo do anexo — trunca nomes longos do SO (preserva extensão). */
 function truncateAnexoLabel(raw: string, max = 120): string {
@@ -692,6 +770,25 @@ export const anexarRmaSchema = z
 export const devolverRmaSchema = z.object({
   itemIds: z.array(z.string().uuid()).min(1).optional(),
   nfSaidaNumero: z.string().max(60).optional().nullable(),
+  observacao: z
+    .string()
+    .max(500)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      if (v == null) return null;
+      const t = v.trim();
+      return t ? t : null;
+    }),
+});
+
+/** Cancelar processo RMA — observação obrigatória (auditoria). */
+export const cancelarRmaSchema = z.object({
+  observacao: z
+    .string()
+    .max(500)
+    .transform((v) => v.trim())
+    .pipe(z.string().min(1, "Informe o motivo do cancelamento").max(500)),
 });
 
 /** Aloca N séries no contador (não cria UnidadeSerie — isso ocorre no lançamento). */

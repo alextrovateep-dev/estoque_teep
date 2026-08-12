@@ -70,6 +70,32 @@ export const RMA_ANEXO_TIPOS = [
 ] as const;
 export type RmaAnexoTipo = (typeof RMA_ANEXO_TIPOS)[number];
 
+/** Workflow comercial/operacional por item (nota = processo; manutenção = item) */
+export const RMA_ITEM_ETAPA = [
+  "AGUARDANDO_LAUDO",
+  "AGUARDANDO_APROVACAO",
+  "AGUARDANDO_MANUTENCAO",
+  "NAO_APROVADO",
+  "AGUARDANDO_ENVIO",
+  "FINALIZADO",
+] as const;
+export type RmaItemEtapa = (typeof RMA_ITEM_ETAPA)[number];
+
+export const RMA_ITEM_ETAPA_LABELS: Record<RmaItemEtapa, string> = {
+  AGUARDANDO_LAUDO: "Aguardando laudo",
+  AGUARDANDO_APROVACAO: "Aguardando aprovação",
+  AGUARDANDO_MANUTENCAO: "Aguardando manutenção",
+  NAO_APROVADO: "Não aprovado",
+  AGUARDANDO_ENVIO: "Aguardando envio",
+  FINALIZADO: "Finalizado",
+};
+
+/** Etapas em que Devolver/Trocar são permitidos */
+export const RMA_ITEM_ETAPAS_SAIDA = [
+  "AGUARDANDO_ENVIO",
+  "NAO_APROVADO",
+] as const;
+
 export const BRAND_COLOR = "#5B8B83";
 
 /** Eventos de alerta (preferências no cadastro: sino; e-mail via master + allowlist) */
@@ -85,6 +111,7 @@ export const ALERTA_EVENTOS = [
   "RMA_ABERTO",
   "RMA_FINANCEIRO",
   "RMA_ENCERRADO",
+  "RMA_LAUDO",
 ] as const;
 export type AlertaEvento = (typeof ALERTA_EVENTOS)[number];
 
@@ -100,6 +127,7 @@ export const ALERTA_EVENTO_LABELS: Record<AlertaEvento, string> = {
   RMA_ABERTO: "RMA aberto",
   RMA_FINANCEIRO: "RMA — atualização financeira",
   RMA_ENCERRADO: "RMA encerrado (fechado ou cancelado)",
+  RMA_LAUDO: "RMA — laudo(s) anexado(s)",
 };
 
 export const MOVIMENTACAO_ANEXO_TIPOS = [
@@ -232,11 +260,12 @@ export const PERMISSAO_LABELS: Record<
   },
   rma: {
     label: "RMA",
-    descricao: "Processos de RMA (entrada e devolução ao cliente)",
+    descricao: "Abrir e operar processos RMA (itens, laudos, devolução/troca)",
   },
   rma_cobranca: {
-    label: "RMA — financeiro",
-    descricao: "Cobrança, valor e números/anexos de NF do RMA",
+    label: "RMA — cobrança",
+    descricao:
+      "Informar cobrança por item (valor/NF) e anexar NF de cobrança — também após o RMA fechado",
   },
   relatorios: {
     label: "Relatórios",

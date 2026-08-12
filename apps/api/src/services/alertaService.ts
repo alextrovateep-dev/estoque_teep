@@ -5,6 +5,7 @@ import {
 import {
   createInAppNotification,
   emitirNotificacaoEvento,
+  notifyUsuarios,
 } from "./NotificationService";
 
 export type AlertaUi = {
@@ -195,14 +196,39 @@ export function notificarRmaAberto(opts: {
   clienteNome: string;
   qtdItens: number;
   criadoPorNome?: string;
+  destinatarioIds: string[];
+  nfEntradaNumero?: string | null;
+  itensResumo?: string[];
 }): void {
   const short = opts.processoId.slice(0, 8);
   const quem = opts.criadoPorNome ? ` por ${opts.criadoPorNome}` : "";
-  emitirAlerta("RMA_ABERTO", {
+  const appUrl =
+    process.env.FRONTEND_URL ||
+    process.env.CORS_ORIGIN ||
+    "http://localhost:3000";
+  const linhas = [
+    `RMA ${short} aberto${quem}.`,
+    `Cliente: ${opts.clienteNome}`,
+    `Itens: ${opts.qtdItens}`,
+    opts.nfEntradaNumero?.trim()
+      ? `NF entrada: ${opts.nfEntradaNumero.trim()}`
+      : null,
+    opts.itensResumo && opts.itensResumo.length > 0
+      ? opts.itensResumo.slice(0, 3).join("; ") +
+        (opts.itensResumo.length > 3
+          ? ` (+${opts.itensResumo.length - 3})`
+          : "")
+      : null,
+    `Abrir no sistema: ${appUrl}/rma/${opts.processoId}`,
+  ].filter(Boolean) as string[];
+
+  notifyUsuarios(opts.destinatarioIds, {
+    tipo: "RMA_ABERTO",
     titulo: `${ALERTA_EVENTO_LABELS.RMA_ABERTO} · ${short}`,
-    mensagem: `RMA ${short} aberto${quem} — cliente ${opts.clienteNome}, ${opts.qtdItens} item(ns).`,
+    mensagem: linhas.join("\n"),
     meta: { processoId: opts.processoId, href: `/rma/${opts.processoId}` },
     dedupeKey: `${opts.processoId}|ABERTO`,
+    forceEmail: true,
   });
 }
 
@@ -212,20 +238,23 @@ export function notificarRmaFinanceiro(opts: {
   cobrou: boolean;
   valorCobrado?: number | null;
   nfCobrancaNumero?: string | null;
+  destinatarioIds: string[];
 }): void {
   const short = opts.processoId.slice(0, 8);
   const detalhe = opts.cobrou
-    ? `Cobrança registrada${
+    ? `Cobranca registrada${
         opts.valorCobrado != null
           ? ` — R$ ${Number(opts.valorCobrado).toFixed(2)}`
           : ""
       }${opts.nfCobrancaNumero ? ` · NF ${opts.nfCobrancaNumero}` : ""}.`
-    : "Dados financeiros atualizados (sem cobrança).";
-  emitirAlerta("RMA_FINANCEIRO", {
+    : "Dados financeiros atualizados (sem cobranca).";
+  notifyUsuarios(opts.destinatarioIds, {
+    tipo: "RMA_FINANCEIRO",
     titulo: `${ALERTA_EVENTO_LABELS.RMA_FINANCEIRO} · ${short}`,
     mensagem: `RMA ${short} (${opts.clienteNome}): ${detalhe}`,
     meta: { processoId: opts.processoId, href: `/rma/${opts.processoId}` },
     dedupeKey: `${opts.processoId}|FIN|${opts.cobrou}|${opts.valorCobrado ?? ""}|${opts.nfCobrancaNumero ?? ""}`,
+    forceEmail: true,
   });
 }
 
@@ -233,11 +262,12 @@ export function notificarRmaEncerrado(opts: {
   processoId: string;
   clienteNome: string;
   status: "FECHADO" | "CANCELADO";
+  destinatarioIds: string[];
 }): void {
   const short = opts.processoId.slice(0, 8);
-  const label =
-    opts.status === "FECHADO" ? "fechado" : "cancelado";
-  emitirAlerta("RMA_ENCERRADO", {
+  const label = opts.status === "FECHADO" ? "fechado" : "cancelado";
+  notifyUsuarios(opts.destinatarioIds, {
+    tipo: "RMA_ENCERRADO",
     titulo: `${ALERTA_EVENTO_LABELS.RMA_ENCERRADO} · ${short}`,
     mensagem: `RMA ${short} (${opts.clienteNome}) foi ${label}.`,
     meta: {
@@ -246,5 +276,34 @@ export function notificarRmaEncerrado(opts: {
       href: `/rma/${opts.processoId}`,
     },
     dedupeKey: `${opts.processoId}|${opts.status}`,
+    forceEmail: true,
+  });
+}
+
+export function notificarRmaLaudos(opts: {
+  processoId: string;
+  clienteNome: string;
+  destinatarioIds: string[];
+  laudosResumo: string[];
+}): void {
+  const short = opts.processoId.slice(0, 8);
+  const appUrl =
+    process.env.FRONTEND_URL ||
+    process.env.CORS_ORIGIN ||
+    "http://localhost:3000";
+  const linhas = [
+    `RMA ${short} (${opts.clienteNome}): laudo(s) disponiveis.`,
+    ...(opts.laudosResumo.length > 0
+      ? opts.laudosResumo.map((l) => `  - ${l}`)
+      : ["  (sem detalhe de itens)"]),
+    `Abrir no sistema (anexos): ${appUrl}/rma/${opts.processoId}`,
+  ];
+  notifyUsuarios(opts.destinatarioIds, {
+    tipo: "RMA_LAUDO",
+    titulo: `${ALERTA_EVENTO_LABELS.RMA_LAUDO} · ${short}`,
+    mensagem: linhas.join("\n"),
+    meta: { processoId: opts.processoId, href: `/rma/${opts.processoId}` },
+    dedupeKey: `${opts.processoId}|LAUDO|${Date.now()}`,
+    forceEmail: true,
   });
 }

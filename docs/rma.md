@@ -1,103 +1,88 @@
 ﻿# RMA — processo e estoque
 
-**Status:** implementado (abertura, financeiro, sem manutenção, devolução, troca, defaults, cancelamento).  
+**Status:** implementado (abertura com destinatários e comercial; **etapas, aprovação e cobrança por item**; laudos; devolução; troca; cancelamento).  
 **Telas:** `/rma` · `/rma/novo` · `/rma/[id]`  
-**Permissões:** `rma` · `rma_cobranca` (financeiro)
+**Permissões:** `rma` · `rma_cobranca` (cobrança por item + NFs do processo)
 
 ---
 
 ## Princípios
 
 1. **Estoque = motor padrão** — transferência/lançamento entre filiais (`Filial`). Sem “descarte paralelo”.
-2. **RMA = processo** — decide o caminho do item; encerra quando o caso com o cliente fecha.
-3. **Fechar ≠ destino do item** — dá para trocar/descartar a série e fechar depois (obs. livre).
-4. **Estoques configuráveis** — `RMA`, `DESC`, operacionais etc. só existem se cadastrados (Admin → Estoques). Defaults opcionais via env.
+2. **Processo = nota** — cliente, NFs entrada/saída, estoque RMA, destinatários, comercial, status `ABERTO/FECHADO/CANCELADO`.
+3. **Item = manutenção** — laudo, etapa, aprovação comercial, cobrança, manutenção realizada, devolução/troca. No mesmo RMA um item pode ser aprovado e outro não.
+4. **Corrigir ≠ cancelar** — cliente errado → alterar cliente; série errada → remover item e incluir o certo. Cancelar é emergência (Gerente/Admin).
+5. **Notificações por processo** — lista de destinatários (padrão = tick `RMA_ABERTO`).
+6. **Estoques configuráveis** — `RMA`, `DESC`, operacionais etc.
 
 ---
 
-## Status
+## Status e etapas
 
 | Entidade | Valores |
 |----------|---------|
 | **Processo** | `ABERTO` · `FECHADO` · `CANCELADO` |
-| **Item** | `ABERTO` · `EM_ESTOQUE` · `SEM_MANUTENCAO` · `DEVOLVIDO` · `DESCARTADO` · `CANCELADO` |
+| **Item (estoque)** | `EM_ESTOQUE` · `SEM_MANUTENCAO` · `DEVOLVIDO` · `DESCARTADO` · `CANCELADO` |
+| **Item (etapa)** | `AGUARDANDO_LAUDO` → `AGUARDANDO_APROVACAO` → `AGUARDANDO_MANUTENCAO` \| `NAO_APROVADO` → `AGUARDANDO_ENVIO` → `FINALIZADO` |
 
-Fechamento automático do processo quando não restam itens em `ABERTO` / `EM_ESTOQUE` / `SEM_MANUTENCAO` (ex.: após devolução/troca de todos).
+Devolver/Trocar só com etapa `AGUARDANDO_ENVIO` ou `NAO_APROVADO`. Fechamento automático quando não restam itens em `ABERTO` / `EM_ESTOQUE` / `SEM_MANUTENCAO`.
 
 ---
 
-## Fluxo operacional
+## Fluxo por item
 
 ```text
-Cliente envia material
+Abrir RMA (nota) → itens EM_ESTOQUE + AGUARDANDO_LAUDO + RMA_ABERTO
         │
         ▼
- Abrir RMA (Entrada RMA)  →  item EM_ESTOQUE no estoque RMA
+ Anexar laudo(s) → Notificar laudos → AGUARDANDO_APROVACAO + RMA_LAUDO
         │
-        ▼
- [Sem manutenção]  (só estado; saldo igual)
-        │
-        ├── Devolver (mesma série)  →  Saída RMA → DEVOLVIDO
-        │
-        └── Trocar
-               ├─ Transferência IMEDIATA: origem operacional → preparação (ex. RMA) — série BOA
-               ├─ Saída RMA da série BOA ao cliente
-               └─ Transferência: RMA → descarte (ex. DESC) — série RUIM → DESCARTADO
+        ├── APROVADA  → AGUARDANDO_MANUTENCAO → (Manutenção realizada) → AGUARDANDO_ENVIO → Devolver / Trocar
+        └── RECUSADA  → NAO_APROVADO (+ SEM_MANUTENCAO) → Devolver / Trocar (sem manutenção)
 ```
 
-Tipos seed: **Entrada RMA** / **Saída RMA** (saída RMA **não** usa fluxo `ehRetornoDe` de demo/comodato).
+Cobrança (`cobrou` / valor / NF cobrança) é **por item** (`PATCH /rma/:id/itens/:itemId/financeiro`). Editável com permissão `rma_cobranca` enquanto o processo estiver `ABERTO` ou `FECHADO` (não em `CANCELADO`), inclusive após a etapa `FINALIZADO`.
+
+Anexos de NF do processo:
+- **NF entrada** e **NF retorno** (`NF_SAIDA`): incluir **antes de fechar**; depois só visualização.
+- **NF cobrança** (`NF_COBRANCA`): financeiro (`rma_cobranca`) pode anexar/trocar **também após `FECHADO`**.
+
+Notificar laudos: só com processo `ABERTO` (desativado para todos se `FECHADO`/`CANCELADO`).
+
+API item: `POST /rma/:id/itens/:itemId/aprovacao` · `POST /rma/:id/itens/:itemId/manutencao-realizada` · `PATCH /rma/:id/itens/:itemId/financeiro`.
+
+Aprovação **não** existe no processo — só na etapa do item.
+
+---
+
+## Responsável comercial
+
+- Cadastro do Cliente: comercial opcional; na abertura do RMA é **obrigatório**.
+- Quem decide por item: comercial do processo ou Admin/Gerente.
+- Enquanto houver itens em laudo/aprovação, dá para alterar o comercial.
+
+---
+
+## Destinatários e alertas
+
+| Momento | Canal |
+|---------|--------|
+| Criar RMA | `RMA_ABERTO` |
+| Notificar laudos | `RMA_LAUDO` (+ avança etapa dos itens com laudo) |
+| Cobrança do item / encerrar | `RMA_FINANCEIRO` · `RMA_ENCERRADO` |
 
 ---
 
 ## O que o sistema faz hoje
 
-| Ação | Estoque / efeito |
-|------|------------------|
-| Abrir processo | Entrada RMA → série no estoque RMA; item `EM_ESTOQUE` |
-| Sem manutenção | `EM_ESTOQUE` → `SEM_MANUTENCAO` (sem mover saldo) |
-| Devolver | Saída RMA da mesma série → `DEVOLVIDO` |
-| Trocar | Só a partir de `SEM_MANUTENCAO`; orquestra 2 transferências (crédito **IMEDIATO**) + saída da boa; ruim → descarte |
-| Financeiro | Laudo, cobrança Sim/Não, NFs (`rma_cobranca`) |
-| Anexos | `LAUDO` · `NF_ENTRADA` · `NF_SAIDA` · `NF_COBRANCA` · `OUTRO` |
-| Cancelar | Cancela processo/itens pendentes (regras do serviço) |
-| Defaults | `GET /rma/defaults` — env → sigla RMA/DESC → lista operacional |
+| Ação | Efeito |
+|------|--------|
+| Abrir processo | Entrada RMA + comercial + destinatários |
+| Notificar laudos | E-mail/sino; itens com laudo → aguardando aprovação |
+| Aprovar / recusar (item) | Etapa manutenção ou não aprovado |
+| Manutenção realizada | Libera envio |
+| Cobrança (item) | Valor/NF por item |
+| Devolver / Trocar | Só se etapa liberada; item → FINALIZADO |
+| Cancelar | Só Gerente/Admin |
 
-### Env (opcional)
-
-- `RMA_FILIAL_PREPARACAO_ID`
-- `RMA_FILIAL_DESCARTE_ID`
-- `RMA_FILIAIS_ORIGEM_TROCA_IDS` (UUIDs separados por vírgula)
-
-Passados no `docker-compose.prod.yml` quando definidos no `.env.production`.
-
-Alertas in-app: `RMA_ABERTO` · `RMA_FINANCEIRO` · `RMA_ENCERRADO` (ver [alertas-email](./alertas-email.md)).
-
----
-
-## API
-
-| Método | Path |
-|--------|------|
-| `GET` | `/rma` · `/rma/defaults` · `/rma/:id` |
-| `POST` | `/rma` (abrir) |
-| `PATCH` | `/rma/:id/financeiro` |
-| `POST` | `/rma/:id/anexos` · `/devolver` · `/sem-manutencao` · `/trocar` · `/cancelar` |
-
-Smoke: `apps/api/scripts/smoke-rma-troca.ts`.
-
----
-
-## Backlog (ainda fora)
-
-- OS / etapas de manutenção  
-- Envio a fornecedor  
-- Relatórios gerenciais de RMA  
-- Troca com transferência “aguardar recebimento” + conferência  
-
----
-
-## Homologação rápida
-
-1. `SEED_DEMO=1` (estoques RMA/DESC) ou cadastro manual equivalente.  
-2. Abrir RMA com série → Sem manutenção → Devolver **ou** Trocar.  
-3. Conferir saldos / `UnidadeSerie` e processo `FECHADO` quando não restar item aberto.
+Alertas: ver [alertas-email](./alertas-email.md).

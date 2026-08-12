@@ -1,11 +1,19 @@
 import { Router } from "express";
 import {
   anexarRmaSchema,
+  adicionarRmaItemSchema,
+  aprovarManutencaoRmaItemSchema,
+  atualizarRmaClienteSchema,
+  atualizarRmaComercialSchema,
+  atualizarRmaDestinatariosSchema,
+  cancelarRmaSchema,
   createRmaProcessoSchema,
   devolverRmaSchema,
+  removerRmaItemSchema,
   semManutencaoRmaSchema,
   trocarRmaItemSchema,
   updateRmaFinanceiroSchema,
+  updateRmaItemFinanceiroSchema,
 } from "@teep/shared";
 import {
   authenticate,
@@ -15,14 +23,25 @@ import {
 import { requirePermissao, loadPermissoes } from "../middleware/permissoes";
 import { validateBody } from "../middleware/error";
 import {
+  adicionarRmaItens,
   anexarRma,
+  atualizarRmaCliente,
+  atualizarRmaComercial,
+  atualizarRmaDestinatarios,
   atualizarRmaFinanceiro,
+  atualizarRmaItemFinanceiro,
   cancelarRma,
   criarRmaProcesso,
   devolverRmaItens,
+  listarDestinatariosPadraoRma,
   listarRma,
+  listarUsuariosParaDestinatarioRma,
+  marcarManutencaoRealizadaRmaItem,
   marcarSemManutencaoRma,
+  notificarLaudosRma,
   obterRma,
+  registrarAprovacaoManutencaoRmaItem,
+  removerRmaItem,
   trocarRmaItem,
 } from "../services/rmaService";
 import { resolveRmaDefaults } from "../lib/rmaDefaults";
@@ -62,6 +81,32 @@ rmaRouter.get(
   }
 );
 
+/** Usuários com tick RMA_ABERTO (lista padrão de destinatários). */
+rmaRouter.get(
+  "/destinatarios-padrao",
+  requirePermissao("rma"),
+  async (_req, res, next) => {
+    try {
+      res.json(await listarDestinatariosPadraoRma());
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** Todos usuários ativos (para incluir extras na lista do RMA). */
+rmaRouter.get(
+  "/usuarios-destinatarios",
+  requirePermissao("rma"),
+  async (_req, res, next) => {
+    try {
+      res.json(await listarUsuariosParaDestinatarioRma());
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
 rmaRouter.post(
   "/",
   requirePermissao("rma"),
@@ -95,6 +140,150 @@ rmaRouter.patch(
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(await atualizarRmaFinanceiro(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.patch(
+  "/:id/cliente",
+  requirePermissao("rma"),
+  validateBody(atualizarRmaClienteSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await atualizarRmaCliente(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.patch(
+  "/:id/destinatarios",
+  requirePermissao("rma"),
+  validateBody(atualizarRmaDestinatariosSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await atualizarRmaDestinatarios(req.user!, req.params.id, req.body)
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.patch(
+  "/:id/comercial",
+  requirePermissao("rma"),
+  validateBody(atualizarRmaComercialSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await atualizarRmaComercial(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/aprovacao",
+  requirePermissao("rma"),
+  validateBody(aprovarManutencaoRmaItemSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await registrarAprovacaoManutencaoRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          req.body
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/manutencao-realizada",
+  requirePermissao("rma"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await marcarManutencaoRealizadaRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.patch(
+  "/:id/itens/:itemId/financeiro",
+  requirePermissao("rma_cobranca"),
+  validateBody(updateRmaItemFinanceiroSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await atualizarRmaItemFinanceiro(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          req.body
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/notificar-laudos",
+  requirePermissao("rma"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await notificarLaudosRma(req.user!, req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens",
+  requirePermissao("rma"),
+  validateBody(adicionarRmaItemSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.status(201).json(await adicionarRmaItens(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/remover",
+  requirePermissao("rma"),
+  validateBody(removerRmaItemSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await removerRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          req.body
+        )
+      );
     } catch (e) {
       next(e);
     }
@@ -160,9 +349,10 @@ rmaRouter.post(
 rmaRouter.post(
   "/:id/cancelar",
   requirePermissao("rma"),
+  validateBody(cancelarRmaSchema),
   async (req: AuthedRequest, res, next) => {
     try {
-      res.json(await cancelarRma(req.user!, req.params.id));
+      res.json(await cancelarRma(req.user!, req.params.id, req.body));
     } catch (e) {
       next(e);
     }

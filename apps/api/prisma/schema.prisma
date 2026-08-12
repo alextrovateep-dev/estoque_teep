@@ -61,7 +61,11 @@ model Usuario {
   refreshTokens      RefreshToken[]
   transferenciasCriadas Transferencia[]
   notificacoes       Notificacao[]
-  rmaProcessosCriados RmaProcesso[]
+  rmaProcessosCriados RmaProcesso[] @relation("RmaCriadoPor")
+  rmaComoComercial    RmaProcesso[] @relation("RmaResponsavelComercial")
+  rmaItemAprovacoes   RmaItem[]     @relation("RmaItemAprovacaoPor")
+  rmaDestinatarios     RmaDestinatario[]
+  clientesComoComercial Cliente[]
   serieAlocacoes      SerieAlocacao[]
 
   @@map("usuarios")
@@ -132,25 +136,29 @@ model Produto {
 }
 
 model Cliente {
-  id            String         @id @default(uuid()) @db.Uuid
-  nome          String         @db.VarChar(150)
-  nomeFantasia  String?        @map("nome_fantasia") @db.VarChar(120)
-  documento     String?        @unique @db.VarChar(20)
-  tipo          String         @db.VarChar(15)
-  email         String?        @db.VarChar(100)
-  telefone      String?        @db.VarChar(20)
-  cep           String?        @db.VarChar(9)
-  logradouro    String?        @db.VarChar(120)
-  numero        String?        @db.VarChar(20)
-  complemento   String?        @db.VarChar(80)
-  bairro        String?        @db.VarChar(80)
-  cidade        String?        @db.VarChar(50)
-  estado        String?        @db.Char(2)
-  ativo         Boolean        @default(true)
-  movimentacoes Movimentacao[]
-  unidadesSerie UnidadeSerie[]
-  rmaProcessos  RmaProcesso[]
+  id                      String         @id @default(uuid()) @db.Uuid
+  nome                    String         @db.VarChar(150)
+  nomeFantasia            String?        @map("nome_fantasia") @db.VarChar(120)
+  documento               String?        @unique @db.VarChar(20)
+  tipo                    String         @db.VarChar(15)
+  email                   String?        @db.VarChar(100)
+  telefone                String?        @db.VarChar(20)
+  cep                     String?        @db.VarChar(9)
+  logradouro              String?        @db.VarChar(120)
+  numero                  String?        @db.VarChar(20)
+  complemento             String?        @db.VarChar(80)
+  bairro                  String?        @db.VarChar(80)
+  cidade                  String?        @db.VarChar(50)
+  estado                  String?        @db.Char(2)
+  ativo                   Boolean        @default(true)
+  /// Usuário comercial padrão para RMAs deste cliente
+  responsavelComercialId  String?        @map("responsavel_comercial_id") @db.Uuid
+  responsavelComercial    Usuario?       @relation(fields: [responsavelComercialId], references: [id], onDelete: SetNull)
+  movimentacoes           Movimentacao[]
+  unidadesSerie           UnidadeSerie[]
+  rmaProcessos            RmaProcesso[]
 
+  @@index([responsavelComercialId])
   @@map("clientes")
 }
 
@@ -509,33 +517,54 @@ model EmailTemplate {
 
 /// Processo RMA (financeiro + estoque dedicado)
 model RmaProcesso {
-  id                String     @id @default(uuid()) @db.Uuid
-  clienteId         String     @map("cliente_id") @db.Uuid
+  id                       String     @id @default(uuid()) @db.Uuid
+  clienteId                String     @map("cliente_id") @db.Uuid
   /// Estoque RMA (filial sigla RMA)
-  filialId          String     @map("filial_id") @db.Uuid
+  filialId                 String     @map("filial_id") @db.Uuid
   /// ABERTO | FECHADO | CANCELADO
-  status            String     @default("ABERTO") @db.VarChar(20)
-  nfEntradaNumero   String?    @map("nf_entrada_numero") @db.VarChar(60)
-  nfSaidaNumero     String?    @map("nf_saida_numero") @db.VarChar(60)
+  status                   String     @default("ABERTO") @db.VarChar(20)
+  nfEntradaNumero          String?    @map("nf_entrada_numero") @db.VarChar(60)
+  nfSaidaNumero            String?    @map("nf_saida_numero") @db.VarChar(60)
   /// null = ainda não informado; true/false = Sim/Não
-  cobrou            Boolean?
-  valorCobrado      Decimal?   @map("valor_cobrado") @db.Decimal(12, 2)
-  nfCobrancaNumero  String?    @map("nf_cobranca_numero") @db.VarChar(60)
-  observacao        String?    @db.Text
-  criadoPorId       String     @map("criado_por_id") @db.Uuid
-  criadoEm          DateTime   @default(now()) @map("criado_em") @db.Timestamptz
-  atualizadoEm      DateTime   @updatedAt @map("atualizado_em") @db.Timestamptz
-  cliente           Cliente    @relation(fields: [clienteId], references: [id], onDelete: Restrict)
-  filial            Filial     @relation(fields: [filialId], references: [id], onDelete: Restrict)
-  criadoPor         Usuario    @relation(fields: [criadoPorId], references: [id], onDelete: Restrict)
-  itens             RmaItem[]
-  anexos            RmaAnexo[]
+  cobrou                   Boolean?
+  valorCobrado             Decimal?   @map("valor_cobrado") @db.Decimal(12, 2)
+  nfCobrancaNumero         String?    @map("nf_cobranca_numero") @db.VarChar(60)
+  observacao               String?    @db.Text
+  /// Usuário comercial responsável pela aprovação com o cliente (snapshot na abertura)
+  responsavelComercialId   String?    @map("responsavel_comercial_id") @db.Uuid
+  criadoPorId              String     @map("criado_por_id") @db.Uuid
+  criadoEm                 DateTime   @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm             DateTime   @updatedAt @map("atualizado_em") @db.Timestamptz
+  cliente                  Cliente    @relation(fields: [clienteId], references: [id], onDelete: Restrict)
+  filial                   Filial     @relation(fields: [filialId], references: [id], onDelete: Restrict)
+  criadoPor                Usuario    @relation("RmaCriadoPor", fields: [criadoPorId], references: [id], onDelete: Restrict)
+  responsavelComercial     Usuario?   @relation("RmaResponsavelComercial", fields: [responsavelComercialId], references: [id], onDelete: Restrict)
+  itens                    RmaItem[]
+  anexos                   RmaAnexo[]
+  destinatarios            RmaDestinatario[]
 
   @@index([clienteId])
   @@index([filialId])
   @@index([status])
   @@index([criadoEm])
+  @@index([responsavelComercialId])
   @@map("rma_processos")
+}
+
+/// Quem recebe sino/e-mail deste processo RMA (snapshot na criação + extras)
+model RmaDestinatario {
+  id         String      @id @default(uuid()) @db.Uuid
+  processoId String      @map("processo_id") @db.Uuid
+  usuarioId  String      @map("usuario_id") @db.Uuid
+  /// GLOBAL = veio do tick RMA_ABERTO · MANUAL = incluído neste processo
+  origem     String      @default("MANUAL") @db.VarChar(20)
+  criadoEm   DateTime    @default(now()) @map("criado_em") @db.Timestamptz
+  processo   RmaProcesso @relation(fields: [processoId], references: [id], onDelete: Cascade)
+  usuario    Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([processoId, usuarioId])
+  @@index([usuarioId])
+  @@map("rma_destinatarios")
 }
 
 model RmaItem {
@@ -544,8 +573,17 @@ model RmaItem {
   produtoId       String        @map("produto_id") @db.Uuid
   unidadeSerieId  String?       @map("unidade_serie_id") @db.Uuid
   quantidade      Decimal       @db.Decimal(12, 4)
-  /// ABERTO | EM_ESTOQUE | DEVOLVIDO | DESCARTADO | CANCELADO
+  /// ABERTO | EM_ESTOQUE | SEM_MANUTENCAO | DEVOLVIDO | DESCARTADO | CANCELADO
   status          String        @default("ABERTO") @db.VarChar(20)
+  /// AGUARDANDO_LAUDO | AGUARDANDO_APROVACAO | AGUARDANDO_MANUTENCAO | NAO_APROVADO | AGUARDANDO_ENVIO | FINALIZADO
+  etapa           String        @default("AGUARDANDO_LAUDO") @db.VarChar(30)
+  aprovacaoEm     DateTime?     @map("aprovacao_em") @db.Timestamptz
+  aprovacaoPorId  String?       @map("aprovacao_por_id") @db.Uuid
+  aprovacaoObs    String?       @map("aprovacao_obs") @db.Text
+  /// Cobrança de manutenção deste item (independente dos demais da nota)
+  cobrou          Boolean?
+  valorCobrado    Decimal?      @map("valor_cobrado") @db.Decimal(12, 2)
+  nfCobrancaNumero String?      @map("nf_cobranca_numero") @db.VarChar(60)
   movEntradaId    String?       @map("mov_entrada_id") @db.Uuid
   movSaidaId      String?       @map("mov_saida_id") @db.Uuid
   movDescarteId   String?       @map("mov_descarte_id") @db.Uuid
@@ -556,6 +594,7 @@ model RmaItem {
   produto         Produto       @relation(fields: [produtoId], references: [id], onDelete: Restrict)
   unidadeSerie    UnidadeSerie? @relation("RmaItemSerieOriginal", fields: [unidadeSerieId], references: [id], onDelete: SetNull)
   unidadeSerieSubstituicao UnidadeSerie? @relation("RmaItemSerieSubstituicao", fields: [unidadeSerieSubstituicaoId], references: [id], onDelete: SetNull)
+  aprovacaoPor    Usuario?      @relation("RmaItemAprovacaoPor", fields: [aprovacaoPorId], references: [id], onDelete: SetNull)
   movEntrada      Movimentacao? @relation("RmaItemEntrada", fields: [movEntradaId], references: [id], onDelete: SetNull)
   movSaida        Movimentacao? @relation("RmaItemSaida", fields: [movSaidaId], references: [id], onDelete: SetNull)
   movDescarte     Movimentacao? @relation("RmaItemDescarte", fields: [movDescarteId], references: [id], onDelete: SetNull)
@@ -564,6 +603,7 @@ model RmaItem {
   @@index([processoId])
   @@index([produtoId])
   @@index([status])
+  @@index([etapa])
   @@index([unidadeSerieSubstituicaoId])
   @@map("rma_itens")
 }

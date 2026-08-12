@@ -39,7 +39,7 @@ evento de domínio
 | `ALERTA_RETORNO_MOVIMENTACAO` | Sim | **Só** lista `emailsDestino` do lançamento | Job de agenda |
 | `TRANSFERENCIA_PENDENTE_APROVACAO` | Sim | Fanout se master | Criação pendente |
 | `TRANSFERENCIA_APROVADA` / `_REJEITADA` | Sim (+ criador no sino) | Fanout se master | Decisão em Aprovações |
-| `RMA_ABERTO` / `RMA_FINANCEIRO` / `RMA_ENCERRADO` | Sim | Fanout se master | Processo RMA |
+| `RMA_ABERTO` / `RMA_FINANCEIRO` / `RMA_ENCERRADO` / `RMA_LAUDO` | Sim (lista do processo) | Destinatários do RMA (`forceEmail`) | Processo RMA — ver [rma.md](./rma.md) |
 | `ACESSO_SENHA_PROVISORIA` | Não | Sempre | Criar / reset usuário (tipo **conta**) |
 
 ### Retorno (demo/comodato) — regra especial

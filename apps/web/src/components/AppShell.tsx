@@ -505,7 +505,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       )}
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col md:overflow-hidden">
-        <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5">
+        <header className="flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5 md:px-6">
           <button
             type="button"
             onClick={() => setOpen(true)}
@@ -516,7 +516,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="md:hidden">
             <TeepLogo variant="full" height={24} />
           </div>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {headerProfile}
             <NotificationBell />
           </div>

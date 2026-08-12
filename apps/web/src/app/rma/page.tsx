@@ -3,7 +3,9 @@
 import { api } from "@/lib/api";
 import { matchNomeOuDocumento } from "@/lib/documento";
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { RMA_ITEM_ETAPA_LABELS } from "@teep/shared";
 
 type Row = {
   id: string;
@@ -15,6 +17,8 @@ type Row = {
   criadoEm: string;
   cliente: { id: string; nome: string; documento?: string | null };
   filial: { id: string; sigla: string; nome: string };
+  responsavelComercial?: { id: string; nome: string } | null;
+  itens?: Array<{ id: string; status: string; etapa?: string; cobrou?: boolean | null }>;
   _count: { itens: number };
 };
 
@@ -32,7 +36,70 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELADO: "Cancelado",
 };
 
+function resumoEtapasItens(
+  itens?: Array<{ etapa?: string }>
+): string {
+  if (!itens?.length) return "";
+  const counts = new Map<string, number>();
+  for (const i of itens) {
+    const e = i.etapa || "AGUARDANDO_LAUDO";
+    counts.set(e, (counts.get(e) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(
+      ([e, n]) =>
+        `${n} ${(RMA_ITEM_ETAPA_LABELS as Record<string, string>)[e] || e}`
+    )
+    .join(" · ");
+}
+
+const MS_8_DIAS = 8 * 24 * 60 * 60 * 1000;
+
+/** Tom lúdico/sutil: fechado verde · aberto neutro · aberto >8d âmbar (atrasado). */
+function tomCardRma(status: string, criadoEm: string) {
+  if (status === "FECHADO") {
+    return {
+      card: "border-emerald-200/80 bg-emerald-50/50 hover:border-emerald-300",
+      badge: "bg-emerald-100 text-emerald-800",
+      dot: "bg-emerald-500",
+    };
+  }
+  if (status === "ABERTO") {
+    const atrasado = Date.now() - new Date(criadoEm).getTime() > MS_8_DIAS;
+    if (atrasado) {
+      return {
+        card: "border-amber-200/70 bg-amber-50/40 hover:border-amber-300",
+        badge: "bg-amber-100 text-amber-900",
+        dot: "bg-amber-400",
+      };
+    }
+    return {
+      card: "border-slate-200 bg-white hover:border-brand/40",
+      badge: "bg-slate-100 text-slate-700",
+      dot: "bg-slate-400",
+    };
+  }
+  // CANCELADO e outros
+  return {
+    card: "border-slate-200 bg-slate-50/40 hover:border-slate-300",
+    badge: "bg-slate-200/80 text-slate-700",
+    dot: "bg-slate-400",
+  };
+}
+
 export default function RmaListPage() {
+  return (
+    <Suspense
+      fallback={<p className="text-sm text-slate-500">Carregando…</p>}
+    >
+      <RmaListPageInner />
+    </Suspense>
+  );
+}
+
+function RmaListPageInner() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [data, setData] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -45,9 +112,21 @@ export default function RmaListPage() {
   const [clienteOpen, setClienteOpen] = useState(false);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [error, setError] = useState("");
+  const [flash, setFlash] = useState("");
   const [loading, setLoading] = useState(false);
   /** Ignora respostas antigas quando o filtro muda rápido. */
   const fetchGen = useRef(0);
+
+  useEffect(() => {
+    const ok = searchParams.get("ok");
+    if (ok === "criado") {
+      setFlash("RMA aberto com sucesso.");
+      router.replace("/rma", { scroll: false });
+    } else if (ok === "laudos") {
+      setFlash("Laudos notificados.");
+      router.replace("/rma", { scroll: false });
+    }
+  }, [searchParams, router]);
 
   useEffect(() => {
     api<Cliente[]>("/clientes")
@@ -240,6 +319,11 @@ export default function RmaListPage() {
         </select>
       </div>
 
+      {flash && (
+        <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {flash}
+        </p>
+      )}
       {error && (
         <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -253,35 +337,67 @@ export default function RmaListPage() {
             Nenhum processo RMA.
           </p>
         )}
-        {data.map((r) => (
-          <Link
-            key={r.id}
-            href={`/rma/${r.id}`}
-            className="block rounded-xl border bg-white px-4 py-3 text-sm shadow-sm hover:border-brand/40"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
-                {STATUS_LABEL[r.status] || r.status}
-              </span>
-              <span className="font-medium">{r.cliente.nome}</span>
-              <span className="text-slate-400">·</span>
-              <span className="font-mono text-xs">{r.filial.sigla}</span>
-              <span className="ml-auto text-xs text-slate-500">
-                {new Date(r.criadoEm).toLocaleString("pt-BR")}
-              </span>
-            </div>
-            <div className="mt-1 text-slate-600">
-              {r._count.itens} item{r._count.itens === 1 ? "" : "s"}
-              {r.nfEntradaNumero ? ` · NF ent. ${r.nfEntradaNumero}` : ""}
-              {r.nfSaidaNumero ? ` · NF saí. ${r.nfSaidaNumero}` : ""}
-              {r.cobrou === true
-                ? ` · Cobrou R$ ${Number(r.valorCobrado || 0).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
-                : r.cobrou === false
-                  ? " · Sem cobrança"
-                  : ""}
-            </div>
-          </Link>
-        ))}
+        {data.map((r) => {
+          const tom = tomCardRma(r.status, r.criadoEm);
+          return (
+            <Link
+              key={r.id}
+              href={`/rma/${r.id}`}
+              className={`block rounded-xl border px-4 py-3 text-sm shadow-sm transition-colors ${tom.card}`}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span
+                  className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ${tom.badge}`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${tom.dot}`}
+                    aria-hidden
+                  />
+                  {STATUS_LABEL[r.status] || r.status}
+                </span>
+                <span className="font-medium text-slate-900">
+                  {r.cliente.nome}
+                </span>
+                <span className="text-slate-400">·</span>
+                <span className="font-mono text-xs text-slate-600">
+                  {r.filial.sigla}
+                </span>
+                <span className="ml-auto text-xs text-slate-500">
+                  {new Date(r.criadoEm).toLocaleString("pt-BR")}
+                </span>
+              </div>
+              <div className="mt-1 text-slate-600">
+                {r._count.itens} item{r._count.itens === 1 ? "" : "s"}
+                {r.nfEntradaNumero ? ` · NF ent. ${r.nfEntradaNumero}` : ""}
+                {r.nfSaidaNumero ? ` · NF saí. ${r.nfSaidaNumero}` : ""}
+                {(() => {
+                  const cobrados = (r.itens || []).filter((i) => i.cobrou === true);
+                  if (cobrados.length > 0) {
+                    return ` · ${cobrados.length} com cobrança`;
+                  }
+                  return "";
+                })()}
+              </div>
+              {r.status === "ABERTO" && (
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                  {r.responsavelComercial?.nome && (
+                    <span>
+                      Comercial:{" "}
+                      <span className="font-medium text-slate-800">
+                        {r.responsavelComercial.nome}
+                      </span>
+                    </span>
+                  )}
+                  {resumoEtapasItens(r.itens) && (
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">
+                      {resumoEtapasItens(r.itens)}
+                    </span>
+                  )}
+                </div>
+              )}
+            </Link>
+          );
+        })}
       </div>
 
       {total > 20 && (

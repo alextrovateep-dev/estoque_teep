@@ -1,12 +1,20 @@
 "use client";
 
+import { ConfirmMotivoPanel } from "@/components/ConfirmMotivoPanel";
 import { api, apiUpload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
+import { matchNomeOuDocumento } from "@/lib/documento";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
-import { SIGLA_ESTOQUE_DESCARTE } from "@teep/shared";
+import {
+  FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { useParams, useRouter } from "next/navigation";
+import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS } from "@teep/shared";
 
 type RmaAnexo = {
   id: string;
@@ -26,6 +34,31 @@ type MovVinculo = {
   transferenciaItem?: { transferenciaId: string } | null;
 };
 
+type RmaItem = {
+  id: string;
+  status: string;
+  etapa?: string;
+  produtoId: string;
+  quantidade: string | number;
+  observacao?: string | null;
+  cobrou?: boolean | null;
+  valorCobrado?: string | number | null;
+  nfCobrancaNumero?: string | null;
+  aprovacaoEm?: string | null;
+  aprovacaoObs?: string | null;
+  aprovacaoPor?: { id: string; nome: string } | null;
+  produto: { id: string; codigo: string; descricao: string };
+  unidadeSerie?: { id: string; numeroSerie: string } | null;
+  unidadeSerieSubstituicao?: { id: string; numeroSerie: string } | null;
+  anexos?: RmaAnexo[];
+  movEntradaId?: string | null;
+  movSaidaId?: string | null;
+  movDescarteId?: string | null;
+  movEntrada?: MovVinculo | null;
+  movSaida?: MovVinculo | null;
+  movDescarte?: MovVinculo | null;
+};
+
 type Rma = {
   id: string;
   status: string;
@@ -36,27 +69,18 @@ type Rma = {
   nfSaidaNumero: string | null;
   observacao: string | null;
   criadoEm: string;
+  responsavelComercialId?: string | null;
   cliente: { id: string; nome: string; documento?: string | null };
   filial: { id: string; sigla: string; nome: string };
   criadoPor: { nome: string };
-  anexos: RmaAnexo[];
-  itens: Array<{
+  responsavelComercial?: { id: string; nome: string; email?: string } | null;
+  destinatarios?: Array<{
     id: string;
-    status: string;
-    produtoId: string;
-    quantidade: string | number;
-    observacao?: string | null;
-    produto: { id: string; codigo: string; descricao: string };
-    unidadeSerie?: { id: string; numeroSerie: string } | null;
-    unidadeSerieSubstituicao?: { id: string; numeroSerie: string } | null;
-    anexos?: RmaAnexo[];
-    movEntradaId?: string | null;
-    movSaidaId?: string | null;
-    movDescarteId?: string | null;
-    movEntrada?: MovVinculo | null;
-    movSaida?: MovVinculo | null;
-    movDescarte?: MovVinculo | null;
+    origem: string;
+    usuario: { id: string; nome: string; email: string; ativo?: boolean };
   }>;
+  anexos: RmaAnexo[];
+  itens: RmaItem[];
 };
 
 const PROC_STATUS: Record<string, string> = {
@@ -74,8 +98,44 @@ const ITEM_STATUS: Record<string, string> = {
   CANCELADO: "Cancelado",
 };
 
+const ETAPA_LABEL: Record<string, string> = {
+  ...RMA_ITEM_ETAPA_LABELS,
+};
+
+const ETAPAS_SAIDA = new Set(["AGUARDANDO_ENVIO", "NAO_APROVADO"]);
+
+function etapaBadgeClass(etapa: string) {
+  switch (etapa) {
+    case "AGUARDANDO_APROVACAO":
+      return "bg-amber-100 text-amber-900";
+    case "AGUARDANDO_MANUTENCAO":
+      return "bg-sky-100 text-sky-900";
+    case "AGUARDANDO_ENVIO":
+      return "bg-emerald-100 text-emerald-800";
+    case "NAO_APROVADO":
+      return "bg-slate-200 text-slate-700";
+    case "FINALIZADO":
+      return "bg-slate-100 text-slate-600";
+    default:
+      return "bg-violet-100 text-violet-900";
+  }
+}
+
 type FilialOpt = { id: string; nome: string; sigla: string; ativo?: boolean };
 type SerieOpt = { id: string; numeroSerie: string };
+type ClienteOpt = {
+  id: string;
+  nome: string;
+  tipo: string;
+  documento?: string | null;
+  ativo: boolean;
+};
+type ProdutoOpt = {
+  id: string;
+  codigo: string;
+  descricao: string;
+  controlaSerie: boolean;
+};
 
 type RmaDefaults = {
   filialPreparacaoId: string | null;
@@ -99,64 +159,25 @@ function anexoAtivoPorTipo(anexos: RmaAnexo[], tipo: string) {
   return anexos.find((a) => a.tipo === tipo && a.ativo !== false) || null;
 }
 
-function hrefMovimentacaoPorSerie(numeroSerie?: string | null) {
-  const sn = (numeroSerie || "").trim();
-  if (!sn) return "/movimentacoes";
-  return `/movimentacoes?serie=${encodeURIComponent(sn)}`;
-}
-
-function ItemMovLinks({ item }: { item: Rma["itens"][0] }) {
-  const snRuim = item.unidadeSerie?.numeroSerie || null;
-  const snBoa = item.unidadeSerieSubstituicao?.numeroSerie || null;
-  const movRuim = hrefMovimentacaoPorSerie(snRuim);
-  const movBoa = hrefMovimentacaoPorSerie(snBoa);
-  const isTroca = Boolean(snBoa && (item.movDescarte || item.movDescarteId));
-  const links: Array<{ key: string; label: string; href: string }> = [];
-
-  if (item.movEntrada || item.movEntradaId) {
-    links.push({ key: "ent", label: "Entrada", href: movRuim });
-  }
-  if (item.movSaida || item.movSaidaId) {
-    links.push({
-      key: "sai",
-      label: isTroca ? "Saída (série boa)" : "Saída / devolução",
-      href: isTroca ? movBoa : movRuim,
-    });
-  }
-  if (item.movDescarte || item.movDescarteId) {
-    const tid = item.movDescarte?.transferenciaItem?.transferenciaId;
-    links.push({
-      key: "desc",
-      label: tid ? "Transf. descarte" : "Descarte",
-      href: tid ? `/transferencias/${tid}` : movRuim,
-    });
-  }
-
-  if (!links.length) return null;
-  return (
-    <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500">
-      <span className="font-medium text-slate-600">Histórico:</span>
-      {links.map((l, idx) => (
-        <span key={l.key} className="inline-flex items-center gap-2">
-          {idx > 0 && <span className="text-slate-300">·</span>}
-          <Link
-            href={l.href}
-            className="text-brand underline underline-offset-2"
-            title={l.label}
-          >
-            {l.label}
-          </Link>
-        </span>
-      ))}
-    </p>
-  );
+function descricaoProdutoLimpa(codigo: string, descricao: string): string {
+  const c = codigo.trim();
+  const d = descricao.trim();
+  if (!c || !d) return d;
+  const esc = c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const semPrefixo = d
+    .replace(new RegExp(`^${esc}\\s*[—\\-–:]?\\s*`, "i"), "")
+    .trim();
+  return semPrefixo || d;
 }
 
 export default function RmaDetalhePage() {
   const params = useParams();
+  const router = useRouter();
   const id = String(params.id || "");
   const user = getStoredUser();
   const canFin = Boolean(user && userHas(user, "rma_cobranca"));
+  const canCancelar =
+    user?.perfil === "ADMIN" || user?.perfil === "GERENTE";
 
   const [row, setRow] = useState<Rma | null>(null);
   const [error, setError] = useState("");
@@ -164,12 +185,15 @@ export default function RmaDetalhePage() {
   const [acting, setActing] = useState(false);
   const actingRef = useRef(false);
 
-  const [cobrou, setCobrou] = useState<"" | "true" | "false">("");
-  const [valor, setValor] = useState("");
-  const [nfCob, setNfCob] = useState("");
   const [nfEnt, setNfEnt] = useState("");
   const [nfSai, setNfSai] = useState("");
   const [obs, setObs] = useState("");
+  /** Cobrança editável por item */
+  const [itemFinEditId, setItemFinEditId] = useState<string | null>(null);
+  const [itemCobrou, setItemCobrou] = useState<"" | "true" | "false">("");
+  const [itemValor, setItemValor] = useState("");
+  const [itemNfCob, setItemNfCob] = useState("");
+  const [aprovacaoItemId, setAprovacaoItemId] = useState<string | null>(null);
 
   /** Item com painel de troca aberto */
   const [trocaItemId, setTrocaItemId] = useState<string | null>(null);
@@ -180,6 +204,41 @@ export default function RmaDetalhePage() {
   const [serieBoa, setSerieBoa] = useState("");
   const [seriesDisp, setSeriesDisp] = useState<SerieOpt[]>([]);
   const [trocaObs, setTrocaObs] = useState("");
+  const [painelAcao, setPainelAcao] = useState<
+    null | "cancelar" | "devolver-todos"
+  >(null);
+  const [motivoAcao, setMotivoAcao] = useState("");
+  const [removerItemId, setRemoverItemId] = useState<string | null>(null);
+
+  const [editCliente, setEditCliente] = useState(false);
+  const [clientes, setClientes] = useState<ClienteOpt[]>([]);
+  const [clienteQuery, setClienteQuery] = useState("");
+  const [clienteOpen, setClienteOpen] = useState(false);
+  const [clienteIdEdit, setClienteIdEdit] = useState("");
+
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [editDest, setEditDest] = useState(false);
+  const [destTodos, setDestTodos] = useState<
+    Array<{ id: string; nome: string; email: string }>
+  >([]);
+  const [destIdsEdit, setDestIdsEdit] = useState<string[]>([]);
+  const [destQuery, setDestQuery] = useState("");
+  const [notifyingLaudos, setNotifyingLaudos] = useState(false);
+  const [aprovacaoObs, setAprovacaoObs] = useState("");
+  const [editComercial, setEditComercial] = useState(false);
+  const [comercialIdEdit, setComercialIdEdit] = useState("");
+  const [usuariosComercial, setUsuariosComercial] = useState<
+    Array<{ id: string; nome: string; email: string }>
+  >([]);
+  const [addProdutoId, setAddProdutoId] = useState("");
+  const [addProdutoQuery, setAddProdutoQuery] = useState("");
+  const [addProdutoSugestoes, setAddProdutoSugestoes] = useState<ProdutoOpt[]>(
+    []
+  );
+  const [addProdutoOpen, setAddProdutoOpen] = useState(false);
+  const [addSerie, setAddSerie] = useState("");
+  const addSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const addSearchAbort = useRef<AbortController | null>(null);
 
   const load = useCallback(
     async (signal?: { cancelled: boolean }) => {
@@ -188,11 +247,6 @@ export default function RmaDetalhePage() {
         const r = await api<Rma>(`/rma/${id}`);
         if (signal?.cancelled) return;
         setRow(r);
-        setCobrou(
-          r.cobrou === true ? "true" : r.cobrou === false ? "false" : ""
-        );
-        setValor(r.valorCobrado != null ? String(r.valorCobrado) : "");
-        setNfCob(r.nfCobrancaNumero || "");
         setNfEnt(r.nfEntradaNumero || "");
         setNfSai(r.nfSaidaNumero || "");
         setObs(r.observacao || "");
@@ -219,13 +273,42 @@ export default function RmaDetalhePage() {
       setError("Processo fechado ou cancelado — financeiro somente leitura");
       return;
     }
-    if (cobrou === "true") {
-      const v = Number(valor.replace(",", "."));
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/financeiro`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          nfEntradaNumero: nfEnt.trim() || null,
+          nfSaidaNumero: nfSai.trim() || null,
+          observacao: obs.trim() || null,
+        }),
+      });
+      setMsg("Dados do processo salvos");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function salvarItemFinanceiro(itemId: string) {
+    if (!canFin || actingRef.current) return;
+    if (row?.status === "CANCELADO") {
+      setError("Processo cancelado — cobrança indisponível");
+      return;
+    }
+    if (itemCobrou === "true") {
+      const v = Number(itemValor.replace(",", "."));
       if (!(v > 0)) {
         setError("Informe o valor cobrado (maior que zero)");
         return;
       }
-      if (!nfCob.trim()) {
+      if (!itemNfCob.trim()) {
         setError("Informe o número da NF de cobrança");
         return;
       }
@@ -235,25 +318,22 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      const body: Record<string, unknown> = {
-        nfEntradaNumero: nfEnt.trim() || null,
-        nfSaidaNumero: nfSai.trim() || null,
-        observacao: obs.trim() || null,
-      };
-      if (cobrou === "true") {
+      const body: Record<string, unknown> = {};
+      if (itemCobrou === "true") {
         body.cobrou = true;
-        body.valorCobrado = Number(valor.replace(",", "."));
-        body.nfCobrancaNumero = nfCob.trim();
-      } else if (cobrou === "false") {
+        body.valorCobrado = Number(itemValor.replace(",", "."));
+        body.nfCobrancaNumero = itemNfCob.trim();
+      } else if (itemCobrou === "false") {
         body.cobrou = false;
       } else {
         body.cobrou = null;
       }
-      await api(`/rma/${id}/financeiro`, {
+      await api(`/rma/${id}/itens/${itemId}/financeiro`, {
         method: "PATCH",
         body: JSON.stringify(body),
       });
-      setMsg("Dados financeiros salvos");
+      setMsg("Cobrança do item salva");
+      setItemFinEditId(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -267,6 +347,26 @@ export default function RmaDetalhePage() {
     if (actingRef.current) return;
     if (tipo === "LAUDO" && !itemId) {
       setError("Selecione o item (produto/série) para anexar o laudo");
+      return;
+    }
+    const status = row?.status;
+    if (status === "CANCELADO") {
+      setError("Processo cancelado — não é possível anexar");
+      return;
+    }
+    if (status === "FECHADO" && tipo !== "NF_COBRANCA") {
+      setError(
+        "Processo fechado — só a NF de cobrança pode ser anexada pelo financeiro"
+      );
+      return;
+    }
+    if (
+      (tipo === "NF_ENTRADA" ||
+        tipo === "NF_SAIDA" ||
+        tipo === "NF_COBRANCA") &&
+      !canFin
+    ) {
+      setError("Sem permissão para anexar NF");
       return;
     }
     actingRef.current = true;
@@ -321,7 +421,11 @@ export default function RmaDetalhePage() {
     }
   }
 
-  async function devolver(itemIds?: string[]) {
+  async function devolver(
+    itemIds?: string[],
+    observacao?: string,
+    sucessoMsg?: string
+  ) {
     if (actingRef.current) return;
     actingRef.current = true;
     setActing(true);
@@ -333,10 +437,18 @@ export default function RmaDetalhePage() {
         body: JSON.stringify({
           itemIds,
           nfSaidaNumero: nfSai.trim() || undefined,
+          observacao: observacao?.trim() || undefined,
         }),
       });
-      setMsg("Devolução ao cliente lançada");
+      setMsg(
+        sucessoMsg ||
+          (itemIds?.length
+            ? `${itemIds.length} item(ns) devolvido(s) ao cliente.`
+            : "Itens devolvidos ao cliente.")
+      );
       setTrocaItemId(null);
+      setPainelAcao(null);
+      setMotivoAcao("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -346,18 +458,274 @@ export default function RmaDetalhePage() {
     }
   }
 
-  async function marcarSemManutencao(itemIds: string[]) {
+  async function confirmarCancelarRma() {
+    const motivo = motivoAcao.trim();
+    if (!motivo || actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/cancelar`, {
+        method: "POST",
+        body: JSON.stringify({ observacao: motivo }),
+      });
+      setMsg("RMA cancelado. Entradas estornadas quando havia estoque.");
+      setPainelAcao(null);
+      setMotivoAcao("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function salvarCliente() {
+    if (!clienteIdEdit || actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/cliente`, {
+        method: "PATCH",
+        body: JSON.stringify({ clienteId: clienteIdEdit }),
+      });
+      setMsg("Cliente atualizado");
+      setEditCliente(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function confirmarRemoverItem() {
+    const motivo = motivoAcao.trim();
+    if (!removerItemId || !motivo || actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/itens/${removerItemId}/remover`, {
+        method: "POST",
+        body: JSON.stringify({ observacao: motivo }),
+      });
+      setMsg("Item removido. Entrada estornada.");
+      setRemoverItemId(null);
+      setMotivoAcao("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  function onAddProdutoQuery(q: string) {
+    setAddProdutoQuery(q);
+    setAddProdutoId("");
+    setAddProdutoOpen(true);
+    if (addSearchTimer.current) clearTimeout(addSearchTimer.current);
+    addSearchAbort.current?.abort();
+    if (!q.trim()) {
+      setAddProdutoSugestoes([]);
+      return;
+    }
+    addSearchTimer.current = setTimeout(() => {
+      const ac = new AbortController();
+      addSearchAbort.current = ac;
+      void api<ProdutoOpt[]>(
+        `/produtos/busca?q=${encodeURIComponent(q.trim())}`,
+        { signal: ac.signal }
+      )
+        .then((list) =>
+          setAddProdutoSugestoes(list.filter((p) => p.controlaSerie))
+        )
+        .catch((e) => {
+          if (e instanceof Error && e.name === "AbortError") return;
+          setAddProdutoSugestoes([]);
+        });
+    }, 250);
+  }
+
+  async function adicionarItem(e: FormEvent) {
+    e.preventDefault();
+    if (actingRef.current) return;
+    const sn = addSerie.trim();
+    if (!addProdutoId || !sn) {
+      setError("Selecione o produto e informe o número de série");
+      return;
+    }
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/itens`, {
+        method: "POST",
+        body: JSON.stringify({
+          produtoId: addProdutoId,
+          series: [sn],
+        }),
+      });
+      setMsg("Item incluído no RMA");
+      setShowAddItem(false);
+      setAddProdutoId("");
+      setAddProdutoQuery("");
+      setAddProdutoSugestoes([]);
+      setAddSerie("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function abrirEditarDestinatarios() {
+    setError("");
+    setEditDest(true);
+    setDestIdsEdit((row?.destinatarios || []).map((d) => d.usuario.id));
+    if (destTodos.length === 0) {
+      try {
+        const list = await api<
+          Array<{ id: string; nome: string; email: string }>
+        >("/rma/usuarios-destinatarios");
+        setDestTodos(list);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Erro");
+      }
+    }
+  }
+
+  async function salvarDestinatarios() {
+    if (actingRef.current) return;
+    if (destIdsEdit.length === 0) {
+      setError("Selecione ao menos um destinatário");
+      return;
+    }
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/destinatarios`, {
+        method: "PATCH",
+        body: JSON.stringify({ destinatarioIds: destIdsEdit }),
+      });
+      setMsg("Destinatários atualizados");
+      setEditDest(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function notificarLaudos() {
+    if (actingRef.current || notifyingLaudos) return;
+    if (row?.status !== "ABERTO") {
+      setError("RMA fechado ou cancelado — notificar laudos indisponível");
+      return;
+    }
+    actingRef.current = true;
+    setNotifyingLaudos(true);
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      const r = await api<{ qtdLaudos: number; qtdDestinatarios: number }>(
+        `/rma/${id}/notificar-laudos`,
+        { method: "POST" }
+      );
+      setMsg(
+        `Laudos notificados (${r.qtdLaudos}) para ${r.qtdDestinatarios} usuário(s).`
+      );
+      router.push("/rma?ok=laudos");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setNotifyingLaudos(false);
+      setActing(false);
+    }
+  }
+
+  async function abrirEditarComercial() {
+    setError("");
+    setEditComercial(true);
+    setEditDest(false);
+    setComercialIdEdit(
+      row?.responsavelComercialId || row?.responsavelComercial?.id || ""
+    );
+    if (usuariosComercial.length === 0) {
+      try {
+        const list = await api<
+          Array<{ id: string; nome: string; email: string }>
+        >("/rma/usuarios-destinatarios");
+        setUsuariosComercial(list);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Erro");
+      }
+    }
+  }
+
+  async function salvarComercial() {
+    if (actingRef.current || !comercialIdEdit) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/comercial`, {
+        method: "PATCH",
+        body: JSON.stringify({ responsavelComercialId: comercialIdEdit }),
+      });
+      setMsg("Responsável comercial atualizado");
+      setEditComercial(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function registrarAprovacaoItem(
+    itemId: string,
+    decisao: "APROVADA" | "RECUSADA"
+  ) {
     if (actingRef.current) return;
     actingRef.current = true;
     setActing(true);
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/sem-manutencao`, {
+      await api(`/rma/${id}/itens/${itemId}/aprovacao`, {
         method: "POST",
-        body: JSON.stringify({ itemIds }),
+        body: JSON.stringify({
+          decisao,
+          observacao: aprovacaoObs.trim() || null,
+        }),
       });
-      setMsg("Item marcado como sem manutenção");
+      setMsg(
+        decisao === "APROVADA"
+          ? "Item aprovado — aguarde manutenção"
+          : "Item não aprovado — pode devolver sem manutenção"
+      );
+      setAprovacaoObs("");
+      setAprovacaoItemId(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -367,7 +735,27 @@ export default function RmaDetalhePage() {
     }
   }
 
-  async function abrirTroca(item: Rma["itens"][0]) {
+  async function marcarManutencaoRealizada(itemId: string) {
+    if (actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/itens/${itemId}/manutencao-realizada`, {
+        method: "POST",
+      });
+      setMsg("Manutenção marcada — item liberado para envio");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function abrirTroca(item: RmaItem) {
     setError("");
     setTrocaItemId(item.id);
     setSerieBoa("");
@@ -484,11 +872,53 @@ export default function RmaDetalhePage() {
   const noRma = row.itens.filter(
     (i) => i.status === "EM_ESTOQUE" || i.status === "SEM_MANUTENCAO"
   );
+  const itensParaDevolver = noRma.filter((i) =>
+    ETAPAS_SAIDA.has(i.etapa || "")
+  );
+  const itensAtivos = row.itens.filter((i) => i.status !== "CANCELADO");
+  const itensRemovidos = row.itens.filter((i) => i.status === "CANCELADO");
   const processoAberto = row.status === "ABERTO";
+  const itensAguardandoAprovacao = itensAtivos.filter(
+    (i) => i.etapa === "AGUARDANDO_APROVACAO"
+  );
+  const podeDecidirAprovacao =
+    processoAberto &&
+    (canCancelar ||
+      (user?.id &&
+        user.id ===
+          (row.responsavelComercialId || row.responsavelComercial?.id)));
+  const podeEditarComercial =
+    processoAberto &&
+    itensAtivos.some((i) =>
+      ["AGUARDANDO_LAUDO", "AGUARDANDO_APROVACAO"].includes(i.etapa || "")
+    );
+  /** NFs do processo só com RMA aberto; cobrança por item também após FECHADO. */
   const canEditFin = canFin && processoAberto;
+  const canEditCobrancaItem = canFin && row.status !== "CANCELADO";
+  const resumoEtapas = (() => {
+    const counts = new Map<string, number>();
+    for (const i of itensAtivos) {
+      const e = i.etapa || "AGUARDANDO_LAUDO";
+      counts.set(e, (counts.get(e) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([e, n]) => `${n} ${ETAPA_LABEL[e] || e}`)
+      .join(" · ");
+  })();
+  const podeEditarCliente =
+    processoAberto &&
+    !row.itens.some(
+      (i) => i.status === "DEVOLVIDO" || i.status === "DESCARTADO"
+    );
+  const clientesFiltrados = clientes
+    .filter((c) => matchNomeOuDocumento(c.nome, c.documento, clienteQuery))
+    .slice(0, 20);
+  const itemRemovendo = removerItemId
+    ? row.itens.find((i) => i.id === removerItemId)
+    : null;
 
   return (
-    <>
+    <div>
       <div className="mb-2">
         <Link href="/rma" className="text-sm text-brand underline">
           ← Voltar
@@ -501,10 +931,119 @@ export default function RmaDetalhePage() {
         </span>
       </div>
       <p className="mt-1 text-sm text-slate-600">
-        {row.cliente.nome} · estoque {row.filial.sigla} — {row.filial.nome} ·
-        por {row.criadoPor.nome} ·{" "}
-        {new Date(row.criadoEm).toLocaleString("pt-BR")}
+        <span className="font-medium text-slate-800">{row.cliente.nome}</span>
+        {podeEditarCliente && !editCliente && (
+          <>
+            {" "}
+            <button
+              type="button"
+              disabled={acting}
+              className="text-xs text-brand underline disabled:opacity-50"
+              onClick={() => {
+                setEditCliente(true);
+                setShowAddItem(false);
+                setRemoverItemId(null);
+                setPainelAcao(null);
+                setClienteIdEdit(row.cliente.id);
+                setClienteQuery(
+                  row.cliente.documento
+                    ? `${row.cliente.nome} · ${row.cliente.documento}`
+                    : row.cliente.nome
+                );
+                setClienteOpen(false);
+                if (clientes.length === 0) {
+                  void api<ClienteOpt[]>("/clientes")
+                    .then((c) =>
+                      setClientes(
+                        c.filter(
+                          (x) => x.ativo !== false && x.tipo !== "FORNECEDOR"
+                        )
+                      )
+                    )
+                    .catch((e) =>
+                      setError(e instanceof Error ? e.message : "Erro")
+                    );
+                }
+              }}
+            >
+              Alterar cliente
+            </button>
+          </>
+        )}
+        {" · "}
+        estoque {row.filial.sigla} — {row.filial.nome} · por {row.criadoPor.nome}{" "}
+        · {new Date(row.criadoEm).toLocaleString("pt-BR")}
       </p>
+
+      {editCliente && podeEditarCliente && (
+        <div className="relative mt-3 max-w-lg rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className="mb-2 text-sm font-medium text-slate-800">
+            Alterar cliente do RMA
+          </p>
+          <input
+            className="w-full rounded-lg border px-3 py-2 text-sm"
+            value={clienteQuery}
+            onChange={(e) => {
+              setClienteQuery(e.target.value);
+              setClienteIdEdit("");
+              setClienteOpen(true);
+            }}
+            onFocus={() => setClienteOpen(true)}
+            placeholder="Buscar cliente…"
+            disabled={acting}
+          />
+          {clienteOpen && clienteQuery.trim() && (
+            <ul className="absolute z-20 mt-1 max-h-48 w-[calc(100%-1.5rem)] overflow-auto rounded-lg border bg-white shadow">
+              {clientesFiltrados.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                    onClick={() => {
+                      setClienteIdEdit(c.id);
+                      setClienteQuery(
+                        c.documento ? `${c.nome} · ${c.documento}` : c.nome
+                      );
+                      setClienteOpen(false);
+                    }}
+                  >
+                    {c.nome}
+                    {c.documento ? (
+                      <span className="text-slate-500"> · {c.documento}</span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+              {clientesFiltrados.length === 0 && (
+                <li className="px-3 py-2 text-sm text-slate-500">
+                  Nenhum cliente
+                </li>
+              )}
+            </ul>
+          )}
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={acting || !clienteIdEdit}
+              onClick={() => void salvarCliente()}
+              className="rounded-lg bg-brand px-3 py-1.5 text-sm text-white disabled:opacity-50"
+            >
+              Salvar cliente
+            </button>
+            <button
+              type="button"
+              disabled={acting}
+              onClick={() => {
+                setEditCliente(false);
+                setClienteOpen(false);
+              }}
+              className="rounded-lg border px-3 py-1.5 text-sm text-slate-600"
+            >
+              Voltar
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -517,16 +1056,237 @@ export default function RmaDetalhePage() {
         </p>
       )}
 
-      <section className="mt-4 rounded-xl border bg-white px-3 py-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">Financeiro</h2>
-            <p className="text-[11px] text-slate-500">
-              1 NF entrada e 1 NF saída por RMA. Outra nota = novo RMA.
-              {!canFin && " Somente leitura."}
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <section className="rounded-xl border bg-white p-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Comercial
+            </h2>
+            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+              Aprovação e cobrança são por item. Pendente no item bloqueia
+              Devolver/Trocar daquele item.
+            </p>
+          </div>
+          {podeEditarComercial && !editComercial && (
+            <button
+              type="button"
+              disabled={acting}
+              onClick={() => void abrirEditarComercial()}
+              className="rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+            >
+              Alterar comercial
+            </button>
+          )}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-slate-700">
+            Comercial:{" "}
+            <span className="font-medium">
+              {row.responsavelComercial?.nome || "—"}
+            </span>
+          </span>
+          {resumoEtapas && (
+            <span className="text-xs text-slate-500">· {resumoEtapas}</span>
+          )}
+        </div>
+        {editComercial && podeEditarComercial && (
+          <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <label className="min-w-[16rem] flex-1 text-xs">
+              <span className="mb-1 block font-medium text-slate-600">
+                Responsável comercial
+              </span>
+              <select
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={comercialIdEdit}
+                onChange={(e) => setComercialIdEdit(e.target.value)}
+                disabled={acting}
+              >
+                <option value="">Selecione…</option>
+                {usuariosComercial.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nome}
+                    {u.email ? ` · ${u.email}` : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={acting || !comercialIdEdit}
+              onClick={() => void salvarComercial()}
+              className="rounded-md bg-brand px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+            >
+              Salvar
+            </button>
+            <button
+              type="button"
+              disabled={acting}
+              onClick={() => setEditComercial(false)}
+              className="rounded-md border px-3 py-2 text-xs disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
+        {podeDecidirAprovacao && itensAguardandoAprovacao.length > 0 && (
+          <p className="mt-2 text-xs text-amber-800">
+            {itensAguardandoAprovacao.length} item(ns) aguardando aprovação —
+            decida em cada card abaixo.
+          </p>
+        )}
+      </section>
+
+      <section className="rounded-xl border bg-white p-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Notificações
+            </h2>
+            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+              Quem recebe sino e e-mail. Laudos: anexe e use Notificar laudos
+              (avança itens com laudo para aguardando aprovação).
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {processoAberto && (
+              <button
+                type="button"
+                disabled={acting}
+                onClick={() => void abrirEditarDestinatarios()}
+                className="rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+              >
+                Destinatários
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={acting || notifyingLaudos || !processoAberto}
+              title={
+                !processoAberto
+                  ? "RMA fechado ou cancelado — notificar laudos indisponível"
+                  : undefined
+              }
+              onClick={() => void notificarLaudos()}
+              className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {notifyingLaudos ? "Enviando…" : "Notificar laudos"}
+            </button>
+          </div>
+        </div>
+        {!editDest && (
+          <ul className="mt-2 space-y-1 text-sm text-slate-700">
+            {(row.destinatarios || []).length === 0 ? (
+              <li className="text-xs text-slate-500">
+                Nenhum destinatário cadastrado.
+              </li>
+            ) : (
+              (row.destinatarios || []).map((d) => (
+                <li key={d.id}>
+                  {d.usuario.nome}
+                  <span className="text-slate-400"> · {d.usuario.email}</span>
+                  {d.origem === "GLOBAL" && (
+                    <span className="ml-1 text-[10px] text-slate-500">
+                      (global)
+                    </span>
+                  )}
+                </li>
+              ))
+            )}
+          </ul>
+        )}
+        {editDest && (
+          <div className="mt-2 space-y-2">
+            <ul className="max-h-40 space-y-1 overflow-auto text-sm">
+              {destTodos
+                .filter((u) => destIdsEdit.includes(u.id))
+                .map((u) => (
+                  <li key={u.id} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked
+                      onChange={() =>
+                        setDestIdsEdit((ids) =>
+                          ids.filter((x) => x !== u.id)
+                        )
+                      }
+                    />
+                    <span>
+                      {u.nome}
+                      <span className="text-slate-400"> · {u.email}</span>
+                    </span>
+                  </li>
+                ))}
+            </ul>
+            <input
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              placeholder="Buscar para incluir…"
+              value={destQuery}
+              onChange={(e) => setDestQuery(e.target.value)}
+            />
+            <ul className="max-h-32 overflow-auto rounded border bg-white text-sm">
+              {destTodos
+                .filter((u) => !destIdsEdit.includes(u.id))
+                .filter((u) => {
+                  const q = destQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  return (
+                    u.nome.toLowerCase().includes(q) ||
+                    u.email.toLowerCase().includes(q)
+                  );
+                })
+                .slice(0, 10)
+                .map((u) => (
+                  <li key={u.id}>
+                    <button
+                      type="button"
+                      className="block w-full px-3 py-1.5 text-left hover:bg-slate-50"
+                      onClick={() =>
+                        setDestIdsEdit((ids) => [...ids, u.id])
+                      }
+                    >
+                      {u.nome}
+                      <span className="text-slate-400"> · {u.email}</span>
+                    </button>
+                  </li>
+                ))}
+            </ul>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={acting}
+                onClick={() => void salvarDestinatarios()}
+                className="rounded-md bg-brand px-3 py-1.5 text-xs text-white disabled:opacity-50"
+              >
+                Salvar destinatários
+              </button>
+              <button
+                type="button"
+                disabled={acting}
+                onClick={() => setEditDest(false)}
+                className="rounded-md border px-3 py-1.5 text-xs"
+              >
+                Voltar
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+      </div>
+
+      <section className="mt-4 rounded-xl border bg-white p-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-slate-900">Processo / NFs</h2>
+            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+              NF entrada e NF de retorno (saída): incluir antes de fechar; depois
+              só visualização. NF de cobrança: financeiro pode anexar também
+              após o fechamento. Cobrança de manutenção (valor/NF) fica em cada
+              item.
+              {!canFin && " Sem permissão de cobrança — somente leitura."}
               {canFin &&
                 !processoAberto &&
-                " Processo fechado — somente leitura."}
+                " Processo fechado — retorno somente leitura; cobrança editável."}
             </p>
           </div>
           {canEditFin && (
@@ -534,9 +1294,9 @@ export default function RmaDetalhePage() {
               type="submit"
               form="rma-financeiro-form"
               disabled={acting}
-              className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
             >
-              Salvar financeiro
+              Salvar
             </button>
           )}
         </div>
@@ -544,7 +1304,7 @@ export default function RmaDetalhePage() {
         <form
           id="rma-financeiro-form"
           onSubmit={(e) => void salvarFinanceiro(e)}
-          className="mt-2 grid gap-2 sm:grid-cols-3"
+          className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
         >
           <label className="block text-xs">
             <span className="mb-0.5 block font-medium text-slate-600">
@@ -559,7 +1319,7 @@ export default function RmaDetalhePage() {
           </label>
           <label className="block text-xs">
             <span className="mb-0.5 block font-medium text-slate-600">
-              NF saída
+              NF retorno
             </span>
             <input
               disabled={!canEditFin || acting}
@@ -568,52 +1328,7 @@ export default function RmaDetalhePage() {
               onChange={(e) => setNfSai(e.target.value)}
             />
           </label>
-          <label className="block text-xs">
-            <span className="mb-0.5 block font-medium text-slate-600">
-              Gerou cobrança?
-            </span>
-            <select
-              disabled={!canEditFin || acting}
-              className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
-              value={cobrou}
-              onChange={(e) =>
-                setCobrou(e.target.value as "" | "true" | "false")
-              }
-            >
-              <option value="">Não informado</option>
-              <option value="true">Sim</option>
-              <option value="false">Não</option>
-            </select>
-          </label>
-          {cobrou === "true" && (
-            <>
-              <label className="block text-xs">
-                <span className="mb-0.5 block font-medium text-slate-600">
-                  Valor cobrado *
-                </span>
-                <input
-                  disabled={!canEditFin || acting}
-                  required
-                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
-                  value={valor}
-                  onChange={(e) => setValor(e.target.value)}
-                />
-              </label>
-              <label className="block text-xs sm:col-span-2">
-                <span className="mb-0.5 block font-medium text-slate-600">
-                  NF cobrança *
-                </span>
-                <input
-                  disabled={!canEditFin || acting}
-                  required
-                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
-                  value={nfCob}
-                  onChange={(e) => setNfCob(e.target.value)}
-                />
-              </label>
-            </>
-          )}
-          <label className="block text-xs sm:col-span-3">
+          <label className="block text-xs sm:col-span-2 lg:col-span-3">
             <span className="mb-0.5 block font-medium text-slate-600">
               Observação
             </span>
@@ -627,22 +1342,26 @@ export default function RmaDetalhePage() {
           </label>
         </form>
 
-        <div className="mt-3 border-t border-slate-100 pt-3">
+        <div className="mt-4 border-t border-slate-100 pt-3">
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">
             Arquivos do RMA
           </p>
           <div className="grid gap-2 sm:grid-cols-3">
             {(
               [
-                ["NF_ENTRADA", "NF entrada"],
-                ["NF_SAIDA", "NF saída"],
-                ["NF_COBRANCA", "NF cobrança"],
+                ["NF_ENTRADA", "NF entrada", "antesFechar"],
+                ["NF_SAIDA", "NF retorno", "antesFechar"],
+                ["NF_COBRANCA", "NF cobrança", "financeiro"],
               ] as const
-            ).map(([tipo, titulo]) => {
+            ).map(([tipo, titulo, regra]) => {
               const atual = anexoAtivoPorTipo(row.anexos, tipo);
               const hist = row.anexos.filter(
                 (a) => a.tipo === tipo && a.ativo === false
               );
+              const podeAnexar =
+                regra === "financeiro"
+                  ? canEditCobrancaItem
+                  : canEditFin;
               return (
                 <div
                   key={tipo}
@@ -652,7 +1371,7 @@ export default function RmaDetalhePage() {
                     <span className="text-xs font-semibold text-slate-700">
                       {titulo}
                     </span>
-                    {canEditFin && (
+                    {podeAnexar && (
                       <label className="shrink-0 cursor-pointer text-[11px] font-medium text-brand underline underline-offset-2">
                         {atual ? "Trocar" : "Anexar"}
                         <input
@@ -711,77 +1430,272 @@ export default function RmaDetalhePage() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-xl border bg-white p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="font-semibold text-slate-900">Itens / Estoque</h2>
-            <p className="text-[11px] text-slate-500">
-              Sem manutenção → retornar a mesma série ou trocar (peça boa +
-              descarte da ruim). Fechar o processo é independente do destino do
-              item.
+      <section className="mt-4 rounded-xl border bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-slate-900">
+              Itens / Estoque
+            </h2>
+            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
+              Laudo por item · devolução ou troca após aprovação comercial.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {row.status === "ABERTO" && (
+          <div className="flex flex-wrap items-center gap-3">
+            {processoAberto && (
               <button
                 type="button"
-                disabled={acting}
+                disabled={
+                  acting ||
+                  painelAcao !== null ||
+                  removerItemId !== null ||
+                  showAddItem
+                }
                 onClick={() => {
-                  if (
-                    !confirm(
-                      noRma.length > 0
-                        ? "Cancelar RMA e estornar as entradas do Estoque RMA?"
-                        : "Cancelar este processo RMA?"
-                    )
-                  ) {
-                    return;
-                  }
-                  void (async () => {
-                    if (actingRef.current) return;
-                    actingRef.current = true;
-                    setActing(true);
-                    setError("");
-                    setMsg("");
-                    try {
-                      await api(`/rma/${id}/cancelar`, { method: "POST" });
-                      setMsg("Processo cancelado");
-                      await load();
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : "Erro");
-                    } finally {
-                      actingRef.current = false;
-                      setActing(false);
-                    }
-                  })();
+                  setError("");
+                  setEditCliente(false);
+                  setShowAddItem(true);
+                  setAddProdutoId("");
+                  setAddProdutoQuery("");
+                  setAddProdutoSugestoes([]);
+                  setAddSerie("");
+                  setRemoverItemId(null);
+                  setPainelAcao(null);
                 }}
-                className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-700 disabled:opacity-50"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 disabled:opacity-50"
+              >
+                Incluir item
+              </button>
+            )}
+            {itensParaDevolver.length > 0 && (
+              <button
+                type="button"
+                disabled={
+                  acting || painelAcao !== null || removerItemId !== null
+                }
+                onClick={() => {
+                  setError("");
+                  setMotivoAcao("");
+                  setEditCliente(false);
+                  setRemoverItemId(null);
+                  setShowAddItem(false);
+                  setPainelAcao("devolver-todos");
+                }}
+                className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+              >
+                Devolver liberados ({itensParaDevolver.length})
+              </button>
+            )}
+            {canCancelar && row.status === "ABERTO" && (
+              <button
+                type="button"
+                disabled={
+                  acting || painelAcao !== null || removerItemId !== null
+                }
+                onClick={() => {
+                  setError("");
+                  setMotivoAcao("");
+                  setEditCliente(false);
+                  setRemoverItemId(null);
+                  setShowAddItem(false);
+                  setPainelAcao("cancelar");
+                }}
+                className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 disabled:opacity-50"
               >
                 Cancelar RMA
               </button>
             )}
-            {noRma.length > 0 && (
+          </div>
+        </div>
+
+        {showAddItem && processoAberto && (
+          <form
+            onSubmit={(e) => void adicionarItem(e)}
+            className="relative mt-3 space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3"
+          >
+            <p className="text-sm font-medium text-slate-800">
+              Incluir produto / série
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+            <label className="relative block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">
+                Produto *
+              </span>
+              <input
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={addProdutoQuery}
+                onChange={(e) => onAddProdutoQuery(e.target.value)}
+                onFocus={() => setAddProdutoOpen(true)}
+                placeholder="Buscar produto com série…"
+                disabled={acting}
+              />
+              {addProdutoOpen && addProdutoSugestoes.length > 0 && (
+                <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-lg border bg-white shadow">
+                  {addProdutoSugestoes.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                        onClick={() => {
+                          setAddProdutoId(p.id);
+                          setAddProdutoQuery(`${p.codigo} — ${p.descricao}`);
+                          setAddProdutoOpen(false);
+                        }}
+                      >
+                        <span className="font-mono text-xs">{p.codigo}</span>{" "}
+                        {p.descricao}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-slate-600">
+                Número de série *
+              </span>
+              <input
+                className="w-full rounded-lg border px-3 py-2 font-mono text-sm"
+                value={addSerie}
+                onChange={(e) => setAddSerie(e.target.value)}
+                disabled={acting}
+                placeholder="S/N"
+              />
+            </label>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                disabled={acting || !addProdutoId || !addSerie.trim()}
+                className="rounded-lg bg-brand px-3 py-2 text-sm text-white disabled:opacity-50"
+              >
+                {acting ? "Aguarde…" : "Incluir no RMA"}
+              </button>
               <button
                 type="button"
                 disabled={acting}
-                onClick={() => {
-                  if (
-                    !confirm(
-                      `Devolver ${noRma.length} item(ns) ao cliente? Esta ação lança saída no Estoque RMA.`
-                    )
-                  ) {
-                    return;
-                  }
-                  void devolver();
-                }}
-                className="rounded-lg bg-brand px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                onClick={() => setShowAddItem(false)}
+                className="rounded-lg border px-3 py-2 text-sm text-slate-600"
               >
-                Devolver todos ao cliente
+                Voltar
               </button>
-            )}
-          </div>
-        </div>
-        <ul className="mt-3 space-y-2 text-sm">
-          {row.itens.map((i) => {
+            </div>
+          </form>
+        )}
+
+        {itemRemovendo && (
+          <ConfirmMotivoPanel
+            title={`Remover ${itemRemovendo.produto.codigo}${
+              itemRemovendo.unidadeSerie
+                ? ` · S/N ${itemRemovendo.unidadeSerie.numeroSerie}`
+                : ""
+            }?`}
+            confirmLabel="Remover item"
+            cancelLabel="Voltar"
+            motivoLabel="Motivo da remoção"
+            motivoRequired
+            motivoPlaceholder="Obrigatório — ex.: série digitada errada"
+            motivo={motivoAcao}
+            onMotivoChange={setMotivoAcao}
+            onConfirm={() => void confirmarRemoverItem()}
+            onCancel={() => {
+              setRemoverItemId(null);
+              setMotivoAcao("");
+            }}
+            loading={acting}
+            danger
+          >
+            <p className="text-xs text-slate-600">
+              Estorna a entrada deste item no Estoque RMA. O processo continua
+              aberto — você pode incluir o produto/série corretos. O motivo fica
+              registrado na observação do RMA.
+            </p>
+          </ConfirmMotivoPanel>
+        )}
+
+        {painelAcao === "cancelar" && (
+          <ConfirmMotivoPanel
+            title="Cancelar este processo RMA?"
+            confirmLabel="Confirmar cancelamento"
+            cancelLabel="Voltar"
+            motivoLabel="Motivo do cancelamento"
+            motivoRequired
+            motivoPlaceholder="Obrigatório — por que o RMA está sendo cancelado?"
+            motivo={motivoAcao}
+            onMotivoChange={setMotivoAcao}
+            onConfirm={() => void confirmarCancelarRma()}
+            onCancel={() => {
+              setPainelAcao(null);
+              setMotivoAcao("");
+            }}
+            loading={acting}
+            danger
+          >
+            <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">
+              {noRma.length > 0 ? (
+                <li>
+                  Estorna as entradas de {noRma.length} item(ns) no Estoque RMA
+                  (séries/saldos voltam).
+                </li>
+              ) : (
+                <li>Não há itens no Estoque RMA para estornar.</li>
+              )}
+              <li>
+                O processo fica <strong>CANCELADO</strong> — isto{" "}
+                <strong>não</strong> é devolução ao cliente. Prefira alterar
+                cliente ou remover/incluir itens quando for só correção.
+              </li>
+            </ul>
+          </ConfirmMotivoPanel>
+        )}
+
+        {painelAcao === "devolver-todos" && (
+          <ConfirmMotivoPanel
+            title={`Devolver ${itensParaDevolver.length} item(ns) liberados ao cliente?`}
+            confirmLabel="Confirmar devolução"
+            cancelLabel="Voltar"
+            motivoLabel="Observação"
+            motivoPlaceholder="Opcional — ex.: NF, condição da peça, combinado com o cliente"
+            motivo={motivoAcao}
+            onMotivoChange={setMotivoAcao}
+            onConfirm={() => {
+              const ids = itensParaDevolver.map((i) => i.id);
+              const qtd = ids.length;
+              void devolver(
+                ids,
+                motivoAcao.trim() || undefined,
+                `${qtd} item(ns) devolvidos ao cliente.`
+              );
+            }}
+            onCancel={() => {
+              setPainelAcao(null);
+              setMotivoAcao("");
+            }}
+            loading={acting}
+          >
+            <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">
+              <li>
+                Só itens em <strong>Aguardando envio</strong> ou{" "}
+                <strong>Não aprovado</strong> ({itensParaDevolver.length}).
+              </li>
+              <li>
+                Destino: cliente do processo ({row.cliente.nome}) —{" "}
+                <strong>não</strong> estorna a entrada.
+              </li>
+            </ul>
+          </ConfirmMotivoPanel>
+        )}
+      </section>
+
+      <section className="mt-3 rounded-xl border bg-white p-4">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Itens em manutenção
+          <span className="ml-1.5 font-normal normal-case text-slate-400">
+            ({itensAtivos.length})
+          </span>
+        </h3>
+
+        <ul className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+          {itensAtivos.map((i) => {
             const laudosById = new Map<string, RmaAnexo>();
             for (const a of i.anexos || []) {
               if (a.tipo === "LAUDO") laudosById.set(a.id, a);
@@ -810,79 +1724,322 @@ export default function RmaDetalhePage() {
               return true;
             });
             const filiaisDescarte = filiais.filter((f) => f.id !== row.filial.id);
+            const descLimpa = descricaoProdutoLimpa(
+              i.produto.codigo,
+              i.produto.descricao
+            );
+            /** Só troca precisa de largura extra; cobrança/aprovação ficam no card */
+            const expandido = trocaItemId === i.id;
             return (
               <li
                 key={i.id}
-                className="rounded-lg border border-slate-100 px-3 py-2"
+                className={`flex flex-col rounded-lg border border-slate-200 bg-slate-50/50 p-3 ${
+                  expandido ? "sm:col-span-2 xl:col-span-3" : ""
+                }`}
               >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold">
-                    {ITEM_STATUS[i.status] || i.status}
-                  </span>
-                  <span className="font-mono text-xs">{i.produto.codigo}</span>
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    {i.produto.descricao}
-                  </span>
-                  {i.unidadeSerie && (
-                    <span className="font-mono text-[10px] text-slate-600">
-                      S/N {i.unidadeSerie.numeroSerie}
+                <div className="flex min-h-0 flex-1 flex-col gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${etapaBadgeClass(
+                        i.etapa || "AGUARDANDO_LAUDO"
+                      )}`}
+                    >
+                      {ETAPA_LABEL[i.etapa || ""] ||
+                        i.etapa ||
+                        "Aguardando laudo"}
+                    </span>
+                    <span className="rounded bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                      {ITEM_STATUS[i.status] || i.status}
+                    </span>
+                    {i.cobrou === true && (
+                      <span className="text-[10px] text-slate-600">
+                        Cobrou R${" "}
+                        {Number(i.valorCobrado || 0).toLocaleString("pt-BR", {
+                          minimumFractionDigits: 2,
+                        })}
+                        {i.nfCobrancaNumero
+                          ? ` · NF ${i.nfCobrancaNumero}`
+                          : ""}
+                      </span>
+                    )}
+                    {i.cobrou === false && (
+                      <span className="text-[10px] text-slate-500">
+                        Sem cobrança
+                      </span>
+                    )}
+                  </div>
+                  <dl className="min-w-0 space-y-1 text-xs leading-snug">
+                    <div className="flex gap-1.5">
+                      <dt className="w-9 shrink-0 font-medium text-slate-500">
+                        Cód.
+                      </dt>
+                      <dd className="min-w-0 break-all font-mono text-slate-900">
+                        {i.produto.codigo}
+                      </dd>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <dt className="w-9 shrink-0 font-medium text-slate-500">
+                        Desc.
+                      </dt>
+                      <dd
+                        className="min-w-0 line-clamp-2 text-slate-700"
+                        title={descLimpa || i.produto.descricao}
+                      >
+                        {descLimpa || i.produto.descricao || "—"}
+                      </dd>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <dt className="w-9 shrink-0 font-medium text-slate-500">
+                        N/S
+                      </dt>
+                      <dd className="min-w-0 break-all font-mono text-slate-900">
+                        {i.unidadeSerie?.numeroSerie || "—"}
+                        {i.unidadeSerieSubstituicao?.numeroSerie ? (
+                          <span className="text-emerald-700">
+                            {" "}
+                            → {i.unidadeSerieSubstituicao.numeroSerie}
+                          </span>
+                        ) : null}
+                      </dd>
+                    </div>
+                  </dl>
+                  {canEditCobrancaItem && i.status !== "CANCELADO" && (
+                    <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      <button
+                        type="button"
+                        disabled={acting}
+                        className="font-medium text-brand underline disabled:opacity-50"
+                        onClick={() => {
+                          setItemFinEditId(i.id);
+                          setItemCobrou(
+                            i.cobrou === true ? "true" : "false"
+                          );
+                          setItemValor(
+                            i.valorCobrado != null
+                              ? String(i.valorCobrado)
+                              : ""
+                          );
+                          setItemNfCob(i.nfCobrancaNumero || "");
+                        }}
+                      >
+                        Cobrança
+                      </button>
                     </span>
                   )}
-                  {i.unidadeSerieSubstituicao && (
-                    <span className="font-mono text-[10px] text-emerald-700">
-                      → {i.unidadeSerieSubstituicao.numeroSerie}
-                    </span>
+                  {processoAberto &&
+                    (i.status === "EM_ESTOQUE" ||
+                      i.status === "SEM_MANUTENCAO") && (
+                      <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                        {podeDecidirAprovacao &&
+                          i.etapa === "AGUARDANDO_APROVACAO" && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={acting || removerItemId !== null}
+                                className="font-medium text-emerald-700 underline disabled:opacity-50"
+                                onClick={() => {
+                                  setAprovacaoItemId(i.id);
+                                  setAprovacaoObs("");
+                                }}
+                              >
+                                Aprovar
+                              </button>
+                              <button
+                                type="button"
+                                disabled={acting || removerItemId !== null}
+                                className="text-slate-700 underline disabled:opacity-50"
+                                onClick={() =>
+                                  void registrarAprovacaoItem(i.id, "RECUSADA")
+                                }
+                              >
+                                Não aprovar
+                              </button>
+                            </>
+                          )}
+                        {i.etapa === "AGUARDANDO_MANUTENCAO" && (
+                          <button
+                            type="button"
+                            disabled={acting || removerItemId !== null}
+                            className="font-medium text-sky-800 underline disabled:opacity-50"
+                            onClick={() =>
+                              void marcarManutencaoRealizada(i.id)
+                            }
+                          >
+                            Manutenção realizada
+                          </button>
+                        )}
+                        {ETAPAS_SAIDA.has(i.etapa || "") && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={acting || removerItemId !== null}
+                              className="text-brand underline disabled:opacity-50"
+                              onClick={() => void devolver([i.id])}
+                            >
+                              Devolver
+                            </button>
+                            <button
+                              type="button"
+                              disabled={acting || removerItemId !== null}
+                              className="text-amber-800 underline disabled:opacity-50"
+                              onClick={() => void abrirTroca(i)}
+                            >
+                              Trocar
+                            </button>
+                          </>
+                        )}
+                        <button
+                          type="button"
+                          disabled={
+                            acting ||
+                            painelAcao !== null ||
+                            removerItemId !== null
+                          }
+                          className="text-red-700 underline disabled:opacity-50"
+                          onClick={() => {
+                            setPainelAcao(null);
+                            setShowAddItem(false);
+                            setTrocaItemId(null);
+                            setMotivoAcao("");
+                            setRemoverItemId(i.id);
+                          }}
+                        >
+                          Remover
+                        </button>
+                      </span>
+                    )}
+                  {aprovacaoItemId === i.id && (
+                    <div className="space-y-1.5 rounded-md border border-amber-200 bg-amber-50/60 p-2 text-[11px]">
+                      <input
+                        className="w-full rounded border border-amber-200/80 px-2 py-1 text-[11px]"
+                        value={aprovacaoObs}
+                        onChange={(e) => setAprovacaoObs(e.target.value)}
+                        placeholder="Obs. opcional"
+                        disabled={acting}
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={acting}
+                          className="rounded bg-emerald-700 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                          onClick={() =>
+                            void registrarAprovacaoItem(i.id, "APROVADA")
+                          }
+                        >
+                          Confirmar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={acting}
+                          className="rounded border px-2 py-1 text-[11px] disabled:opacity-50"
+                          onClick={() => setAprovacaoItemId(null)}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
                   )}
-                  {processoAberto && i.status === "EM_ESTOQUE" && (
-                    <span className="ml-auto flex shrink-0 flex-wrap gap-2 text-xs">
-                      <button
-                        type="button"
-                        disabled={acting}
-                        className="text-slate-700 underline disabled:opacity-50"
-                        onClick={() => void marcarSemManutencao([i.id])}
-                      >
-                        Sem manutenção
-                      </button>
-                      <button
-                        type="button"
-                        disabled={acting}
-                        className="text-brand underline disabled:opacity-50"
-                        onClick={() => void devolver([i.id])}
-                      >
-                        Devolver
-                      </button>
-                    </span>
+                  {itemFinEditId === i.id && (
+                    <div className="space-y-1.5 rounded-md border border-slate-200 bg-white p-2 text-[11px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-medium text-slate-500">
+                          Cobrou?
+                        </span>
+                        <div
+                          className="inline-flex rounded-md border border-slate-200 p-0.5"
+                          role="group"
+                          aria-label="Cobrou"
+                        >
+                          <button
+                            type="button"
+                            disabled={acting}
+                            onClick={() => setItemCobrou("false")}
+                            className={`rounded px-2.5 py-0.5 text-[11px] font-medium disabled:opacity-50 ${
+                              itemCobrou === "false"
+                                ? "bg-slate-700 text-white"
+                                : "text-slate-600 hover:bg-slate-50"
+                            }`}
+                          >
+                            Não
+                          </button>
+                          <button
+                            type="button"
+                            disabled={acting}
+                            onClick={() => setItemCobrou("true")}
+                            className={`rounded px-2.5 py-0.5 text-[11px] font-medium disabled:opacity-50 ${
+                              itemCobrou === "true"
+                                ? "bg-brand text-white"
+                                : "text-slate-600 hover:bg-slate-50"
+                            }`}
+                          >
+                            Sim
+                          </button>
+                        </div>
+                      </div>
+                      {itemCobrou === "true" && (
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <label className="block min-w-0">
+                            <span className="font-medium text-slate-500">
+                              Valor *
+                            </span>
+                            <input
+                              className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-[11px]"
+                              value={itemValor}
+                              onChange={(e) => setItemValor(e.target.value)}
+                              disabled={acting}
+                              placeholder="0,00"
+                            />
+                          </label>
+                          <label className="block min-w-0">
+                            <span className="font-medium text-slate-500">
+                              NF *
+                            </span>
+                            <input
+                              className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-[11px]"
+                              value={itemNfCob}
+                              onChange={(e) => setItemNfCob(e.target.value)}
+                              disabled={acting}
+                              placeholder="Nº NF"
+                            />
+                          </label>
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-2 pt-0.5">
+                        <button
+                          type="button"
+                          disabled={acting}
+                          className="rounded bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                          onClick={() => void salvarItemFinanceiro(i.id)}
+                        >
+                          Salvar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={acting}
+                          className="rounded border px-2 py-1 text-[11px] disabled:opacity-50"
+                          onClick={() => setItemFinEditId(null)}
+                        >
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
                   )}
-                  {processoAberto && i.status === "SEM_MANUTENCAO" && (
-                    <span className="ml-auto flex shrink-0 flex-wrap gap-2 text-xs">
-                      <button
-                        type="button"
-                        disabled={acting}
-                        className="text-brand underline disabled:opacity-50"
-                        onClick={() => void devolver([i.id])}
-                      >
-                        Retornar ao cliente
-                      </button>
-                      <button
-                        type="button"
-                        disabled={acting}
-                        className="text-amber-800 underline disabled:opacity-50"
-                        onClick={() => void abrirTroca(i)}
-                      >
-                        Trocar
-                      </button>
-                    </span>
+                  {i.aprovacaoPor && i.aprovacaoEm && (
+                    <p className="text-[10px] text-slate-500">
+                      Decisão: {i.aprovacaoPor.nome} em{" "}
+                      {new Date(i.aprovacaoEm).toLocaleString("pt-BR")}
+                      {i.aprovacaoObs ? ` — ${i.aprovacaoObs}` : ""}
+                    </p>
                   )}
                 </div>
-                <ItemMovLinks item={i} />
                 {trocaItemId === i.id && (
-                  <div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs">
-                    <p className="font-medium text-amber-950">
+                  <div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3">
+                    <p className="font-medium text-amber-950 sm:col-span-2 lg:col-span-3">
                       Troca — peça boa de outro estoque; série ruim vai ao
                       descarte
                     </p>
                     {rmaDefaults?.avisos && rmaDefaults.avisos.length > 0 && (
-                      <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950">
+                      <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950 sm:col-span-2 lg:col-span-3">
                         {rmaDefaults.avisos.join(" · ")}
                       </p>
                     )}
@@ -960,7 +2117,7 @@ export default function RmaDetalhePage() {
                         maxLength={500}
                       />
                     </label>
-                    <div className="flex flex-wrap gap-2 pt-1">
+                    <div className="flex flex-wrap gap-2 pt-1 sm:col-span-2 lg:col-span-3">
                       <button
                         type="button"
                         disabled={acting}
@@ -983,7 +2140,7 @@ export default function RmaDetalhePage() {
                 {i.observacao && i.status === "DESCARTADO" && (
                   <p className="mt-1 text-[11px] text-slate-500">{i.observacao}</p>
                 )}
-                <div className="relative mt-2 flex min-w-0 items-center gap-2 rounded-md border border-slate-100 bg-slate-50/80 px-2 py-1.5 text-xs">
+                <div className="relative mt-auto flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-100 pt-2 text-xs">
                   <span className="shrink-0 font-medium text-slate-600">
                     Laudo
                   </span>
@@ -993,12 +2150,12 @@ export default function RmaDetalhePage() {
                       target="_blank"
                       rel="noreferrer"
                       title={laudo.label || "Laudo"}
-                      className="min-w-0 flex-1 truncate text-brand underline underline-offset-2"
+                      className="min-w-0 truncate text-brand underline underline-offset-2"
                     >
                       {nomeAnexoCurto(laudo.label, "Ver laudo")}
                     </a>
                   ) : (
-                    <span className="flex-1 text-slate-400">Sem laudo</span>
+                    <span className="text-slate-400">Sem laudo</span>
                   )}
                   {row.status === "ABERTO" && (
                     <label className="shrink-0 cursor-pointer font-medium text-brand underline underline-offset-2">
@@ -1021,7 +2178,7 @@ export default function RmaDetalhePage() {
                       <summary className="cursor-pointer">
                         Ant. ({laudosHist.length})
                       </summary>
-                      <ul className="absolute right-0 z-10 mt-1 w-56 space-y-0.5 rounded border bg-white p-2 shadow">
+                      <ul className="absolute left-0 z-10 mt-1 w-56 space-y-0.5 rounded border bg-white p-2 shadow">
                         {laudosHist.map((a) => (
                           <li key={a.id}>
                             <a
@@ -1043,7 +2200,40 @@ export default function RmaDetalhePage() {
             );
           })}
         </ul>
+        {itensAtivos.length === 0 && (
+          <p className="text-sm text-slate-500">
+            Nenhum item ativo neste RMA.
+            {processoAberto ? " Use Incluir item para adicionar." : ""}
+          </p>
+        )}
+        {itensRemovidos.length > 0 && (
+          <details className="mt-3 rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2">
+            <summary className="cursor-pointer text-xs font-medium text-slate-600">
+              Itens removidos ({itensRemovidos.length})
+            </summary>
+            <ul className="mt-2 space-y-1.5 text-xs text-slate-600">
+              {itensRemovidos.map((i) => (
+                <li
+                  key={i.id}
+                  className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-t border-slate-100 pt-1.5 first:border-0 first:pt-0"
+                >
+                  <span className="font-mono">{i.produto.codigo}</span>
+                  {i.unidadeSerie && (
+                    <span className="font-mono text-[10px]">
+                      S/N {i.unidadeSerie.numeroSerie}
+                    </span>
+                  )}
+                  {i.observacao && (
+                    <span className="min-w-0 flex-1 text-[11px] text-slate-500">
+                      {i.observacao}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
       </section>
-    </>
+    </div>
   );
 }

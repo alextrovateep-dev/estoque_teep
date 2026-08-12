@@ -1033,6 +1033,11 @@ cadastrosRouter.get("/clientes", async (req, res, next) => {
       await prisma.cliente.findMany({
         where: ativas ? { ativo: true } : {},
         orderBy: { nome: "asc" },
+        include: {
+          responsavelComercial: {
+            select: { id: true, nome: true, email: true },
+          },
+        },
       })
     );
   } catch (e) {
@@ -1083,6 +1088,11 @@ cadastrosRouter.get("/clientes/:id", async (req, res, next) => {
   try {
     const row = await prisma.cliente.findUnique({
       where: { id: req.params.id },
+      include: {
+        responsavelComercial: {
+          select: { id: true, nome: true, email: true },
+        },
+      },
     });
     if (!row) throw new AppError(404, "Cliente/fornecedor não encontrado");
     res.json(row);
@@ -1122,7 +1132,17 @@ cadastrosRouter.post(
           throw new AppError(409, "CNPJ/documento já cadastrado");
         }
       }
-      res.status(201).json(await prisma.cliente.create({ data }));
+      await assertResponsavelComercialCliente(data.responsavelComercialId);
+      res.status(201).json(
+        await prisma.cliente.create({
+          data,
+          include: {
+            responsavelComercial: {
+              select: { id: true, nome: true, email: true },
+            },
+          },
+        })
+      );
     } catch (e: unknown) {
       if ((e as { code?: string }).code === "P2002") {
         return next(new AppError(409, "CNPJ/documento já cadastrado"));
@@ -1152,10 +1172,18 @@ cadastrosRouter.patch(
           }
         }
       }
+      if ("responsavelComercialId" in data) {
+        await assertResponsavelComercialCliente(data.responsavelComercialId);
+      }
       res.json(
         await prisma.cliente.update({
           where: { id: req.params.id },
           data,
+          include: {
+            responsavelComercial: {
+              select: { id: true, nome: true, email: true },
+            },
+          },
         })
       );
     } catch (e: unknown) {
@@ -1166,6 +1194,19 @@ cadastrosRouter.patch(
     }
   }
 );
+
+async function assertResponsavelComercialCliente(
+  usuarioId: string | null | undefined
+) {
+  if (usuarioId == null || usuarioId === "") return;
+  const u = await prisma.usuario.findFirst({
+    where: { id: usuarioId, ativo: true },
+    select: { id: true },
+  });
+  if (!u) {
+    throw new AppError(400, "Responsável comercial inválido ou inativo");
+  }
+}
 
 /** Localiza cadastro pelo CNPJ ignorando pontuação (legado digits-only). */
 async function findClienteByDocumento(

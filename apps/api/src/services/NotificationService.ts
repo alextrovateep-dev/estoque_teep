@@ -192,6 +192,56 @@ export function createInAppNotification(
   });
 }
 
+/**
+ * Notifica lista explícita de usuários (ex.: destinatários do RMA).
+ * Não consulta ticks `alertasEmail`.
+ * `forceEmail: true` envia e-mail se houver endereço (operacional),
+ * ignorando o master `receberAlertasEmail`.
+ */
+export function notifyUsuarios(
+  usuarioIds: string[],
+  input: CreateNotificationInput & { forceEmail?: boolean }
+): void {
+  const ids = [...new Set(usuarioIds.filter(Boolean))];
+  if (ids.length === 0) return;
+  setImmediate(() => {
+    void (async () => {
+      try {
+        const titulo = input.titulo || ALERTA_EVENTO_LABELS[input.tipo];
+        const users = await prisma.usuario.findMany({
+          where: { id: { in: ids }, ativo: true },
+          select: {
+            id: true,
+            email: true,
+            nome: true,
+            receberAlertasEmail: true,
+          },
+        });
+        for (const u of users) {
+          await createNotificationForUser({
+            usuarioId: u.id,
+            email: u.email,
+            nome: u.nome,
+            receberAlertasEmail: input.forceEmail
+              ? true
+              : u.receberAlertasEmail,
+            tipo: input.tipo,
+            titulo,
+            mensagem: input.mensagem,
+            meta: input.meta,
+            dedupeKey: input.dedupeKey
+              ? `${input.dedupeKey}|${u.id}`
+              : undefined,
+            tryEmail: input.tryEmail !== false,
+          });
+        }
+      } catch (e) {
+        console.error("[NotificationService] notifyUsuarios:", e);
+      }
+    })();
+  });
+}
+
 export async function listarNotificacoes(
   usuarioId: string,
   opts?: { take?: number; onlyUnread?: boolean }

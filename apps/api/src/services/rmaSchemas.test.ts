@@ -5,6 +5,7 @@ import {
   createRmaProcessoSchema,
   semManutencaoRmaSchema,
   trocarRmaItemSchema,
+  updateRmaItemFinanceiroSchema,
 } from "@teep/shared";
 import {
   detectPdfMime,
@@ -97,6 +98,27 @@ describe("trocarRmaItemSchema", () => {
       numeroSerieBoa: "   ",
     });
     assert.equal(r.success, false);
+  });
+});
+
+describe("updateRmaItemFinanceiroSchema", () => {
+  it("exige valor e NF quando cobrou=true", () => {
+    const r = updateRmaItemFinanceiroSchema.safeParse({ cobrou: true });
+    assert.equal(r.success, false);
+  });
+
+  it("aceita cobrou false", () => {
+    const r = updateRmaItemFinanceiroSchema.safeParse({ cobrou: false });
+    assert.equal(r.success, true);
+  });
+
+  it("aceita cobrou true com valor e NF", () => {
+    const r = updateRmaItemFinanceiroSchema.safeParse({
+      cobrou: true,
+      valorCobrado: 150,
+      nfCobrancaNumero: "NF-1",
+    });
+    assert.equal(r.success, true);
   });
 });
 

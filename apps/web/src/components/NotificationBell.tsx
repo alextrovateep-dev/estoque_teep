@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { io, type Socket } from "socket.io-client";
 import { api, ensureAccessToken } from "@/lib/api";
+import { formatNotificacaoDisplay } from "@/lib/notificationDisplay";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -13,16 +15,19 @@ type Notificacao = {
   mensagem: string;
   lida: boolean;
   criadoEm: string;
+  meta?: Record<string, unknown> | null;
 };
 
 type ToastItem = {
   id: string;
   titulo: string;
-  mensagem: string;
+  preview: string;
+  href: string | null;
 };
 
-/** Sino + inbox + toasts Socket (F9.1) — UI Instagram (ícone + ponto vermelho). */
+/** Sino + inbox estilo marketplace + toasts Socket. */
 export function NotificationBell() {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notificacao[]>([]);
   const [naoLidas, setNaoLidas] = useState(0);
@@ -79,10 +84,16 @@ export function NotificationBell() {
         id?: string;
         titulo?: string;
         mensagem: string;
+        meta?: Record<string, unknown>;
       }) => {
         const id =
           payload.id ||
           `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const disp = formatNotificacaoDisplay({
+          titulo: payload.titulo || "Alerta",
+          mensagem: payload.mensagem,
+          meta: payload.meta,
+        });
         setToasts((prev) => {
           if (prev.some((t) => t.id === id)) return prev;
           return [
@@ -90,7 +101,8 @@ export function NotificationBell() {
             {
               id,
               titulo: payload.titulo || "Alerta",
-              mensagem: payload.mensagem,
+              preview: disp.previewShort,
+              href: disp.href,
             },
           ];
         });
@@ -117,7 +129,10 @@ export function NotificationBell() {
   async function marcarUma(id: string) {
     try {
       await api(`/notificacoes/${id}/lida`, { method: "PATCH", body: "{}" });
-      await load();
+      setItems((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, lida: true } : n))
+      );
+      setNaoLidas((c) => Math.max(0, c - 1));
     } catch {
       /* ignore */
     }
@@ -135,6 +150,15 @@ export function NotificationBell() {
       /* ignore */
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function abrirNotificacao(n: Notificacao) {
+    const disp = formatNotificacaoDisplay(n);
+    if (!n.lida) await marcarUma(n.id);
+    setOpen(false);
+    if (disp.href) {
+      router.push(disp.href);
     }
   }
 
@@ -172,64 +196,130 @@ export function NotificationBell() {
           </svg>
           {naoLidas > 0 && (
             <span
-              className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-red-500 ring-2 ring-white"
+              className="absolute right-1 top-1 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold leading-none text-white ring-2 ring-white"
               aria-hidden
-            />
+            >
+              {naoLidas > 9 ? "9+" : naoLidas}
+            </span>
           )}
         </button>
 
         {open && (
-          <div className="absolute right-0 z-50 mt-2 w-[min(100vw-2rem,22rem)] rounded-xl border border-slate-200 bg-white shadow-lg">
-            <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
-              <span className="text-sm font-semibold text-slate-800">
-                Notificações
-              </span>
+          <div className="absolute right-0 z-50 mt-2 w-[min(100vw-1.5rem,24rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-3 py-2.5">
+              <div>
+                <span className="text-sm font-semibold text-slate-900">
+                  Notificações
+                </span>
+                {naoLidas > 0 && (
+                  <span className="ml-2 text-xs text-slate-500">
+                    {naoLidas} não lida{naoLidas === 1 ? "" : "s"}
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
                 disabled={loading || naoLidas === 0}
                 onClick={() => void marcarTodas()}
-                className="text-xs text-brand disabled:opacity-40"
+                className="text-xs font-medium text-brand hover:underline disabled:opacity-40"
               >
-                Marcar todas lidas
+                Marcar todas como lidas
               </button>
             </div>
-            <ul className="max-h-80 overflow-y-auto">
+            <ul className="max-h-[28rem] overflow-y-auto">
               {items.length === 0 && (
-                <li className="px-3 py-6 text-center text-sm text-slate-400">
-                  Nenhuma notificação
+                <li className="px-4 py-10 text-center">
+                  <p className="text-sm font-medium text-slate-600">
+                    Tudo em dia
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Você não tem notificações por aqui.
+                  </p>
                 </li>
               )}
-              {items.map((n) => (
-                <li
-                  key={n.id}
-                  className={`border-b border-slate-50 px-3 py-2.5 ${
-                    n.lida ? "bg-white" : "bg-brand-light/40"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-medium text-slate-800">
-                        {n.titulo}
+              {items.map((n) => {
+                const disp = formatNotificacaoDisplay(n);
+                const clickable = Boolean(disp.href);
+                return (
+                  <li key={n.id} className="border-b border-slate-100 last:border-0">
+                    <button
+                      type="button"
+                      onClick={() => void abrirNotificacao(n)}
+                      className={`flex w-full gap-3 px-3 py-3 text-left transition-colors hover:bg-slate-50 ${
+                        n.lida ? "bg-white" : "bg-sky-50/70"
+                      }`}
+                    >
+                      <span
+                        className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${
+                          n.lida ? "bg-transparent" : "bg-brand"
+                        }`}
+                        aria-hidden
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start justify-between gap-2">
+                          <span
+                            className={`text-sm leading-snug ${
+                              n.lida
+                                ? "font-medium text-slate-700"
+                                : "font-semibold text-slate-900"
+                            } ${clickable ? "text-brand hover:underline" : ""}`}
+                          >
+                            {n.titulo}
+                          </span>
+                          <time
+                            className="shrink-0 text-[10px] text-slate-400"
+                            title={new Date(n.criadoEm).toLocaleString("pt-BR")}
+                          >
+                            {disp.relativeTime}
+                          </time>
+                        </div>
+                        <div className="mt-1 space-y-0.5">
+                          {disp.previewLines.slice(0, 2).map((line, idx) => (
+                            <p
+                              key={idx}
+                              className="truncate text-xs text-slate-600"
+                            >
+                              {line}
+                            </p>
+                          ))}
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                          {clickable && (
+                            <span className="text-[11px] font-medium text-brand">
+                              Ver detalhes →
+                            </span>
+                          )}
+                          {!n.lida && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              className="text-[11px] text-slate-500 underline hover:text-slate-800"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void marcarUma(n.id);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  void marcarUma(n.id);
+                                }
+                              }}
+                            >
+                              Marcar como lida
+                            </span>
+                          )}
+                          {n.lida && (
+                            <span className="text-[10px] text-slate-400">
+                              Lida
+                            </span>
+                          )}
+                        </div>
                       </div>
-                      <p className="mt-0.5 text-xs text-slate-600">
-                        {n.mensagem}
-                      </p>
-                      <time className="mt-1 block text-[10px] text-slate-400">
-                        {new Date(n.criadoEm).toLocaleString("pt-BR")}
-                      </time>
-                    </div>
-                    {!n.lida && (
-                      <button
-                        type="button"
-                        className="shrink-0 text-[10px] text-brand"
-                        onClick={() => void marcarUma(n.id)}
-                      >
-                        Lida
-                      </button>
-                    )}
-                  </div>
-                </li>
-              ))}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}
@@ -240,20 +330,38 @@ export function NotificationBell() {
           {toasts.map((t) => (
             <div
               key={t.id}
-              className="pointer-events-auto rounded-lg border border-brand/30 bg-white px-4 py-3 shadow-lg"
+              className="pointer-events-auto rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-lg"
               role="status"
             >
-              <div className="text-sm font-semibold text-brand">{t.titulo}</div>
-              <p className="mt-1 text-sm text-slate-700">{t.mensagem}</p>
-              <button
-                type="button"
-                className="mt-2 text-xs text-slate-500 hover:text-slate-800"
-                onClick={() =>
-                  setToasts((prev) => prev.filter((x) => x.id !== t.id))
-                }
-              >
-                Fechar
-              </button>
+              <div className="text-sm font-semibold text-slate-900">
+                {t.titulo}
+              </div>
+              <p className="mt-1 line-clamp-2 text-sm text-slate-600">
+                {t.preview}
+              </p>
+              <div className="mt-2 flex items-center gap-3">
+                {t.href && (
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-brand hover:underline"
+                    onClick={() => {
+                      setToasts((prev) => prev.filter((x) => x.id !== t.id));
+                      router.push(t.href!);
+                    }}
+                  >
+                    Abrir
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="text-xs text-slate-500 hover:text-slate-800"
+                  onClick={() =>
+                    setToasts((prev) => prev.filter((x) => x.id !== t.id))
+                  }
+                >
+                  Fechar
+                </button>
+              </div>
             </div>
           ))}
         </div>
