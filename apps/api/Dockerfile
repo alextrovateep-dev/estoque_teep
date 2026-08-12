@@ -1,12 +1,16 @@
 FROM node:22-alpine AS base
+RUN apk add --no-cache libc6-compat
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 WORKDIR /app
+ENV CI=1
+# VMs pequenas: evita OOM no install/build (ajuste se tiver mais RAM)
+ENV NODE_OPTIONS=--max-old-space-size=2048
 
 FROM base AS deps
-COPY package.json pnpm-workspace.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY apps/api/package.json apps/api/
 COPY packages/shared/package.json packages/shared/
-RUN pnpm install --filter @teep/api... --filter @teep/shared...
+RUN pnpm install --frozen-lockfile --filter @teep/api... --filter @teep/shared...
 
 FROM deps AS build
 COPY packages/shared packages/shared

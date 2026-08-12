@@ -180,6 +180,20 @@ SEED_ADMIN_PASSWORD=<senha-inicial>
 
 ### 5.3 Subir
 
+Em VM com **≤ 4 GB RAM**, construa as imagens **uma de cada vez** (api e web em paralelo costumam estourar memória no `pnpm install` — exit code 228/137):
+
+```bash
+cd /opt/estoque-teep
+# opcional: swap de 2G se free -h mostrar pouca memória
+# sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
+
+docker compose -f docker-compose.prod.yml --env-file .env.production build api
+docker compose -f docker-compose.prod.yml --env-file .env.production build web
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+```
+
+Com **8 GB+**, pode subir tudo de uma vez:
+
 ```bash
 cd /opt/estoque-teep
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
@@ -442,6 +456,7 @@ Ordem do script: health → login → produto → init 50 → compra +10 → ven
 
 | Sintoma | Causa provável | Ação |
 |---------|----------------|------|
+| Build falha em `pnpm install` (exit **228** / **137**) | RAM insuficiente (api+web em paralelo) ou lockfile ausente | `git pull`; build sequencial (`build api` depois `build web`); criar swap 2G; ver §5.3 |
 | API não sobe; log fala de JWT / CORS | Secret fraco ou `CORS_ORIGIN` com localhost | Corrija `.env.production` e `up -d` de novo |
 | Caddy sem certificado (prod) | DNS não aponta / 80 fechada | Ajuste DNS e firewall; `logs caddy` |
 | Front chama API errada | `NEXT_PUBLIC_*` do **build** | Esses valores entram no **build** da imagem `web`; altere o env e `--build` de novo |
