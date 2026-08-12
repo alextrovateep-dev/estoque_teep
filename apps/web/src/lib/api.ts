@@ -41,8 +41,11 @@ export function displayName(user: Pick<User, "nome" | "apelido">): string {
 }
 
 const ACCESS = "teep_access";
-const REFRESH = "teep_refresh";
 const USER = "teep_user";
+/** Legado: limpar se ainda existir de sessões antigas. */
+const REFRESH_LEGACY = "teep_refresh";
+
+const fetchCreds: RequestCredentials = "include";
 
 export function getStoredUser(): User | null {
   if (typeof window === "undefined") return null;
@@ -55,14 +58,15 @@ export function getAccessToken() {
   return localStorage.getItem(ACCESS);
 }
 
+/** Persiste access + user. Refresh fica só em cookie HttpOnly (API). */
 export function setSession(data: {
   accessToken: string;
-  refreshToken: string;
+  refreshToken?: string;
   user: User;
 }) {
   localStorage.setItem(ACCESS, data.accessToken);
-  localStorage.setItem(REFRESH, data.refreshToken);
   localStorage.setItem(USER, JSON.stringify(data.user));
+  localStorage.removeItem(REFRESH_LEGACY);
 }
 
 export function patchStoredUser(partial: Partial<User>) {
@@ -73,8 +77,8 @@ export function patchStoredUser(partial: Partial<User>) {
 
 export function clearSession() {
   localStorage.removeItem(ACCESS);
-  localStorage.removeItem(REFRESH);
   localStorage.removeItem(USER);
+  localStorage.removeItem(REFRESH_LEGACY);
 }
 
 function jwtExpMs(token: string): number | null {
@@ -89,54 +93,64 @@ function jwtExpMs(token: string): number | null {
   }
 }
 
-/** Garante access token válido (renova se perto do expiry). Usado por API e Socket. */
+let refreshInFlight: Promise<string | null> | null = null;
+
+/**
+ * Garante access token válido (renova via cookie HttpOnly se perto do expiry).
+ * Usado por API e Socket.
+ */
 export async function ensureAccessToken(): Promise<string | null> {
   if (typeof window === "undefined") return null;
   const access = localStorage.getItem(ACCESS);
-  const refresh = localStorage.getItem(REFRESH);
-  if (!access && !refresh) return null;
+  const hasUser = Boolean(localStorage.getItem(USER));
+  if (!access && !hasUser) return null;
 
   const exp = access ? jwtExpMs(access) : null;
-  const stale =
-    !access || exp === null || exp < Date.now() + 60_000;
+  const stale = !access || exp === null || exp < Date.now() + 60_000;
 
   if (!stale && access) return access;
-  if (!refresh) return access;
+  if (!hasUser && !access) return null;
 
-  try {
-    const refreshed = await fetch(`${API_URL}/auth/refresh`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken: refresh }),
-    });
-    if (!refreshed.ok) {
-      clearSession();
-      return null;
-    }
-    const data = (await refreshed.json()) as { accessToken: string };
-    localStorage.setItem(ACCESS, data.accessToken);
-    return data.accessToken;
-  } catch {
-    return access;
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const refreshed = await fetch(`${API_URL}/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: fetchCreds,
+          body: JSON.stringify({}),
+        });
+        if (!refreshed.ok) {
+          clearSession();
+          return null;
+        }
+        const data = (await refreshed.json()) as { accessToken: string };
+        localStorage.setItem(ACCESS, data.accessToken);
+        localStorage.removeItem(REFRESH_LEGACY);
+        return data.accessToken;
+      } catch {
+        return localStorage.getItem(ACCESS);
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
   }
+  return refreshInFlight;
 }
 
 export async function logoutSession() {
-  const refreshToken =
-    typeof window !== "undefined" ? localStorage.getItem(REFRESH) : null;
   try {
-    if (refreshToken || getAccessToken()) {
-      await fetch(`${API_URL}/auth/logout`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(getAccessToken()
-            ? { Authorization: `Bearer ${getAccessToken()}` }
-            : {}),
-        },
-        body: JSON.stringify({ refreshToken }),
-      });
-    }
+    await fetch(`${API_URL}/auth/logout`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(getAccessToken()
+          ? { Authorization: `Bearer ${getAccessToken()}` }
+          : {}),
+      },
+      credentials: fetchCreds,
+      body: JSON.stringify({}),
+    });
   } catch {
     // limpa sessão local mesmo se a API falhar
   }
@@ -148,17 +162,27 @@ export async function api<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const headers = new Headers(options.headers || {});
-  headers.set("Content-Type", "application/json");
+  if (!headers.has("Content-Type") && options.body) {
+    headers.set("Content-Type", "application/json");
+  }
   const token = getAccessToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  let res = await fetch(`${API_URL}${path}`, { ...options, headers });
+  let res = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: fetchCreds,
+  });
 
-  if (res.status === 401 && localStorage.getItem(REFRESH)) {
+  if (res.status === 401 && getStoredUser()) {
     const fresh = await ensureAccessToken();
     if (fresh) {
       headers.set("Authorization", `Bearer ${fresh}`);
-      res = await fetch(`${API_URL}${path}`, { ...options, headers });
+      res = await fetch(`${API_URL}${path}`, {
+        ...options,
+        headers,
+        credentials: fetchCreds,
+      });
     } else {
       clearSession();
       if (typeof window !== "undefined") window.location.href = "/login";
@@ -214,9 +238,10 @@ export async function apiUpload<T>(
     method: "POST",
     headers,
     body: formData,
+    credentials: fetchCreds,
   });
 
-  if (res.status === 401 && localStorage.getItem(REFRESH)) {
+  if (res.status === 401 && getStoredUser()) {
     const fresh = await ensureAccessToken();
     if (fresh) {
       headers.set("Authorization", `Bearer ${fresh}`);
@@ -224,6 +249,7 @@ export async function apiUpload<T>(
         method: "POST",
         headers,
         body: formData,
+        credentials: fetchCreds,
       });
     } else {
       clearSession();
@@ -249,13 +275,21 @@ export async function apiDownload(
   const token = getAccessToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
-  let res = await fetch(`${API_URL}${path}`, { ...fetchOptions, headers });
+  let res = await fetch(`${API_URL}${path}`, {
+    ...fetchOptions,
+    headers,
+    credentials: fetchCreds,
+  });
 
-  if (res.status === 401 && localStorage.getItem(REFRESH)) {
+  if (res.status === 401 && getStoredUser()) {
     const fresh = await ensureAccessToken();
     if (fresh) {
       headers.set("Authorization", `Bearer ${fresh}`);
-      res = await fetch(`${API_URL}${path}`, { ...fetchOptions, headers });
+      res = await fetch(`${API_URL}${path}`, {
+        ...fetchOptions,
+        headers,
+        credentials: fetchCreds,
+      });
     } else {
       clearSession();
       if (typeof window !== "undefined") window.location.href = "/login";

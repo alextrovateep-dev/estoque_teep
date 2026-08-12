@@ -46,7 +46,6 @@ export default function PerfilClient() {
     try {
       const data = await api<{
         accessToken: string;
-        refreshToken: string;
         user: User;
       }>("/auth/trocar-senha", {
         method: "POST",

@@ -4,6 +4,15 @@ Sistema de Controle de Estoque TEEP (greenfield).
 
 ## Stack
 
+**Linguagens**
+
+- TypeScript — API, web e `packages/shared`
+- SQL — migrations Prisma / PostgreSQL
+- CSS — Tailwind (web)
+- Shell / PowerShell — scripts de setup, backup e status
+
+**Runtime e libs**
+
 - `apps/web` — Next.js 15 + Tailwind
 - `apps/api` — Express + Prisma + PostgreSQL + Redis
 - `packages/shared` — enums e schemas Zod

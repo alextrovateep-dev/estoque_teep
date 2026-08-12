@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, Response } from "express";
 import bcrypt from "bcryptjs";
 import {
   loginSchema,
@@ -14,6 +14,7 @@ import {
   AuthedRequest,
   signAccessToken,
   signRefreshToken,
+  verifyAccessToken,
   verifyRefreshToken,
   AuthUser,
 } from "../middleware/auth";
@@ -25,8 +26,17 @@ import {
 } from "../lib/uploads";
 import rateLimit from "express-rate-limit";
 import { temEstoqueAtivo } from "../lib/estoqueGate";
+import {
+  clearRefreshCookie,
+  readRefreshToken,
+  refreshExpiresAt,
+  setRefreshCookie,
+} from "../lib/refreshCookie";
 
 export const authRouter = Router();
+
+/** Hash real só para equalizar tempo de bcrypt quando o e-mail não existe. */
+const LOGIN_TIMING_HASH = bcrypt.hashSync("__teep_login_timing_pad__", 12);
 
 const loginLimiter = rateLimit({
   windowMs: 60_000,
@@ -34,6 +44,14 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Muitas tentativas de login. Aguarde 1 minuto." },
+});
+
+const refreshLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Muitas tentativas de refresh. Aguarde 1 minuto." },
 });
 
 function formatDataNascimento(
@@ -116,13 +134,61 @@ async function publicUser(usuario: {
     dataNascimento,
     perfilCompleto: Boolean(usuario.perfilCompleto),
     aniversarioHoje: isAniversarioHoje(dataNascimento),
-    /** Premissa: operação exige ao menos um estoque cadastrado. */
     temEstoque: await temEstoqueAtivo(),
     permissoes: resolvePermissoes(
       perfil,
       (usuario.permissoes as Record<string, boolean>) || null
     ),
   };
+}
+
+/** Cria refresh no DB + cookie HttpOnly (não devolve o token no JSON). */
+async function issueRefreshCookie(res: Response, usuarioId: string) {
+  const refreshToken = signRefreshToken(usuarioId);
+  const expiresAt = refreshExpiresAt();
+  await prisma.refreshToken.create({
+    data: { token: refreshToken, usuarioId, expiresAt },
+  });
+  setRefreshCookie(res, refreshToken, expiresAt);
+}
+
+/**
+ * Rotaciona o refresh no DB e no cookie.
+ * JWT válido sem registro → possível reuso → invalida todos os refresh do usuário.
+ */
+async function rotateRefreshCookie(
+  res: Response,
+  oldToken: string,
+  usuarioId: string
+) {
+  const stored = await prisma.refreshToken.findUnique({
+    where: { token: oldToken },
+  });
+  if (
+    !stored ||
+    stored.usuarioId !== usuarioId ||
+    stored.expiresAt < new Date()
+  ) {
+    if (!stored) {
+      await prisma.refreshToken.deleteMany({ where: { usuarioId } });
+    }
+    clearRefreshCookie(res);
+    throw new AppError(401, "Refresh inválido");
+  }
+
+  const newToken = signRefreshToken(usuarioId);
+  const expiresAt = refreshExpiresAt();
+  try {
+    await prisma.refreshToken.update({
+      where: { token: oldToken },
+      data: { token: newToken, expiresAt },
+    });
+  } catch {
+    await prisma.refreshToken.deleteMany({ where: { usuarioId } });
+    clearRefreshCookie(res);
+    throw new AppError(401, "Refresh inválido");
+  }
+  setRefreshCookie(res, newToken, expiresAt);
 }
 
 authRouter.post(
@@ -136,25 +202,20 @@ authRouter.post(
         where: { email },
         include: { filiaisVinculos: { select: { filialId: true } } },
       });
-      if (!usuario || !usuario.ativo) {
+      const hash =
+        usuario?.ativo && usuario.senhaHash
+          ? usuario.senhaHash
+          : LOGIN_TIMING_HASH;
+      const ok = await bcrypt.compare(senha, hash);
+      if (!usuario || !usuario.ativo || !ok) {
         throw new AppError(401, "Credenciais inválidas");
       }
-      const ok = await bcrypt.compare(senha, usuario.senhaHash);
-      if (!ok) throw new AppError(401, "Credenciais inválidas");
 
-      const authUser = toAuthUser(usuario);
-      const accessToken = signAccessToken(authUser);
-      const refreshToken = signRefreshToken(usuario.id);
-
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7);
-      await prisma.refreshToken.create({
-        data: { token: refreshToken, usuarioId: usuario.id, expiresAt },
-      });
+      const accessToken = signAccessToken(toAuthUser(usuario));
+      await issueRefreshCookie(res, usuario.id);
 
       res.json({
         accessToken,
-        refreshToken,
         user: await publicUser(usuario),
       });
     } catch (e) {
@@ -163,14 +224,16 @@ authRouter.post(
   }
 );
 
-authRouter.post("/refresh", async (req, res, next) => {
+authRouter.post("/refresh", refreshLimiter, async (req, res, next) => {
   try {
-    const token = String(req.body?.refreshToken || "");
-    if (!token) throw new AppError(400, "refreshToken obrigatório");
+    const token = readRefreshToken(req);
+    if (!token) throw new AppError(401, "Refresh inválido");
 
-    const userId = verifyRefreshToken(token);
-    const stored = await prisma.refreshToken.findUnique({ where: { token } });
-    if (!stored || stored.expiresAt < new Date() || stored.usuarioId !== userId) {
+    let userId: string;
+    try {
+      userId = verifyRefreshToken(token);
+    } catch {
+      clearRefreshCookie(res);
       throw new AppError(401, "Refresh inválido");
     }
 
@@ -178,7 +241,13 @@ authRouter.post("/refresh", async (req, res, next) => {
       where: { id: userId },
       include: { filiaisVinculos: { select: { filialId: true } } },
     });
-    if (!usuario || !usuario.ativo) throw new AppError(401, "Usuário inativo");
+    if (!usuario || !usuario.ativo) {
+      await prisma.refreshToken.deleteMany({ where: { usuarioId: userId } });
+      clearRefreshCookie(res);
+      throw new AppError(401, "Usuário inativo");
+    }
+
+    await rotateRefreshCookie(res, token, userId);
 
     res.json({ accessToken: signAccessToken(toAuthUser(usuario)) });
   } catch (e) {
@@ -186,14 +255,26 @@ authRouter.post("/refresh", async (req, res, next) => {
   }
 });
 
-authRouter.post("/logout", authenticate, async (req: AuthedRequest, res, next) => {
+/** Logout: limpa cookie + revoga refresh (não exige access válido). */
+authRouter.post("/logout", async (req, res, next) => {
   try {
-    const token = String(req.body?.refreshToken || "");
+    const token = readRefreshToken(req);
     if (token) {
       await prisma.refreshToken.deleteMany({ where: { token } });
-    } else if (req.user) {
-      await prisma.refreshToken.deleteMany({ where: { usuarioId: req.user.id } });
+    } else {
+      const header = req.headers.authorization;
+      if (header?.startsWith("Bearer ")) {
+        try {
+          const user = verifyAccessToken(header.slice(7));
+          await prisma.refreshToken.deleteMany({
+            where: { usuarioId: user.id },
+          });
+        } catch {
+          /* access inválido — só limpa cookie */
+        }
+      }
     }
+    clearRefreshCookie(res);
     res.json({ ok: true });
   } catch (e) {
     next(e);
@@ -219,7 +300,6 @@ authRouter.post(
       }
 
       if (usuario.deveTrocarSenha) {
-        // Já autenticado com a provisória — não pede de novo.
         const mesma = await bcrypt.compare(senhaNova, usuario.senhaHash);
         if (mesma) {
           throw new AppError(400, "A nova senha deve ser diferente da atual");
@@ -241,18 +321,11 @@ authRouter.post(
 
       await prisma.refreshToken.deleteMany({ where: { usuarioId: usuario.id } });
 
-      const authUser = toAuthUser(updated);
-      const accessToken = signAccessToken(authUser);
-      const refreshToken = signRefreshToken(updated.id);
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7);
-      await prisma.refreshToken.create({
-        data: { token: refreshToken, usuarioId: updated.id, expiresAt },
-      });
+      const accessToken = signAccessToken(toAuthUser(updated));
+      await issueRefreshCookie(res, updated.id);
 
       res.json({
         accessToken,
-        refreshToken,
         user: await publicUser(updated),
       });
     } catch (e) {

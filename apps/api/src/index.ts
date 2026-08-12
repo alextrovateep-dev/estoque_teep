@@ -4,6 +4,7 @@ import http from "http";
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import { logger } from "./lib/logger";
 
 /** Sempre carrega apps/api/.env (não depende do cwd do pnpm). */
@@ -54,6 +55,7 @@ app.use(
     exposedHeaders: ["Content-Disposition"],
   })
 );
+app.use(cookieParser());
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || "1mb" }));
 
 /** Mídia autenticada: Bearer ou ?token= (para <img src>). */

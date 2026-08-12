@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PerfilForm } from "@/components/PerfilForm";
 import { TeepLogo } from "@/components/TeepLogo";
-import { api, clearSession, getStoredUser, patchStoredUser, setSession, User } from "@/lib/api";
+import { api, logoutSession, getStoredUser, patchStoredUser, setSession, User } from "@/lib/api";
 import { homeForUser } from "@/lib/access";
 
 export default function TrocarSenhaPage() {
@@ -35,7 +35,6 @@ export default function TrocarSenhaPage() {
     try {
       const data = await api<{
         accessToken: string;
-        refreshToken: string;
         user: User;
       }>("/auth/trocar-senha", {
         method: "POST",
@@ -58,8 +57,8 @@ export default function TrocarSenhaPage() {
     }
   }
 
-  function sair() {
-    clearSession();
+  async function sair() {
+    await logoutSession();
     router.replace("/login");
   }
 

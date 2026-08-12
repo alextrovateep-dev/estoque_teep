@@ -55,6 +55,7 @@ rmaRouter.get("/", requirePermissao("rma"), async (req: AuthedRequest, res, next
     res.json(
       await listarRma(req.user!, {
         status: String(req.query.status || "").trim() || undefined,
+        etapa: String(req.query.etapa || "").trim() || undefined,
         clienteId: String(req.query.clienteId || "").trim() || undefined,
         cobrou: String(req.query.cobrou || "").trim() || undefined,
         dataInicio: String(req.query.dataInicio || "").trim() || undefined,

@@ -5,7 +5,11 @@ import { matchNomeOuDocumento } from "@/lib/documento";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { RMA_ITEM_ETAPA_LABELS } from "@teep/shared";
+import {
+  RMA_ITEM_ETAPA,
+  RMA_ITEM_ETAPA_LABELS,
+  RMA_PROCESSO_STATUS,
+} from "@teep/shared";
 
 type Row = {
   id: string;
@@ -35,6 +39,8 @@ const STATUS_LABEL: Record<string, string> = {
   FECHADO: "Fechado",
   CANCELADO: "Cancelado",
 };
+
+const PROCESSO_STATUS_SET = new Set<string>(RMA_PROCESSO_STATUS);
 
 function resumoEtapasItens(
   itens?: Array<{ etapa?: string }>
@@ -104,6 +110,7 @@ function RmaListPageInner() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState("");
+  const [etapa, setEtapa] = useState("");
   const [cobrou, setCobrou] = useState("");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
@@ -155,6 +162,7 @@ function RmaListPageInner() {
       pageSize: "20",
     });
     if (status) params.set("status", status);
+    if (etapa) params.set("etapa", etapa);
     if (cobrou) params.set("cobrou", cobrou);
     if (dataInicio) params.set("dataInicio", dataInicio);
     if (dataFim) params.set("dataFim", dataFim);
@@ -173,7 +181,7 @@ function RmaListPageInner() {
       .finally(() => {
         if (gen === fetchGen.current) setLoading(false);
       });
-  }, [page, status, cobrou, dataInicio, dataFim, clienteId]);
+  }, [page, status, etapa, cobrou, dataInicio, dataFim, clienteId]);
 
   function resetPage() {
     setPage(1);
@@ -292,17 +300,39 @@ function RmaListPageInner() {
         </div>
 
         <select
-          value={status}
+          value={status || etapa}
           onChange={(e) => {
-            setStatus(e.target.value);
+            const v = e.target.value;
+            if (!v) {
+              setStatus("");
+              setEtapa("");
+            } else if (PROCESSO_STATUS_SET.has(v)) {
+              setStatus(v);
+              setEtapa("");
+            } else {
+              setStatus("");
+              setEtapa(v);
+            }
             resetPage();
           }}
           className="rounded-lg border px-3 py-2 text-sm"
+          aria-label="Filtrar por status ou etapa"
         >
           <option value="">Status: todos</option>
-          <option value="ABERTO">Aberto</option>
-          <option value="FECHADO">Fechado</option>
-          <option value="CANCELADO">Cancelado</option>
+          <optgroup label="Processo">
+            {RMA_PROCESSO_STATUS.map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABEL[s] || s}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Etapa do item">
+            {RMA_ITEM_ETAPA.map((e) => (
+              <option key={e} value={e}>
+                {RMA_ITEM_ETAPA_LABELS[e]}
+              </option>
+            ))}
+          </optgroup>
         </select>
         <select
           value={cobrou}

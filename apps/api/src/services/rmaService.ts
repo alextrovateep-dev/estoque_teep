@@ -1,4 +1,5 @@
 import {
+  RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPAS_SAIDA,
   SIGLA_ESTOQUE_RMA,
   TIPO_ENTRADA_RMA,
@@ -342,6 +343,7 @@ export async function listarRma(
   user: AuthUser,
   q: {
     status?: string;
+    etapa?: string;
     clienteId?: string;
     cobrou?: string;
     dataInicio?: string;
@@ -360,9 +362,22 @@ export async function listarRma(
   }
   if (q.status) where.status = q.status;
   if (q.clienteId) where.clienteId = q.clienteId;
-  if (q.cobrou === "true") where.cobrou = true;
-  if (q.cobrou === "false") where.cobrou = false;
-  if (q.cobrou === "null") where.cobrou = null;
+
+  const itemSome: Record<string, unknown> = {};
+  if (
+    q.etapa &&
+    (RMA_ITEM_ETAPA as readonly string[]).includes(q.etapa)
+  ) {
+    itemSome.etapa = q.etapa;
+  }
+  if (q.cobrou === "true" || q.cobrou === "false" || q.cobrou === "null") {
+    itemSome.cobrou =
+      q.cobrou === "true" ? true : q.cobrou === "false" ? false : null;
+  }
+  if (Object.keys(itemSome).length > 0) {
+    itemSome.status = { not: "CANCELADO" };
+    where.itens = { some: itemSome };
+  }
 
   const criadoEm: { gte?: Date; lte?: Date } = {};
   if (q.dataInicio) {

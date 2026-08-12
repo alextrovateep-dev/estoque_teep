@@ -16,7 +16,11 @@ const permissoesSchema = z
   .optional();
 
 export const loginSchema = z.object({
-  email: z.string().email(),
+  email: z
+    .string()
+    .trim()
+    .email()
+    .transform((v) => v.toLowerCase()),
   senha: z.string().min(1),
 });
 
@@ -28,7 +32,12 @@ const senhaForteSchema = z
 
 export const createUsuarioBaseSchema = z.object({
   nome: z.string().min(2).max(100),
-  email: z.string().email().max(100),
+  email: z
+    .string()
+    .trim()
+    .email()
+    .max(100)
+    .transform((v) => v.toLowerCase()),
   /** Opcional: se omitida, a API gera senha provisória e envia por e-mail */
   senha: senhaForteSchema.optional(),
   perfil: z.enum(PERFIS),

@@ -1,6 +1,6 @@
 "use client";
 
-import { clearSession, getStoredUser } from "@/lib/api";
+import { logoutSession, getStoredUser } from "@/lib/api";
 import { userHasAnyOpsAccess } from "@/lib/access";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -28,8 +28,8 @@ export default function SemAcessoPage() {
     setNome(u.nome);
   }, [router]);
 
-  function sair() {
-    clearSession();
+  async function sair() {
+    await logoutSession();
     router.replace("/login");
   }
 

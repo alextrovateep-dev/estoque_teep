@@ -1,18 +1,30 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, setSession, User } from "@/lib/api";
+import { api, getStoredUser, setSession, User } from "@/lib/api";
 import { homeForUser } from "@/lib/access";
 import { TeepLogo } from "@/components/TeepLogo";
 
+function destinoPosLogin(user: User): string {
+  if (user.deveTrocarSenha) return "/trocar-senha";
+  if (user.perfilCompleto === false) return "/perfil?completar=1";
+  return homeForUser(user);
+}
+
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@teep.com.br");
-  const [senha, setSenha] = useState("Admin@123");
+  const [email, setEmail] = useState("");
+  const [senha, setSenha] = useState("");
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const u = getStoredUser();
+    if (!u) return;
+    router.replace(destinoPosLogin(u));
+  }, [router]);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -21,22 +33,16 @@ export default function LoginPage() {
     try {
       const data = await api<{
         accessToken: string;
-        refreshToken: string;
         user: User;
       }>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ email, senha }),
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          senha,
+        }),
       });
       setSession(data);
-      if (data.user.deveTrocarSenha) {
-        router.replace("/trocar-senha");
-        return;
-      }
-      if (data.user.perfilCompleto === false) {
-        router.replace("/perfil?completar=1");
-        return;
-      }
-      router.replace(homeForUser(data.user));
+      router.replace(destinoPosLogin(data.user));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha no login");
     } finally {
