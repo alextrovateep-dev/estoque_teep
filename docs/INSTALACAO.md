@@ -371,7 +371,7 @@ Mantenha `SEED_ON_START=0` em updates.
 
 **DoD:** stack no ar · cadastros reais · init de saldos · smoke OK · transferência se ≥2 estoques (Go-Live B).
 
-**Seed:** tipos/categorias sempre. Estoques PLN/TBO/RMA/DESC + usuários gerente/operador + produtos demo **só** com `SEED_DEMO=1` (em prod Docker o seed de boot cria o admin; demo/homolog costuma ser em dev ou seed manual). Sem demo, admin nasce sem estoque — cadastre em Admin → Estoques.
+**Seed:** tipos de movimentação sempre. Categorias, estoques PLN/TBO/RMA/DESC, usuários gerente/operador e produtos demo **só** com `SEED_DEMO=1` (em prod Docker o seed de boot cria o admin; demo/homolog costuma ser em dev ou seed manual). Sem demo, admin nasce sem estoque/categorias — cadastre em Admin.
 
 ### 9.1 Credenciais (SEED_DEMO=1)
 
@@ -456,7 +456,8 @@ Ordem do script: health → login → produto → init 50 → compra +10 → ven
 
 | Sintoma | Causa provável | Ação |
 |---------|----------------|------|
-| Build falha em `pnpm install` (exit **228** / **137**) | RAM insuficiente (api+web em paralelo) ou lockfile ausente | `git pull`; build sequencial (`build api` depois `build web`); criar swap 2G; ver §5.3 |
+| Build falha com **`ERR_PNPM_ENOSPC`** / exit **228** | Disco cheio (Docker layer + cache) | `df -h`; limpar: `docker system prune -af --volumes` (cuidado: remove volumes órfãos); apagar imagens intermediárias; ver §5.3 |
+| Build falha em `pnpm install` (exit **228** / **137**) sem ENOSPC | RAM insuficiente (api+web em paralelo) ou lockfile ausente | `git pull`; build sequencial (`build api` depois `build web`); criar swap 2G; ver §5.3 |
 | API não sobe; log fala de JWT / CORS | Secret fraco ou `CORS_ORIGIN` com localhost | Corrija `.env.production` e `up -d` de novo |
 | Caddy sem certificado (prod) | DNS não aponta / 80 fechada | Ajuste DNS e firewall; `logs caddy` |
 | Front chama API errada | `NEXT_PUBLIC_*` do **build** | Esses valores entram no **build** da imagem `web`; altere o env e `--build` de novo |

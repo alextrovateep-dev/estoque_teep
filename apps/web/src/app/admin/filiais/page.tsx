@@ -111,12 +111,6 @@ function FiliaisPageInner() {
             pode navegar no menu, mas lançamentos e RMA só liberam depois deste
             cadastro.
           </p>
-          <Link
-            href="/admin/filiais/novo"
-            className="mt-3 inline-flex rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white"
-          >
-            Adicionar estoque
-          </Link>
         </div>
       )}
 

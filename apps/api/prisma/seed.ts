@@ -174,26 +174,8 @@ async function main() {
     }
   }
 
-  // —— Tipos / categorias (sempre; não dependem de estoque) ——
-  const categorias = [
-    "Eletrônico",
-    "Adesivos",
-    "Cabos",
-    "Gabinetes",
-    "Conectores",
-    "Fontes",
-    "Módulos",
-    "Fixação",
-    "Acessórios",
-    "Dispositivos",
-  ];
-  for (const nome of categorias) {
-    await prisma.categoria.upsert({
-      where: { nome },
-      update: {},
-      create: { nome },
-    });
-  }
+  // —— Tipos de movimentação (sempre; catálogo operacional do sistema) ——
+  // Categorias de produto: só com SEED_DEMO=1 (cadastro real fica a cargo do admin).
 
   /** Seed inicial — Admin pode criar/editar tipos livres depois */
   const tipos: Array<{
@@ -541,8 +523,28 @@ async function main() {
     });
   }
 
-  /** Homologação / smoke (F10): SEED_DEMO=1 — produtos e cliente de exemplo (sem saldos). */
-  if (process.env.SEED_DEMO === "1") {
+  /** Homologação / smoke (F10): SEED_DEMO=1 — categorias, produtos e cliente (sem saldos). */
+  if (seedDemo) {
+    const categorias = [
+      "Eletrônico",
+      "Adesivos",
+      "Cabos",
+      "Gabinetes",
+      "Conectores",
+      "Fontes",
+      "Módulos",
+      "Fixação",
+      "Acessórios",
+      "Dispositivos",
+    ];
+    for (const nome of categorias) {
+      await prisma.categoria.upsert({
+        where: { nome },
+        update: {},
+        create: { nome },
+      });
+    }
+
     const cat = await prisma.categoria.findFirst({
       where: { nome: "Eletrônico" },
     });
