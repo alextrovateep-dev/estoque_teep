@@ -38,7 +38,7 @@ function createEmptyForm() {
     permitidoOperador: false,
     permitidoGerente: true,
     geraAlertaRetorno: false,
-    diasAlerta: [...DIAS_ALERTA_PADRAO],
+    diasAlerta: [...DIAS_ALERTA_PADRAO] as number[],
     ehRetornoDeId: "" as string,
     requerTermoComodato: false,
     baixaPorArvore: false,
