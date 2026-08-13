@@ -1205,7 +1205,7 @@ export default function MovimentacoesPage() {
                             </div>
                           ) : null}
                           {anexosVisiveis.length > 0 ? (
-                            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 rounded bg-sky-50 px-1.5 py-1 ring-1 ring-sky-100">
+                            <div className="mt-1 inline-flex max-w-full flex-wrap gap-x-2 gap-y-0.5 rounded bg-sky-50 px-1.5 py-0.5 ring-1 ring-sky-100">
                               {anexosVisiveis.map((a) => {
                                 const href = resolveAssetUrl(a.arquivo);
                                 const label =
