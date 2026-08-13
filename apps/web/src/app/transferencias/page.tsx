@@ -156,7 +156,7 @@ export default function TransferenciasPage() {
                     href={`/transferencias/${t.id}`}
                     className="text-brand hover:underline"
                   >
-                    {t.status === "EM_TRANSITO" ? "Conferir" : "Abrir"}
+                    {t.status === "EM_TRANSITO" ? "Conferir" : "Ver detalhes"}
                   </Link>
                 </td>
               </tr>

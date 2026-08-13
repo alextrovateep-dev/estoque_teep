@@ -242,6 +242,10 @@ export async function criarMovimentacao(
       origemFilialId: input.filialId,
       destinoFilialId: input.filialDestinoId,
       guiaTransporte: input.guiaTransporte?.trim() || null,
+      notaFiscalNumero: input.notaFiscalNumero?.trim() || null,
+      anexos: (input.anexos || []).filter((a) =>
+        ["NOTA_FISCAL", "LAUDO", "OUTRO"].includes(a.tipo)
+      ),
       itens,
       baixaPorArvore: tipo.baixaPorArvore === true,
     };

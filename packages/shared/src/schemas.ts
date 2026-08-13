@@ -426,7 +426,7 @@ export const createMovimentacaoSchema = z
     anexos: z
       .array(
         z.object({
-          tipo: z.enum(["NOTA_FISCAL", "TERMO_COMODATO", "OUTRO"]),
+          tipo: z.enum(["NOTA_FISCAL", "TERMO_COMODATO", "LAUDO", "OUTRO"]),
           arquivo: z
             .string()
             .max(255)
@@ -547,6 +547,16 @@ export const createTransferenciaSchema = z.object({
     .optional()
     .default("AGUARDAR_RECEBIMENTO"),
   itens: z.array(createTransferenciaItemSchema).min(1),
+});
+
+/** Anexar documento à carga (NF, laudo, outro). */
+export const anexarTransferenciaSchema = z.object({
+  tipo: z.enum(["NOTA_FISCAL", "LAUDO", "OUTRO"]),
+  arquivo: z
+    .string()
+    .max(255)
+    .regex(/^\/uploads\//, "arquivo de anexo inválido"),
+  label: z.string().max(120).optional().nullable(),
 });
 
 export const conferirTransferenciaItemSchema = z.object({

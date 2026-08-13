@@ -21,6 +21,7 @@ import {
   operadorFilialIds,
   resolveOperadorFilialId,
 } from "../lib/filialScope";
+import { isValidUploadPath } from "../lib/uploads";
 import {
   aplicarSeriesConferencia,
   aplicarSeriesTransferenciaEnvio,
@@ -37,12 +38,31 @@ import {
   linhasConsumoMontagem,
 } from "./montagemService";
 
+function assertAnexosTransferencia(
+  userId: string,
+  anexos: Array<{ tipo: string; arquivo: string; label?: string | null }>
+) {
+  const tiposOk = new Set(["NOTA_FISCAL", "LAUDO", "OUTRO"]);
+  for (const a of anexos) {
+    if (!tiposOk.has(a.tipo)) {
+      throw new AppError(400, `Tipo de anexo inválido: ${a.tipo}`);
+    }
+    const ok =
+      isValidUploadPath(a.arquivo, "nota-fiscal", userId) ||
+      isValidUploadPath(a.arquivo, "documento", userId);
+    if (!ok) {
+      throw new AppError(400, `Arquivo de anexo inválido: ${a.arquivo}`);
+    }
+  }
+}
+
 const LIST_LIMITE = 200;
 
 const transfInclude = {
   origemFilial: true,
   destinoFilial: true,
   criadoPor: { select: { id: true, nome: true, email: true } },
+  anexos: { orderBy: { criadoEm: "asc" as const } },
   itens: {
     include: {
       produto: true,
@@ -59,7 +79,12 @@ const transfInclude = {
         },
       },
       movimentacoes: {
-        include: { tipo: true },
+        include: {
+          tipo: true,
+          anexos: {
+            select: { id: true, tipo: true, arquivo: true, label: true },
+          },
+        },
         orderBy: { dataMovimento: "asc" as const },
       },
     },
@@ -220,6 +245,45 @@ export async function obterTransferencia(user: AuthUser, id: string) {
   return t;
 }
 
+/** Anexa documento à carga (somente leitura operacional; não altera itens/status). */
+export async function anexarDocumentoTransferencia(
+  user: AuthUser,
+  transferenciaId: string,
+  input: { tipo: string; arquivo: string; label?: string | null }
+) {
+  const t = await prisma.transferencia.findUnique({
+    where: { id: transferenciaId },
+    select: {
+      id: true,
+      status: true,
+      origemFilialId: true,
+      destinoFilialId: true,
+    },
+  });
+  if (!t) throw new AppError(404, "Transferência não encontrada");
+  if (user.perfil === "OPERADOR") {
+    const ids = operadorFilialIds(user);
+    if (
+      !ids.includes(t.origemFilialId) &&
+      !ids.includes(t.destinoFilialId)
+    ) {
+      throw new AppError(403, "Acesso negado");
+    }
+  }
+  if (t.status === "CANCELADO" || t.status === "REJEITADO") {
+    throw new AppError(400, "Não é possível anexar em carga cancelada/rejeitada");
+  }
+  assertAnexosTransferencia(user.id, [input]);
+  return prisma.transferenciaAnexo.create({
+    data: {
+      transferenciaId: t.id,
+      tipo: input.tipo,
+      arquivo: input.arquivo,
+      label: input.label?.trim() || null,
+    },
+  });
+}
+
 /** Envia carga: −origem por item; status EM_TRANSITO */
 export async function criarTransferencia(
   user: AuthUser,
@@ -227,6 +291,12 @@ export async function criarTransferencia(
     origemFilialId?: string;
     destinoFilialId: string;
     guiaTransporte?: string | null;
+    notaFiscalNumero?: string | null;
+    anexos?: Array<{
+      tipo: string;
+      arquivo: string;
+      label?: string | null;
+    }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     /** Tipo com baixaPorArvore: baixa BOM na origem e entra só o pai no destino */
     baixaPorArvore?: boolean;
@@ -242,6 +312,12 @@ export async function criarTransferenciaImediata(
     origemFilialId?: string;
     destinoFilialId: string;
     guiaTransporte?: string | null;
+    notaFiscalNumero?: string | null;
+    anexos?: Array<{
+      tipo: string;
+      arquivo: string;
+      label?: string | null;
+    }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     baixaPorArvore?: boolean;
   }
@@ -259,6 +335,12 @@ export async function criarTransferenciaPendenteAprovacao(
     origemFilialId?: string;
     destinoFilialId: string;
     guiaTransporte?: string | null;
+    notaFiscalNumero?: string | null;
+    anexos?: Array<{
+      tipo: string;
+      arquivo: string;
+      label?: string | null;
+    }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     baixaPorArvore?: boolean;
   },
@@ -273,6 +355,12 @@ async function criarTransferenciaInterna(
     origemFilialId?: string;
     destinoFilialId: string;
     guiaTransporte?: string | null;
+    notaFiscalNumero?: string | null;
+    anexos?: Array<{
+      tipo: string;
+      arquivo: string;
+      label?: string | null;
+    }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     baixaPorArvore?: boolean;
   },
@@ -326,6 +414,9 @@ async function criarTransferenciaInterna(
 
   const { enviada, recebida } = await tiposSistema();
   const imediato = creditoDestino === "IMEDIATO";
+  const anexosIn = input.anexos || [];
+  if (anexosIn.length) assertAnexosTransferencia(user.id, anexosIn);
+  const notaFiscalNumero = input.notaFiscalNumero?.trim() || null;
 
   const result = await prisma.$transaction(async (tx) => {
     const transf = await tx.transferencia.create({
@@ -339,7 +430,18 @@ async function criarTransferenciaInterna(
             : "EM_TRANSITO",
         creditoDestino,
         guiaTransporte: input.guiaTransporte || null,
+        notaFiscalNumero,
         criadoPorId: user.id,
+        anexos:
+          anexosIn.length > 0
+            ? {
+                create: anexosIn.map((a) => ({
+                  tipo: a.tipo,
+                  arquivo: a.arquivo,
+                  label: a.label?.trim() || null,
+                })),
+              }
+            : undefined,
       },
     });
 

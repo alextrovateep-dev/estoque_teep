@@ -1,7 +1,8 @@
 "use client";
 
-import { api, getStoredUser, User, userFilialIds } from "@/lib/api";
+import { api, apiUpload, getStoredUser, User, userFilialIds } from "@/lib/api";
 import { userHas } from "@/lib/access";
+import { resolveAssetUrl } from "@/lib/assets";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -21,10 +22,20 @@ type Item = {
   series?: ItemSerie[];
 };
 
+type Anexo = {
+  id: string;
+  tipo: string;
+  arquivo: string;
+  label: string | null;
+  criadoEm?: string;
+};
+
 type Transferencia = {
   id: string;
   status: string;
+  creditoDestino?: string | null;
   guiaTransporte: string | null;
+  notaFiscalNumero?: string | null;
   motivoRejeicao?: string | null;
   criadoEm: string;
   origemFilialId: string;
@@ -33,6 +44,7 @@ type Transferencia = {
   destinoFilial: { sigla: string; nome: string };
   criadoPor: { nome: string };
   itens: Item[];
+  anexos?: Anexo[];
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -45,6 +57,13 @@ const STATUS_LABEL: Record<string, string> = {
   REJEITADO: "Rejeitado",
 };
 
+const ANEXO_TIPO_LABEL: Record<string, string> = {
+  NOTA_FISCAL: "Nota fiscal",
+  LAUDO: "Laudo",
+  OUTRO: "Documento",
+  TERMO_COMODATO: "Termo",
+};
+
 function formatQty(n: number) {
   return n.toLocaleString("pt-BR", { maximumFractionDigits: 4 });
 }
@@ -55,7 +74,6 @@ function applyFormState(t: Transferencia) {
   for (const i of t.itens) {
     r[i.id] = String(i.qtdRecebida ?? i.qtdEnviada);
     if (i.produto.controlaSerie) {
-      // Na conferência, inicia com todas marcadas; no pós-conferência, usa recebido.
       if (t.status === "EM_TRANSITO") {
         sr[i.id] = (i.series || []).map((s) => s.unidadeSerie.numeroSerie);
       } else {
@@ -66,6 +84,11 @@ function applyFormState(t: Transferencia) {
     }
   }
   return { recebidas: r, seriesRec: sr };
+}
+
+function fileNameFromPath(path: string) {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
 }
 
 export default function TransferenciaDetalhePage() {
@@ -80,6 +103,7 @@ export default function TransferenciaDetalhePage() {
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
   const submitting = useRef(false);
 
   async function load() {
@@ -129,6 +153,13 @@ export default function TransferenciaDetalhePage() {
       data?.status === "PENDENTE_APROVACAO") &&
     user &&
     userHas(user, "aprovacoes");
+
+  const canAnexar =
+    data &&
+    data.status !== "CANCELADO" &&
+    data.status !== "REJEITADO" &&
+    user &&
+    userHas(user, "transferencias");
 
   function toggleSerie(itemId: string, numero: string, checked: boolean) {
     setSeriesRec((prev) => {
@@ -243,6 +274,35 @@ export default function TransferenciaDetalhePage() {
     }
   }
 
+  async function uploadAnexo(
+    file: File,
+    tipo: "NOTA_FISCAL" | "LAUDO" | "OUTRO",
+    context: "nota-fiscal" | "documento"
+  ) {
+    setUploading(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("context", context);
+      const up = await apiUpload<{ url: string }>("/upload", fd);
+      await api(`/transferencias/${id}/anexos`, {
+        method: "POST",
+        body: JSON.stringify({
+          tipo,
+          arquivo: up.url,
+          label: file.name,
+        }),
+      });
+      await load();
+      setMsg("Anexo adicionado.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao anexar");
+    } finally {
+      setUploading(false);
+    }
+  }
+
   if (pageLoading && !data && !error) {
     return <p className="text-sm text-slate-500">Carregando…</p>;
   }
@@ -258,8 +318,14 @@ export default function TransferenciaDetalhePage() {
             ← Transferências
           </Link>
           <h1 className="mt-1 text-2xl font-semibold">
-            Carga {data ? data.id.slice(0, 8) : ""}
+            {canConferir ? "Conferir carga" : "Detalhes da transferência"}{" "}
+            {data ? data.id.slice(0, 8) : ""}
           </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {canConferir
+              ? "Confirme o recebimento no destino. Demais dados são só consulta."
+              : "Visualização da operação e anexos — sem edição dos itens."}
+          </p>
         </div>
         {data ? (
           <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium">
@@ -302,33 +368,126 @@ export default function TransferenciaDetalhePage() {
       {data && (
         <div className="space-y-4">
           <div className="rounded-xl border bg-white p-4 text-sm">
-            <p>
-              <span className="text-slate-500">Origem:</span>{" "}
-              {data.origemFilial.sigla} — {data.origemFilial.nome}
-            </p>
-            <p>
-              <span className="text-slate-500">Destino:</span>{" "}
-              {data.destinoFilial.sigla} — {data.destinoFilial.nome}
-            </p>
-            <p>
-              <span className="text-slate-500">Criado por:</span>{" "}
-              {data.criadoPor.nome}
-            </p>
-            <p>
-              <span className="text-slate-500">Em:</span>{" "}
-              {new Date(data.criadoEm).toLocaleString("pt-BR")}
-            </p>
-            {data.guiaTransporte ? (
+            <h2 className="mb-2 text-sm font-semibold text-slate-800">
+              Dados da operação
+            </h2>
+            <div className="grid gap-1 sm:grid-cols-2">
               <p>
-                <span className="text-slate-500">Guia:</span>{" "}
-                {data.guiaTransporte}
+                <span className="text-slate-500">Origem:</span>{" "}
+                {data.origemFilial.sigla} — {data.origemFilial.nome}
               </p>
-            ) : null}
+              <p>
+                <span className="text-slate-500">Destino:</span>{" "}
+                {data.destinoFilial.sigla} — {data.destinoFilial.nome}
+              </p>
+              <p>
+                <span className="text-slate-500">Criado por:</span>{" "}
+                {data.criadoPor.nome}
+              </p>
+              <p>
+                <span className="text-slate-500">Em:</span>{" "}
+                {new Date(data.criadoEm).toLocaleString("pt-BR")}
+              </p>
+              <p>
+                <span className="text-slate-500">Crédito no destino:</span>{" "}
+                {data.creditoDestino === "IMEDIATO"
+                  ? "Imediato"
+                  : data.creditoDestino === "AGUARDAR_RECEBIMENTO"
+                    ? "Na confirmação do recebimento"
+                    : data.creditoDestino || "—"}
+              </p>
+              <p>
+                <span className="text-slate-500">Guia / transportadora:</span>{" "}
+                {data.guiaTransporte || "—"}
+              </p>
+              <p>
+                <span className="text-slate-500">NF / documento nº:</span>{" "}
+                {data.notaFiscalNumero || "—"}
+              </p>
+            </div>
             {data.motivoRejeicao ? (
-              <p className="text-red-700">
+              <p className="mt-2 text-red-700">
                 Motivo rejeição: {data.motivoRejeicao}
               </p>
             ) : null}
+          </div>
+
+          <div className="rounded-xl border bg-white p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-800">
+                Anexos ({data.anexos?.length || 0})
+              </h2>
+              {canAnexar ? (
+                <div className="flex flex-wrap gap-2">
+                  <label className="cursor-pointer rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                    {uploading ? "Enviando…" : "+ NF"}
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      className="hidden"
+                      disabled={uploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (f) void uploadAnexo(f, "NOTA_FISCAL", "nota-fiscal");
+                      }}
+                    />
+                  </label>
+                  <label className="cursor-pointer rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                    {uploading ? "Enviando…" : "+ Laudo/doc"}
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,image/*"
+                      className="hidden"
+                      disabled={uploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (!f) return;
+                        const tipo = /laudo/i.test(f.name) ? "LAUDO" : "OUTRO";
+                        void uploadAnexo(f, tipo, "documento");
+                      }}
+                    />
+                  </label>
+                </div>
+              ) : null}
+            </div>
+            {!data.anexos?.length ? (
+              <p className="text-sm text-slate-500">
+                Nenhum arquivo anexado a esta carga.
+              </p>
+            ) : (
+              <ul className="divide-y rounded-lg border">
+                {data.anexos.map((a) => {
+                  const href = resolveAssetUrl(a.arquivo);
+                  return (
+                    <li
+                      key={a.id}
+                      className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+                    >
+                      <div>
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium uppercase text-slate-700">
+                          {ANEXO_TIPO_LABEL[a.tipo] || a.tipo}
+                        </span>{" "}
+                        <span className="text-slate-800">
+                          {a.label || fileNameFromPath(a.arquivo)}
+                        </span>
+                      </div>
+                      {href ? (
+                        <a
+                          href={href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-brand hover:underline"
+                        >
+                          Abrir / baixar
+                        </a>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
 
           {canConferir ? (
@@ -417,7 +576,7 @@ export default function TransferenciaDetalhePage() {
                           max={enviada}
                           step="any"
                           disabled={loading}
-                          className="mt-1 w-full rounded-lg border px-3 py-2 disabled:bg-slate-50"
+                          className="mt-1 w-40 rounded-lg border px-3 py-2 disabled:bg-slate-50"
                           value={recebidas[i.id] ?? ""}
                           onChange={(e) =>
                             setRecebidas({

@@ -337,6 +337,8 @@ model Transferencia {
   /// IMEDIATO | AGUARDAR_RECEBIMENTO — usado ao aprovar PENDENTE_APROVACAO
   creditoDestino  String?            @map("credito_destino") @db.VarChar(30)
   guiaTransporte  String?            @map("guia_transporte") @db.VarChar(120)
+  /// Número da NF / documento da carga (opcional)
+  notaFiscalNumero String?           @map("nota_fiscal_numero") @db.VarChar(60)
   motivoRejeicao  String?            @map("motivo_rejeicao") @db.Text
   criadoPorId     String             @map("criado_por_id") @db.Uuid
   criadoEm        DateTime           @default(now()) @map("criado_em") @db.Timestamptz
@@ -345,9 +347,25 @@ model Transferencia {
   destinoFilial   Filial             @relation("Destino", fields: [destinoFilialId], references: [id])
   criadoPor       Usuario            @relation(fields: [criadoPorId], references: [id])
   itens           TransferenciaItem[]
+  anexos          TransferenciaAnexo[]
 
   @@index([status])
   @@map("transferencias")
+}
+
+/// Anexos da carga (NF, laudo, outros documentos)
+model TransferenciaAnexo {
+  id              String        @id @default(uuid()) @db.Uuid
+  transferenciaId String        @map("transferencia_id") @db.Uuid
+  /// NOTA_FISCAL | LAUDO | OUTRO
+  tipo            String        @db.VarChar(40)
+  arquivo         String        @db.VarChar(255)
+  label           String?       @db.VarChar(120)
+  criadoEm        DateTime      @default(now()) @map("criado_em") @db.Timestamptz
+  transferencia   Transferencia @relation(fields: [transferenciaId], references: [id], onDelete: Cascade)
+
+  @@index([transferenciaId])
+  @@map("transferencia_anexos")
 }
 
 model TransferenciaItem {

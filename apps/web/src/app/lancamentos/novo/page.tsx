@@ -164,6 +164,11 @@ function NovoLancamentoForm() {
   const [termoArquivo, setTermoArquivo] = useState<string | null>(null);
   const [termoUploading, setTermoUploading] = useState(false);
   const [guiaTransporte, setGuiaTransporte] = useState("");
+  const [transfNotaNumero, setTransfNotaNumero] = useState("");
+  const [transfAnexos, setTransfAnexos] = useState<
+    Array<{ tipo: "NOTA_FISCAL" | "LAUDO" | "OUTRO"; arquivo: string; label: string }>
+  >([]);
+  const [uploadingTransfAnexo, setUploadingTransfAnexo] = useState(false);
   const [quantidade, setQuantidade] = useState("1");
   const [series, setSeries] = useState<string[]>([]);
   const [gerandoSeries, setGerandoSeries] = useState(false);
@@ -227,6 +232,8 @@ function NovoLancamentoForm() {
     setSaidasAbertas([]);
     setTermoArquivo(null);
     setGuiaTransporte("");
+    setTransfNotaNumero("");
+    setTransfAnexos([]);
     setObservacao("");
     setQuantidade("1");
     setProduto(null);
@@ -1070,6 +1077,19 @@ function NovoLancamentoForm() {
         body.filialDestinoId = filialDestinoId;
         body.creditoDestino = creditoDestino;
         body.guiaTransporte = guiaTransporte.trim() || null;
+        if (transfNotaNumero.trim()) {
+          body.notaFiscalNumero = transfNotaNumero.trim();
+        }
+        if (transfAnexos.length) {
+          body.anexos = [
+            ...((body.anexos as Array<{
+              tipo: string;
+              arquivo: string;
+              label?: string | null;
+            }>) || []),
+            ...transfAnexos,
+          ];
+        }
       }
 
       const result = await api<{
@@ -1510,6 +1530,140 @@ function NovoLancamentoForm() {
                 Opcional — nome da transportadora ou número da guia.
               </span>
             </label>
+            <label className="mt-3 block text-sm">
+              <span className="mb-1 block font-medium text-amber-950">
+                Nº nota fiscal / documento
+              </span>
+              <input
+                type="text"
+                maxLength={60}
+                value={transfNotaNumero}
+                onChange={(e) => setTransfNotaNumero(e.target.value)}
+                placeholder="Opcional"
+                className="w-full rounded-lg border border-amber-100 bg-white px-3 py-2"
+              />
+            </label>
+            <div className="mt-3 space-y-2">
+              <p className="text-sm font-medium text-amber-950">
+                Anexos da carga (NF, laudo…)
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <label className="cursor-pointer rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-50">
+                  {uploadingTransfAnexo ? "Enviando…" : "Anexar NF (PDF/imagem)"}
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    className="hidden"
+                    disabled={uploadingTransfAnexo}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      setUploadingTransfAnexo(true);
+                      setError("");
+                      try {
+                        const fd = new FormData();
+                        fd.append("file", file);
+                        fd.append("context", "nota-fiscal");
+                        const r = await apiUpload<{ url: string }>("/upload", fd);
+                        setTransfAnexos((prev) => [
+                          ...prev,
+                          {
+                            tipo: "NOTA_FISCAL",
+                            arquivo: r.url,
+                            label: file.name,
+                          },
+                        ]);
+                      } catch (err) {
+                        setError(
+                          err instanceof Error
+                            ? err.message
+                            : "Falha no upload da NF"
+                        );
+                      } finally {
+                        setUploadingTransfAnexo(false);
+                      }
+                    }}
+                  />
+                </label>
+                <label className="cursor-pointer rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-50">
+                  {uploadingTransfAnexo
+                    ? "Enviando…"
+                    : "Anexar laudo / documento"}
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,image/*"
+                    className="hidden"
+                    disabled={uploadingTransfAnexo}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) return;
+                      setUploadingTransfAnexo(true);
+                      setError("");
+                      try {
+                        const fd = new FormData();
+                        fd.append("file", file);
+                        fd.append("context", "documento");
+                        const r = await apiUpload<{ url: string }>("/upload", fd);
+                        const isLaudo = /laudo/i.test(file.name);
+                        setTransfAnexos((prev) => [
+                          ...prev,
+                          {
+                            tipo: isLaudo ? "LAUDO" : "OUTRO",
+                            arquivo: r.url,
+                            label: file.name,
+                          },
+                        ]);
+                      } catch (err) {
+                        setError(
+                          err instanceof Error
+                            ? err.message
+                            : "Falha no upload do documento"
+                        );
+                      } finally {
+                        setUploadingTransfAnexo(false);
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+              {transfAnexos.length > 0 ? (
+                <ul className="space-y-1 text-xs">
+                  {transfAnexos.map((a, i) => (
+                    <li
+                      key={`${a.arquivo}-${i}`}
+                      className="flex items-center justify-between gap-2 rounded border border-amber-100 bg-white px-2 py-1"
+                    >
+                      <a
+                        href={resolveAssetUrl(a.arquivo) || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="truncate text-brand hover:underline"
+                      >
+                        [{a.tipo}] {a.label || a.arquivo}
+                      </a>
+                      <button
+                        type="button"
+                        className="shrink-0 text-rose-600 hover:underline"
+                        onClick={() =>
+                          setTransfAnexos((prev) =>
+                            prev.filter((_, idx) => idx !== i)
+                          )
+                        }
+                      >
+                        Remover
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-xs text-slate-500">
+                  Opcional — arquivos ficam disponíveis na tela da transferência
+                  (somente visualização).
+                </p>
+              )}
+            </div>
           </fieldset>
         )}
 

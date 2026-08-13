@@ -3,6 +3,7 @@ import {
   createTransferenciaSchema,
   conferirTransferenciaSchema,
   rejeitarMovimentacaoSchema,
+  anexarTransferenciaSchema,
 } from "@teep/shared";
 import {
   authenticate,
@@ -23,6 +24,7 @@ import {
   rejeitarTransferencia,
   listarTransferenciasPendentesAprovacao,
   contarTransferenciasPendentesAprovacao,
+  anexarDocumentoTransferencia,
 } from "../services/transferenciaService";
 
 export const transferenciasRouter = Router();
@@ -78,6 +80,24 @@ transferenciasRouter.get(
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(await obterTransferencia(req.user!, req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+transferenciasRouter.post(
+  "/:id/anexos",
+  requirePermissao("transferencias", "lancamentos"),
+  validateBody(anexarTransferenciaSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const anexo = await anexarDocumentoTransferencia(
+        req.user!,
+        req.params.id,
+        req.body
+      );
+      res.status(201).json(anexo);
     } catch (e) {
       next(e);
     }
