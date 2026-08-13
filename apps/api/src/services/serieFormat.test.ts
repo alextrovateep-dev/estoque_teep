@@ -20,6 +20,27 @@ describe("serieFormat", () => {
     );
   });
 
+  it("remove traços do código do produto na série", () => {
+    assert.equal(
+      formatarNumeroSerie({
+        codigoProduto: "TMP-202",
+        ano2: 26,
+        sequencial: 1,
+        tamanhoSequencial: 4,
+      }),
+      "TMP202260001"
+    );
+    assert.equal(
+      formatarNumeroSerie({
+        codigoProduto: "TMP-2020",
+        ano2: 26,
+        sequencial: 1,
+        tamanhoSequencial: 4,
+      }),
+      "TMP2020260001"
+    );
+  });
+
   it("respeita formato com hífens e prefixo", () => {
     assert.equal(
       formatarNumeroSerie({

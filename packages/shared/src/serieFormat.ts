@@ -15,7 +15,7 @@ export const FORMATOS_SERIE_PRESETS = [
   },
   {
     id: "tracejado",
-    /** Ano e seq separados; sem hífen logo após {codigo} (códigos como TMP-4-4 já têm traço). */
+    /** Ano e seq separados por hífen; o código do produto já perde traços internos. */
     formato: "{codigo}{ano2}-{seq4}",
     nome: "Ano-seqüência com hífen",
   },
@@ -60,10 +60,12 @@ export function formatoComTamanho(formato: string, tamanho: number): string {
 }
 
 function normalizarCodigoProduto(codigoProduto: string): string {
+  // Traços do código do produto (ex.: TMP-202) não entram na série → TMP202…
   return (codigoProduto || "")
     .trim()
     .toUpperCase()
-    .replace(/\s+/g, "");
+    .replace(/\s+/g, "")
+    .replace(/-/g, "");
 }
 
 /**

@@ -578,9 +578,9 @@ export function ProdutoCadastroForm({
                   ) : null}
                   <span className="mt-1 block text-xs text-slate-500">
                     Placeholders: {"{codigo}"} {"{ano2}"} {"{seq4}"} {"{prefixo}"}{" "}
-                    {"{sufixo}"}. No lançamento o operador digita só a sequência;
-                    o prefixo (código + ano) aparece fixo — sem hífen extra após
-                    o código.
+                    {"{sufixo}"}. Traços no código do produto são ignorados na
+                    série (TMP-202 → TMP202…). No lançamento digita-se só a
+                    sequência; o prefixo (código sem traço + ano) fica fixo.
                   </span>
                 </label>
 
