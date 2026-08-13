@@ -1,6 +1,7 @@
 "use client";
 
 import { SeriesInput } from "@/components/SeriesInput";
+import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import { api } from "@/lib/api";
 import { useEffect, useRef, useState } from "react";
 
@@ -41,6 +42,11 @@ type Props = {
   filialId: string;
   /** SAÍDA / TRANSFERÊNCIA — valida série no estoque origem/afetado */
   validarSerieEstoque: boolean;
+  /**
+   * ENTRADA ou transferência com baixa pela árvore:
+   * qty primeiro → N caixas; séries nascem (não validar no estoque origem).
+   */
+  modoSerieNascimento?: boolean;
   /** ENTRADA sem retorno — permite gerar séries */
   podeGerarAutomatico: boolean;
   tipoNome?: string;
@@ -88,6 +94,7 @@ export function LancamentoLinhaItem({
   locked,
   filialId,
   validarSerieEstoque,
+  modoSerieNascimento = false,
   podeGerarAutomatico,
   tipoNome,
   onPatch,
@@ -132,7 +139,8 @@ export function LancamentoLinhaItem({
 
   /** Ajusta array de séries ao mudar quantidade (modo campos N). */
   useEffect(() => {
-    if (!controlaSerie || !validarSerieEstoque) return;
+    if (!controlaSerie) return;
+    if (!validarSerieEstoque && !modoSerieNascimento) return;
     if (!Number.isFinite(qtdNum) || qtdNum <= 0) return;
     const n = Math.min(Math.floor(qtdNum), 200);
     const cur = linhaRef.current;
@@ -148,7 +156,7 @@ export function LancamentoLinhaItem({
     );
     onPatch({ series, serieStatus, serieMsgs, quantidade: String(n) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlaSerie, validarSerieEstoque, qtdInt]);
+  }, [controlaSerie, validarSerieEstoque, modoSerieNascimento, qtdInt]);
 
   useEffect(() => {
     return () => {
@@ -322,15 +330,17 @@ export function LancamentoLinhaItem({
     serieStatus[idx] = "idle";
     serieMsgs[idx] = "";
     onPatch({ series, serieStatus, serieMsgs });
+    if (!validarSerieEstoque) return;
     if (validTimers.current[idx]) clearTimeout(validTimers.current[idx]);
     validTimers.current[idx] = setTimeout(() => {
       void validarSerieCampo(idx, valor);
     }, 400);
   }
 
-  const usaCamposSerie = controlaSerie && validarSerieEstoque;
+  const usaCamposSerie =
+    controlaSerie && (validarSerieEstoque || modoSerieNascimento);
   const usaSeriesInput =
-    controlaSerie && !validarSerieEstoque;
+    controlaSerie && !validarSerieEstoque && !modoSerieNascimento;
 
   return (
     <div
@@ -447,51 +457,21 @@ export function LancamentoLinhaItem({
         </div>
       )}
 
-      {usaCamposSerie && qtdInt > 0 ? (
-        <div className="mt-3 space-y-2">
-          <p className="text-xs font-medium text-slate-600">
-            Números de série ({qtdInt})
-          </p>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {linha.series.map((sn, i) => {
-              const st = linha.serieStatus[i] || "idle";
-              const border =
-                st === "ok"
-                  ? "border-emerald-400 focus:ring-emerald-200"
-                  : st === "err"
-                    ? "border-rose-400 focus:ring-rose-200"
-                    : st === "checking"
-                      ? "border-amber-300"
-                      : "border-slate-200";
-              return (
-                <div key={i}>
-                  <input
-                    value={sn}
-                    onChange={(e) => onSerieChange(i, e.target.value)}
-                    onBlur={() => void validarSerieCampo(i, sn)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void validarSerieCampo(i, sn);
-                      }
-                    }}
-                    placeholder={`Série ${i + 1}`}
-                    className={`w-full rounded-lg border bg-white px-3 py-2 font-mono text-sm ${border}`}
-                  />
-                  {linha.serieMsgs[i] ? (
-                    <p className="mt-0.5 text-[11px] text-rose-600">
-                      {linha.serieMsgs[i]}
-                    </p>
-                  ) : st === "ok" ? (
-                    <p className="mt-0.5 text-[11px] text-emerald-700">
-                      Disponível no estoque
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+      {usaCamposSerie && qtdInt > 0 && linha.produto ? (
+        <SerieCamposPrefixo
+          codigoProduto={linha.produto.codigo}
+          config={linha.produto.configuracaoSerie}
+          series={linha.series}
+          serieStatus={linha.serieStatus}
+          serieMsgs={linha.serieMsgs}
+          validarEstoque={validarSerieEstoque}
+          onChangeSerie={(i, full) => onSerieChange(i, full)}
+          onBlurSerie={
+            validarSerieEstoque
+              ? (i, full) => void validarSerieCampo(i, full)
+              : undefined
+          }
+        />
       ) : null}
 
       {usaSeriesInput ? (

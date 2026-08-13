@@ -15,8 +15,9 @@ export const FORMATOS_SERIE_PRESETS = [
   },
   {
     id: "tracejado",
-    formato: "{codigo}-{ano2}-{seq4}",
-    nome: "Com hífens",
+    /** Ano e seq separados; sem hífen logo após {codigo} (códigos como TMP-4-4 já têm traço). */
+    formato: "{codigo}{ano2}-{seq4}",
+    nome: "Ano-seqüência com hífen",
   },
 ] as const;
 
@@ -58,6 +59,89 @@ export function formatoComTamanho(formato: string, tamanho: number): string {
   return `${base}{seq${t}}`;
 }
 
+function normalizarCodigoProduto(codigoProduto: string): string {
+  return (codigoProduto || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+/**
+ * Parte fixa da série (antes do sequencial) para a UI:
+ * operador digita só a sequência final.
+ */
+export function prefixoSerieProduto(opts: {
+  codigoProduto: string;
+  ano2?: number;
+  tamanhoSequencial?: number;
+  formato?: string | null;
+  prefixoFixo?: string | null;
+  sufixoFixo?: string | null;
+}): string {
+  const tamanho = Math.min(
+    6,
+    Math.max(3, opts.tamanhoSequencial ?? TAMANHO_SEQ_PADRAO)
+  );
+  const codigo = normalizarCodigoProduto(opts.codigoProduto);
+  const ano = String(opts.ano2 ?? anoDoisDigitos())
+    .padStart(2, "0")
+    .slice(-2);
+  const prefixo = (opts.prefixoFixo || "").trim();
+  const formatoRaw = (opts.formato || FORMATO_SERIE_PADRAO).trim();
+  const formato = formatoComTamanho(
+    formatoRaw || FORMATO_SERIE_PADRAO,
+    tamanho
+  );
+
+  const semSeq = formato.replace(/\{seq\d?\}.*$/i, "");
+  let out = semSeq
+    .replace(/\{codigo\}/gi, codigo)
+    .replace(/\{ano2\}/gi, ano)
+    .replace(/\{prefixo\}/gi, prefixo)
+    .replace(/\{sufixo\}/gi, "");
+
+  if (!/\{prefixo\}/i.test(formato) && prefixo) out = `${prefixo}${out}`;
+  return out;
+}
+
+/** Junta prefixo + sequência digitada (completa a série). */
+export function serieCompletaDeSequencia(
+  prefixo: string,
+  sequenciaDigitada: string,
+  tamanhoSequencial?: number
+): string {
+  const tamanho = Math.min(
+    6,
+    Math.max(3, tamanhoSequencial ?? TAMANHO_SEQ_PADRAO)
+  );
+  const raw = (sequenciaDigitada || "").trim();
+  if (!raw) return "";
+  const pref = prefixo || "";
+  if (pref && raw.toUpperCase().startsWith(pref.toUpperCase())) {
+    return raw.toUpperCase();
+  }
+  const digits = raw.replace(/\D/g, "");
+  const seq =
+    digits.length > 0
+      ? digits.padStart(tamanho, "0").slice(-Math.max(tamanho, digits.length))
+      : raw.toUpperCase();
+  return `${pref}${seq}`;
+}
+
+/** Extrai só a parte sequencial de uma série completa (para exibir no input). */
+export function sequenciaDeSerieCompleta(
+  serieCompleta: string,
+  prefixo: string
+): string {
+  const full = (serieCompleta || "").trim();
+  const pref = prefixo || "";
+  if (!full) return "";
+  if (pref && full.toUpperCase().startsWith(pref.toUpperCase())) {
+    return full.slice(pref.length);
+  }
+  return full;
+}
+
 export function formatarNumeroSerie(opts: {
   codigoProduto: string;
   ano2: number;
@@ -71,10 +155,7 @@ export function formatarNumeroSerie(opts: {
     6,
     Math.max(3, opts.tamanhoSequencial ?? TAMANHO_SEQ_PADRAO)
   );
-  const codigo = (opts.codigoProduto || "")
-    .trim()
-    .toUpperCase()
-    .replace(/\s+/g, "");
+  const codigo = normalizarCodigoProduto(opts.codigoProduto);
   const ano = String(opts.ano2).padStart(2, "0").slice(-2);
   const seqPad = (t: number) => String(opts.sequencial).padStart(t, "0");
   const prefixo = (opts.prefixoFixo || "").trim();

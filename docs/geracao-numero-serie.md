@@ -27,13 +27,14 @@ Modelo `ConfiguracaoSerie` (defaults no código / shared):
 
 | Campo | Padrão | Notas |
 |-------|--------|--------|
-| `formato` | `{codigo}{ano2}{seq4}` | Presets compacto / com hífens; tokens `{codigo}` `{ano2}` `{seqN}` |
+| `formato` | `{codigo}{ano2}{seq4}` | Presets compacto / ano-seqüência; tokens `{codigo}` `{ano2}` `{seqN}` |
 | `geracaoAutomatica` | `true` | Se `false`, alocar recusa — usuário digita |
 | `tamanhoSequencial` | `4` | Entre 3 e 6 |
 | `prefixoFixo` / `sufixoFixo` | null | Opcionais |
 | `reiniciarAnual` | `true` | Contador por ano; se `false`, ano lógico `0` |
 
-Exemplos: `TMP4426250001` · `TMP4426-25-0001`.  
+Exemplos (código `TMP-4-4`, 2026): `TMP-4-4260001` (compacto) · `TMP-4-426-0001` (ano-seqüência).  
+No lançamento (entrada / transferência com árvore): quantidade primeiro → N caixas; prefixo fixo + só a sequência.  
 Lógica: `packages/shared/src/serieFormat.ts` + `geracaoSerieService.ts`. Máx. **500** séries por lote.
 
 ---

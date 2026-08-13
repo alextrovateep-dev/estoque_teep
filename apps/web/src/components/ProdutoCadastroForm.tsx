@@ -530,9 +530,10 @@ export function ProdutoCadastroForm({
                   <select
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 outline-none focus:border-teal-700"
                     value={
+                      form.formatoSerie === "{codigo}{ano2}-{seq4}" ||
                       form.formatoSerie === "{codigo}-{ano2}-{seq4}" ||
-                      form.formatoSerie.startsWith("{codigo}-{ano2}-")
-                        ? "{codigo}-{ano2}-{seq4}"
+                      /^\{codigo\}\{ano2\}-\{seq\d\}$/.test(form.formatoSerie)
+                        ? "{codigo}{ano2}-{seq4}"
                         : form.formatoSerie === "{codigo}{ano2}{seq4}" ||
                             /^\{codigo\}\{ano2\}\{seq\d\}$/.test(
                               form.formatoSerie
@@ -577,7 +578,9 @@ export function ProdutoCadastroForm({
                   ) : null}
                   <span className="mt-1 block text-xs text-slate-500">
                     Placeholders: {"{codigo}"} {"{ano2}"} {"{seq4}"} {"{prefixo}"}{" "}
-                    {"{sufixo}"}
+                    {"{sufixo}"}. No lançamento o operador digita só a sequência;
+                    o prefixo (código + ano) aparece fixo — sem hífen extra após
+                    o código.
                   </span>
                 </label>
 

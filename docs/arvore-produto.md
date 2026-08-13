@@ -40,14 +40,15 @@ Tipo de sistema (seed): **Baixa de componente (árvore)** (`TIPO_CONSUMO_MONTAGE
 3. **Fantasma** = só estrutura; não movimenta saldo.
 4. Precisa de ao menos **um** não-fantasma (só fantasmas = nada a baixar / erro conforme fluxo).
 5. Filho com série (não-fantasma) → erro no lançamento.
-
+6. Pai com série + **Saída** com árvore → bloqueado (use transferência para nascer o acabado).
+7. Pai com série + **Transferência** com árvore → permitido: séries novas no destino.
 | Operação | Documento | Estoque |
 |----------|-----------|---------|
 | **Saída** | Saída do produto pai | Baixa só componentes; **não** debita saldo do pai |
-| **Transferência** | Carga / destino | Origem: baixa componentes · Destino: entra o **pai** (item único) |
+| **Transferência** | Carga / destino | Origem: baixa componentes · Destino: entra o **pai**. Se o pai `controlaSerie`, as séries **nascem** no destino (não saem da origem). |
 
-No Novo Lançamento, baixa por árvore **desliga** o modo multi-SKU (uma linha / fluxo especial).
-
+No Novo Lançamento, baixa por árvore **desliga** o modo multi-SKU (uma linha / fluxo especial).  
+Com série no pai (só transferência): informe **quantidade** → N caixas com prefixo do padrão do produto + sequência final.
 ---
 
 ## API

@@ -24,6 +24,7 @@ import {
 import {
   aplicarSeriesConferencia,
   aplicarSeriesTransferenciaEnvio,
+  aplicarSeriesMontagemNascimento,
   efetivarSeriesTransferenciaAposAprovacao,
   normalizarSeries,
   reservarSeriesTransferenciaPendente,
@@ -366,12 +367,6 @@ async function criarTransferenciaInterna(
       }
 
       if (baixaPorArvore) {
-        if (produto.controlaSerie) {
-          throw new AppError(
-            400,
-            `O produto ${produto.codigo} controla série — transferência com baixa pela árvore ainda não suporta série`
-          );
-        }
         const bom = await carregarBomProduto(tx, item.produtoId);
         const consumo = linhasConsumoMontagem(bom, quantidade);
         if (consumo.length === 0) {
@@ -628,6 +623,18 @@ async function aplicarEfeitosItemTransferencia(
         movimentacaoEnviadaId: movEnviada.id,
         movimentacaoRecebidaId: movRecebidaId,
         destinoFilialId: opts.destinoFilialId,
+        imediato: opts.imediato,
+      });
+    } else if (baixaPorArvore) {
+      /** Pai montado: séries nascem no destino (não saem da origem). */
+      await aplicarSeriesMontagemNascimento(tx, {
+        transferenciaItemId: opts.itemId,
+        movimentacaoEnviadaId: movEnviada.id,
+        movimentacaoRecebidaId: movRecebidaId,
+        produtoId: opts.produto.id,
+        destinoFilialId: opts.destinoFilialId,
+        series: opts.series || [],
+        quantidade: opts.quantidade,
         imediato: opts.imediato,
       });
     } else {

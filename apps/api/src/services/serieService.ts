@@ -652,6 +652,92 @@ export async function aplicarSeriesTransferenciaEnvio(
   }
 }
 
+/**
+ * Transferência com baixa pela árvore + pai com série:
+ * as séries **nascem** no destino (não saem da origem).
+ * imediato → EM_ESTOQUE no destino; senão → EM_TRANSITO até a conferência.
+ */
+export async function aplicarSeriesMontagemNascimento(
+  tx: Tx,
+  opts: {
+    transferenciaItemId: string;
+    movimentacaoEnviadaId: string;
+    movimentacaoRecebidaId?: string | null;
+    produtoId: string;
+    destinoFilialId: string;
+    series: string[];
+    quantidade: number;
+    imediato: boolean;
+  }
+) {
+  const series = normalizarSeries(opts.series);
+  assertQuantidadeInteiraSerie(opts.quantidade, series.length);
+
+  const reservadas = await seriesReservadasPendentes(tx, opts.produtoId);
+  const emPendTransf = await seriesEmTransferenciaPendente(tx, opts.produtoId);
+
+  for (const numeroSerie of series) {
+    const key = numeroSerie.toUpperCase();
+    if (reservadas.has(key) || emPendTransf.has(key)) {
+      throw new AppError(
+        400,
+        `Série ${numeroSerie} está reservada em outro lançamento pendente`
+      );
+    }
+
+    const existente = await tx.unidadeSerie.findUnique({
+      where: {
+        uniq_produto_serie: {
+          produtoId: opts.produtoId,
+          numeroSerie,
+        },
+      },
+    });
+    if (existente) {
+      throw new AppError(
+        400,
+        `Número de série já cadastrado para este produto: ${numeroSerie}`
+      );
+    }
+
+    const created = await tx.unidadeSerie.create({
+      data: {
+        produtoId: opts.produtoId,
+        numeroSerie,
+        filialId: opts.imediato ? opts.destinoFilialId : null,
+        status: opts.imediato
+          ? SERIE_STATUS.EM_ESTOQUE
+          : SERIE_STATUS.EM_TRANSITO,
+      },
+    });
+
+    await tx.transferenciaItemSerie.create({
+      data: {
+        transferenciaItemId: opts.transferenciaItemId,
+        unidadeSerieId: created.id,
+        enviado: true,
+        recebido: opts.imediato ? true : null,
+      },
+    });
+
+    await tx.movimentacaoSerie.create({
+      data: {
+        movimentacaoId: opts.movimentacaoEnviadaId,
+        unidadeSerieId: created.id,
+      },
+    });
+
+    if (opts.imediato && opts.movimentacaoRecebidaId) {
+      await tx.movimentacaoSerie.create({
+        data: {
+          movimentacaoId: opts.movimentacaoRecebidaId,
+          unidadeSerieId: created.id,
+        },
+      });
+    }
+  }
+}
+
 /** Reserva séries em transferência PENDENTE_APROVACAO (sem mudar status da unidade). */
 export async function reservarSeriesTransferenciaPendente(
   tx: Tx,
