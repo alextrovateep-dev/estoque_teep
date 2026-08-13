@@ -940,7 +940,7 @@ function NovoLancamentoForm() {
           // SAÍDA com árvore: pai sem série. TRANSFERÊNCIA: pai nasce com série no destino.
           if (prod.controlaSerie && tipo?.operacao !== "TRANSFERENCIA") {
             setError(
-              "Produto com série: use Transferência entre estoques com baixa pela árvore para nascer o acabado no destino"
+              "Produto com série não pode usar saída com baixa pela árvore — use um tipo de transferência com baixa pela árvore, se for o fluxo desejado"
             );
             return;
           }
@@ -1967,8 +1967,8 @@ function NovoLancamentoForm() {
                 </p>
                 <p className="text-xs text-amber-900/80">
                   {isTransf
-                    ? "Na origem (MP) saem os componentes da árvore. No destino (acabado) nasce este produto — com série, se o cadastro controlar número de série."
-                    : "No estoque selecionado serão baixados os componentes da árvore deste produto (sem nascer o pai no estoque)."}
+                    ? "Este tipo baixa os componentes da árvore na origem e credita o produto informado no destino. Séries (se o produto controlar) seguem o cadastro do produto."
+                    : "Este tipo baixa os componentes da árvore no estoque selecionado, conforme a operação cadastrada."}
                 </p>
                 {bomPreview.length > 0 ? (
                   <div className="text-xs text-slate-700">
