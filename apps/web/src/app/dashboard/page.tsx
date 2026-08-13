@@ -79,6 +79,7 @@ type Dashboard = {
     abaixoMinimo: boolean;
     acimaMaximo?: boolean;
     produtoAtivo: boolean;
+    controlaSerie?: boolean;
   }>;
   saldosMeta: {
     total: number;
@@ -128,6 +129,11 @@ export default function DashboardPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
+  /** Linha expandida: séries EM_ESTOQUE (produto×filial). */
+  const [expandSeriesId, setExpandSeriesId] = useState<string | null>(null);
+  const [seriesPorLinha, setSeriesPorLinha] = useState<
+    Record<string, { loading: boolean; numeros: string[]; error?: string }>
+  >({});
 
   const isOpsManager =
     user?.perfil === "ADMIN" || user?.perfil === "GERENTE";
@@ -181,6 +187,8 @@ export default function DashboardPage() {
     setError("");
     setSelecionados(new Set());
     setFilialTabelaId("");
+    setExpandSeriesId(null);
+    setSeriesPorLinha({});
     const params = new URLSearchParams();
     if (isOpsManager && filialId) params.set("filialId", filialId);
     api<Dashboard>(`/dashboard${params.toString() ? `?${params}` : ""}`, {
@@ -320,6 +328,47 @@ export default function DashboardPage() {
       else next.add(id);
       return next;
     });
+  }
+
+  async function toggleSeriesLinha(s: {
+    id: string;
+    produtoId?: string;
+    filialId: string;
+    controlaSerie?: boolean;
+  }) {
+    if (!s.controlaSerie || !s.produtoId) return;
+    if (expandSeriesId === s.id) {
+      setExpandSeriesId(null);
+      return;
+    }
+    setExpandSeriesId(s.id);
+    const cached = seriesPorLinha[s.id];
+    if (cached && !cached.loading && !cached.error) return;
+    setSeriesPorLinha((prev) => ({
+      ...prev,
+      [s.id]: { loading: true, numeros: prev[s.id]?.numeros || [] },
+    }));
+    try {
+      const list = await api<Array<{ numeroSerie: string }>>(
+        `/series/disponiveis?produtoId=${encodeURIComponent(s.produtoId)}&filialId=${encodeURIComponent(s.filialId)}`
+      );
+      setSeriesPorLinha((prev) => ({
+        ...prev,
+        [s.id]: {
+          loading: false,
+          numeros: list.map((x) => x.numeroSerie),
+        },
+      }));
+    } catch (e) {
+      setSeriesPorLinha((prev) => ({
+        ...prev,
+        [s.id]: {
+          loading: false,
+          numeros: [],
+          error: e instanceof Error ? e.message : "Erro ao carregar séries",
+        },
+      }));
+    }
   }
 
   const filialLabel =
@@ -772,6 +821,7 @@ export default function DashboardPage() {
                     <th className="px-3 py-2">Descrição</th>
                     <th className="px-3 py-2">Categoria</th>
                     <th className="px-3 py-2 text-right">Saldo</th>
+                    <th className="px-3 py-2">Séries</th>
                     <th className="px-3 py-2 text-right">Mín.</th>
                     <th className="px-3 py-2 text-right">Máx.</th>
                     <th className="px-3 py-2 text-right">Valor</th>
@@ -780,15 +830,23 @@ export default function DashboardPage() {
                 <tbody>
                   {saldosFiltrados.map((s) => {
                     const marcada = selecionados.has(s.id);
+                    const aberto = expandSeriesId === s.id;
+                    const serieState = seriesPorLinha[s.id];
+                    const qtdSeriesCarregada = serieState?.numeros.length;
+                    const qtdSeriesEstimada = Math.trunc(s.saldoAtual);
+                    const qtdSeriesLabel =
+                      serieState && !serieState.loading && !serieState.error
+                        ? qtdSeriesCarregada
+                        : qtdSeriesEstimada;
                     return (
                       <tr
                         key={s.id}
                         className={
                           s.abaixoMinimo || s.acimaMaximo
-                            ? "border-t bg-amber-50/60"
+                            ? "border-t bg-amber-50/60 align-top"
                             : marcada
-                              ? "border-t bg-brand/[0.06]"
-                              : "border-t"
+                              ? "border-t bg-brand/[0.06] align-top"
+                              : "border-t align-top"
                         }
                       >
                         <td className="px-3 py-2">
@@ -802,6 +860,11 @@ export default function DashboardPage() {
                         <td className="px-3 py-2">{s.filialSigla}</td>
                         <td className="px-3 py-2 font-mono text-xs">
                           {s.codigo}
+                          {s.controlaSerie ? (
+                            <span className="ml-1 rounded bg-teal-50 px-1 text-[10px] uppercase text-teal-800">
+                              Série
+                            </span>
+                          ) : null}
                         </td>
                         <td className="px-3 py-2">
                           {s.descricao}
@@ -816,6 +879,67 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-3 py-2 text-right font-medium">
                           {qty(s.saldoAtual)}
+                          {s.controlaSerie ? (
+                            <div className="text-[11px] font-normal text-slate-500">
+                              {qtdSeriesLabel} série(s)
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-2 min-w-[12rem]">
+                          {!s.controlaSerie ? (
+                            <span className="text-slate-400">—</span>
+                          ) : (
+                            <div className="space-y-1">
+                              <button
+                                type="button"
+                                className="text-left text-sm text-teal-800 underline"
+                                onClick={() => void toggleSeriesLinha(s)}
+                              >
+                                {aberto
+                                  ? "Ocultar"
+                                  : `Ver ${qtdSeriesLabel} série(s)`}
+                              </button>
+                              {aberto ? (
+                                <div className="rounded-lg border border-teal-100 bg-teal-50/50 p-2">
+                                  {serieState?.loading ? (
+                                    <p className="text-xs text-slate-500">
+                                      Carregando…
+                                    </p>
+                                  ) : serieState?.error ? (
+                                    <p className="text-xs text-rose-700">
+                                      {serieState.error}
+                                    </p>
+                                  ) : (serieState?.numeros.length ?? 0) ===
+                                    0 ? (
+                                    <p className="text-xs text-slate-500">
+                                      Nenhuma série EM_ESTOQUE nesta filial
+                                      {s.saldoAtual > 0
+                                        ? ` (saldo ${qty(s.saldoAtual)} — divergência)`
+                                        : ""}
+                                      .
+                                    </p>
+                                  ) : (
+                                    <>
+                                      <p className="text-xs text-slate-600">
+                                        {serieState!.numeros.length} unidade(s)
+                                        em {s.filialSigla}
+                                      </p>
+                                      <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto">
+                                        {serieState!.numeros.map((sn) => (
+                                          <li
+                                            key={sn}
+                                            className="font-mono text-xs text-slate-800"
+                                          >
+                                            {sn}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </>
+                                  )}
+                                </div>
+                              ) : null}
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right text-slate-500">
                           {s.estoqueMinimo || "—"}
@@ -832,7 +956,7 @@ export default function DashboardPage() {
                   {saldosFiltrados.length === 0 && (
                     <tr>
                       <td
-                        colSpan={9}
+                        colSpan={10}
                         className="px-3 py-8 text-center text-slate-500"
                       >
                         {serieAtiva && serieLoading

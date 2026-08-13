@@ -569,6 +569,10 @@ cadastrosRouter.get("/produtos", async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
     const ativas = req.query.ativas !== "0";
+    const take = Math.min(
+      2000,
+      Math.max(1, Number(req.query.limit) || 200)
+    );
     const where = {
       ...(ativas ? { ativo: true } : {}),
       ...(q
@@ -585,7 +589,7 @@ cadastrosRouter.get("/produtos", async (req, res, next) => {
         where,
         include: produtoInclude,
         orderBy: { codigo: "asc" },
-        take: 200,
+        take,
       })
     );
   } catch (e) {

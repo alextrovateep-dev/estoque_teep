@@ -82,6 +82,38 @@ seriesRouter.get("/", async (req: AuthedRequest, res, next) => {
   }
 });
 
+/**
+ * Contagem de séries EM_ESTOQUE por produto numa filial
+ * (inventário / saldo inicial — badge sem carregar a lista).
+ */
+seriesRouter.get("/resumo-estoque", async (req: AuthedRequest, res, next) => {
+  try {
+    const filialId = String(req.query.filialId || "");
+    if (!filialId) {
+      throw new AppError(400, "filialId obrigatório");
+    }
+    if (req.user!.perfil === "OPERADOR") {
+      const ids = operadorFilialIds(req.user!);
+      if (!ids.includes(filialId)) {
+        throw new AppError(403, "Acesso negado a esta filial");
+      }
+    }
+    const groups = await prisma.unidadeSerie.groupBy({
+      by: ["produtoId"],
+      where: { filialId, status: "EM_ESTOQUE" },
+      _count: { _all: true },
+    });
+    res.json(
+      groups.map((g) => ({
+        produtoId: g.produtoId,
+        quantidade: g._count._all,
+      }))
+    );
+  } catch (e) {
+    next(e);
+  }
+});
+
 /** Séries disponíveis (EM_ESTOQUE) de um produto numa filial. */
 seriesRouter.get("/disponiveis", async (req: AuthedRequest, res, next) => {
   try {
