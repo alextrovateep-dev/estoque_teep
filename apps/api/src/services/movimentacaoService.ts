@@ -184,7 +184,7 @@ export async function criarMovimentacao(
     /** Entrada: reativa série SAIDO (ex. equipamento que volta em RMA) */
     permitirReativarSaido?: boolean;
     anexos?: Array<{
-      tipo: "NOTA_FISCAL" | "TERMO_COMODATO" | "OUTRO";
+      tipo: "NOTA_FISCAL" | "TERMO_COMODATO" | "LAUDO" | "OUTRO";
       arquivo: string;
       label?: string | null;
     }>;

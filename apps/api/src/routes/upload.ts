@@ -140,6 +140,7 @@ uploadRouter.post(
         if (
           req.user!.perfil !== "ADMIN" &&
           !perms.lancamentos &&
+          !perms.transferencias &&
           !perms.rma &&
           !perms.rma_cobranca
         ) {
@@ -158,6 +159,7 @@ uploadRouter.post(
         if (
           req.user!.perfil !== "ADMIN" &&
           !perms.lancamentos &&
+          !perms.transferencias &&
           !perms.rma &&
           !perms.rma_cobranca
         ) {

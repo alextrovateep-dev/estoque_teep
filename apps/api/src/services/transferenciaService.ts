@@ -79,12 +79,7 @@ const transfInclude = {
         },
       },
       movimentacoes: {
-        include: {
-          tipo: true,
-          anexos: {
-            select: { id: true, tipo: true, arquivo: true, label: true },
-          },
-        },
+        include: { tipo: true },
         orderBy: { dataMovimento: "asc" as const },
       },
     },
