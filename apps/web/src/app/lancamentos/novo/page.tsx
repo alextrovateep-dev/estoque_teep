@@ -2021,7 +2021,10 @@ function NovoLancamentoForm() {
                 <span className="mt-1 block text-xs text-slate-500">
                   A quantidade segue a contagem dos números de série.
                 </span>
-              ) : produto?.controlaSerie && !isRetorno ? (
+              ) : produto?.controlaSerie &&
+                !isRetorno &&
+                (tipo?.operacao === "ENTRADA" ||
+                  (isBaixaArvore && isTransf)) ? (
                 <span className="mt-1 block text-xs text-slate-500">
                   Informe a quantidade — o sistema abre uma caixa de série para
                   cada unidade (digite só a sequência final).

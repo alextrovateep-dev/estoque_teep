@@ -860,7 +860,8 @@ export async function efetivarSeriesTransferenciaAposAprovacao(
 
 /**
  * Conferência: seriesRecebidas → destino EM_ESTOQUE;
- * demais → voltam à origem EM_ESTOQUE.
+ * demais → voltam à origem EM_ESTOQUE
+ * (ou são descartadas se `nascerMontagem` — séries nascidas na carga).
  */
 export async function aplicarSeriesConferencia(
   tx: Tx,
@@ -871,6 +872,8 @@ export async function aplicarSeriesConferencia(
     origemFilialId: string;
     seriesRecebidas: string[];
     qtdRecebida: number;
+    /** Séries criadas na montagem (não existiam na origem). */
+    nascerMontagem?: boolean;
   }
 ) {
   const seriesRec = normalizarSeries(opts.seriesRecebidas);
@@ -889,6 +892,13 @@ export async function aplicarSeriesConferencia(
 
   if (links.length === 0 && opts.qtdRecebida > 0) {
     throw new AppError(400, "Item de transferência sem séries enviadas");
+  }
+
+  if (opts.nascerMontagem && opts.qtdRecebida !== links.length) {
+    throw new AppError(
+      400,
+      "Transferência com baixa pela árvore e série exige conferência integral de todas as unidades nascidas"
+    );
   }
 
   let qtdNaoRecebida = 0;
@@ -924,6 +934,14 @@ export async function aplicarSeriesConferencia(
           },
         });
       }
+    } else if (opts.nascerMontagem) {
+      // Não deveria ocorrer após a checagem integral; defesa em profundidade.
+      qtdNaoRecebida += 1;
+      await tx.movimentacaoSerie.deleteMany({
+        where: { unidadeSerieId: link.unidadeSerieId },
+      });
+      await tx.transferenciaItemSerie.delete({ where: { id: link.id } });
+      await tx.unidadeSerie.delete({ where: { id: link.unidadeSerieId } });
     } else {
       qtdNaoRecebida += 1;
       await tx.unidadeSerie.update({

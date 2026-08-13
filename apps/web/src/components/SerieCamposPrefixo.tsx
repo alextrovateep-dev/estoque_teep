@@ -38,6 +38,7 @@ export function SerieCamposPrefixo({
   validarEstoque,
 }: Props) {
   const tamanho = config?.tamanhoSequencial ?? 4;
+  const sufixo = config?.sufixoFixo ?? null;
   const prefixo = prefixoSerieProduto({
     codigoProduto,
     formato: config?.formato,
@@ -52,8 +53,14 @@ export function SerieCamposPrefixo({
         Números de série ({series.length})
         {prefixo ? (
           <span className="ml-1 font-normal text-slate-500">
-            — prefixo <span className="font-mono">{prefixo}</span>; digite só a
-            sequência
+            — prefixo <span className="font-mono">{prefixo}</span>
+            {sufixo ? (
+              <>
+                {" "}
+                / sufixo <span className="font-mono">{sufixo}</span>
+              </>
+            ) : null}
+            ; digite só a sequência
           </span>
         ) : null}
       </p>
@@ -68,14 +75,14 @@ export function SerieCamposPrefixo({
                 : st === "checking"
                   ? "border-amber-300"
                   : "border-slate-200";
-          const seq = sequenciaDeSerieCompleta(sn, prefixo);
+          const seq = sequenciaDeSerieCompleta(sn, prefixo, sufixo);
           return (
             <div key={i}>
               <div
                 className={`flex overflow-hidden rounded-lg border bg-white ${border}`}
               >
                 {prefixo ? (
-                  <span className="flex max-w-[55%] shrink-0 items-center truncate border-r border-slate-200 bg-slate-50 px-2 font-mono text-xs text-slate-600">
+                  <span className="flex max-w-[45%] shrink-0 items-center truncate border-r border-slate-200 bg-slate-50 px-2 font-mono text-xs text-slate-600">
                     {prefixo}
                   </span>
                 ) : null}
@@ -85,15 +92,17 @@ export function SerieCamposPrefixo({
                     const full = serieCompletaDeSequencia(
                       prefixo,
                       e.target.value,
-                      tamanho
+                      tamanho,
+                      sufixo
                     );
                     onChangeSerie(i, full);
                   }}
                   onBlur={() => {
                     const full = serieCompletaDeSequencia(
                       prefixo,
-                      sequenciaDeSerieCompleta(sn, prefixo),
-                      tamanho
+                      sequenciaDeSerieCompleta(sn, prefixo, sufixo),
+                      tamanho,
+                      sufixo
                     );
                     onChangeSerie(i, full);
                     onBlurSerie?.(i, full);
@@ -103,8 +112,9 @@ export function SerieCamposPrefixo({
                       e.preventDefault();
                       const full = serieCompletaDeSequencia(
                         prefixo,
-                        sequenciaDeSerieCompleta(sn, prefixo),
-                        tamanho
+                        sequenciaDeSerieCompleta(sn, prefixo, sufixo),
+                        tamanho,
+                        sufixo
                       );
                       onChangeSerie(i, full);
                       onBlurSerie?.(i, full);
@@ -113,6 +123,11 @@ export function SerieCamposPrefixo({
                   placeholder={`seq ${i + 1}`}
                   className="min-w-0 flex-1 bg-transparent px-3 py-2 font-mono text-sm outline-none"
                 />
+                {sufixo ? (
+                  <span className="flex shrink-0 items-center border-l border-slate-200 bg-slate-50 px-2 font-mono text-xs text-slate-600">
+                    {sufixo}
+                  </span>
+                ) : null}
               </div>
               {serieMsgs?.[i] ? (
                 <p className="mt-0.5 text-[11px] text-rose-600">

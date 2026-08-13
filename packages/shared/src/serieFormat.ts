@@ -104,11 +104,12 @@ export function prefixoSerieProduto(opts: {
   return out;
 }
 
-/** Junta prefixo + sequência digitada (completa a série). */
+/** Junta prefixo + sequência digitada (+ sufixo opcional). */
 export function serieCompletaDeSequencia(
   prefixo: string,
   sequenciaDigitada: string,
-  tamanhoSequencial?: number
+  tamanhoSequencial?: number,
+  sufixoFixo?: string | null
 ): string {
   const tamanho = Math.min(
     6,
@@ -117,29 +118,40 @@ export function serieCompletaDeSequencia(
   const raw = (sequenciaDigitada || "").trim();
   if (!raw) return "";
   const pref = prefixo || "";
+  const suf = (sufixoFixo || "").trim();
   if (pref && raw.toUpperCase().startsWith(pref.toUpperCase())) {
-    return raw.toUpperCase();
+    const mid = raw.slice(pref.length);
+    if (suf && mid.toUpperCase().endsWith(suf.toUpperCase())) {
+      return raw.toUpperCase();
+    }
+    return `${raw.toUpperCase()}${suf && !mid.toUpperCase().endsWith(suf.toUpperCase()) ? suf : ""}`;
   }
   const digits = raw.replace(/\D/g, "");
   const seq =
     digits.length > 0
       ? digits.padStart(tamanho, "0").slice(-Math.max(tamanho, digits.length))
       : raw.toUpperCase();
-  return `${pref}${seq}`;
+  return `${pref}${seq}${suf}`;
 }
 
 /** Extrai só a parte sequencial de uma série completa (para exibir no input). */
 export function sequenciaDeSerieCompleta(
   serieCompleta: string,
-  prefixo: string
+  prefixo: string,
+  sufixoFixo?: string | null
 ): string {
   const full = (serieCompleta || "").trim();
   const pref = prefixo || "";
+  const suf = (sufixoFixo || "").trim();
   if (!full) return "";
-  if (pref && full.toUpperCase().startsWith(pref.toUpperCase())) {
-    return full.slice(pref.length);
+  let mid = full;
+  if (pref && mid.toUpperCase().startsWith(pref.toUpperCase())) {
+    mid = mid.slice(pref.length);
   }
-  return full;
+  if (suf && mid.toUpperCase().endsWith(suf.toUpperCase())) {
+    mid = mid.slice(0, mid.length - suf.length);
+  }
+  return mid;
 }
 
 export function formatarNumeroSerie(opts: {

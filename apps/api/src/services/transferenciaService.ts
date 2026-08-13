@@ -929,6 +929,23 @@ export async function conferirTransferencia(
         rec = seriesRecebidas.length;
       }
 
+      const enviadaMovPre = item.movimentacoes.find(
+        (m) =>
+          m.status === "CONCLUIDO" &&
+          m.operacao === "SAIDA" &&
+          m.tipoId === enviada.id
+      );
+      const nascerMontagem = Boolean(enviadaMovPre?.filialComponentesId);
+
+      if (nascerMontagem && item.produto.controlaSerie) {
+        if (rec !== enviadaQtd) {
+          throw new AppError(
+            400,
+            `Transferência com baixa pela árvore e série (${item.produto.codigo}): confirme todas as ${enviadaQtd} série(s) — recebimento parcial não é permitido`
+          );
+        }
+      }
+
       if (!Number.isFinite(rec) || rec < 0) {
         throw new AppError(
           400,
@@ -1002,9 +1019,11 @@ export async function conferirTransferencia(
           origemFilialId: transf.origemFilialId,
           seriesRecebidas,
           qtdRecebida: rec,
+          nascerMontagem,
         });
         // Séries não confirmadas voltam à origem — recredita saldo + estorno
-        if (qtdNaoRecebida > 0) {
+        // (não se aplica a nascimento por árvore: conferência integral obrigatória)
+        if (qtdNaoRecebida > 0 && !nascerMontagem) {
           const saldoOrig = await aplicarSaldo(tx, {
             produtoId: item.produtoId,
             filialId: transf.origemFilialId,
@@ -1288,6 +1307,21 @@ export async function cancelarTransferencia(user: AuthUser, id: string) {
             transferenciaItemId: item.id,
           },
         });
+        // Descarta séries nascidas (EM_TRANSITO) — não devolve pai à origem
+        if (item.produto.controlaSerie) {
+          const links = await tx.transferenciaItemSerie.findMany({
+            where: { transferenciaItemId: item.id },
+          });
+          for (const link of links) {
+            await tx.movimentacaoSerie.deleteMany({
+              where: { unidadeSerieId: link.unidadeSerieId },
+            });
+            await tx.transferenciaItemSerie.delete({ where: { id: link.id } });
+            await tx.unidadeSerie.delete({
+              where: { id: link.unidadeSerieId },
+            });
+          }
+        }
       } else {
         const saldoResult = await aplicarSaldo(tx, {
           produtoId: item.produtoId,
@@ -1439,6 +1473,7 @@ export async function reverterTransferenciaImediata(
       }
 
       const qtd = Number(item.qtdEnviada);
+      const baixaPorArvore = Boolean(enviadaMov.filialComponentesId);
 
       // Desfaz entrada no destino
       await aplicarSaldo(tx, {
@@ -1447,68 +1482,161 @@ export async function reverterTransferenciaImediata(
         operacao: "SAIDA",
         quantidade: qtd,
       });
-      // Devolve à origem
-      await aplicarSaldo(tx, {
-        produtoId: item.produtoId,
-        filialId: transf.origemFilialId,
-        operacao: "ENTRADA",
-        quantidade: qtd,
-      });
 
-      const estornoDest = await tx.movimentacao.create({
-        data: {
+      if (baixaPorArvore) {
+        // Devolve componentes; NÃO recoloca o pai na origem
+        const consumosArvore = await tx.movimentacao.findMany({
+          where: {
+            movimentacaoMontagemId: enviadaMov.id,
+            status: "CONCLUIDO",
+            estornoDeId: null,
+          },
+        });
+        for (const cons of consumosArvore) {
+          await aplicarSaldo(tx, {
+            produtoId: cons.produtoId,
+            filialId: cons.filialId,
+            operacao: "ENTRADA",
+            quantidade: Number(cons.quantidade),
+          });
+          await tx.movimentacao.create({
+            data: {
+              produtoId: cons.produtoId,
+              tipoId: estorno.id,
+              usuarioId: user.id,
+              filialId: cons.filialId,
+              quantidade: cons.quantidade,
+              precoUnitario: cons.precoUnitario,
+              operacao: "ENTRADA",
+              observacao: `${motivo} — devolve componente da árvore`,
+              status: "CONCLUIDO",
+              estornoDeId: cons.id,
+              movimentacaoMontagemId: enviadaMov.id,
+              transferenciaItemId: item.id,
+            },
+          });
+          await tx.movimentacao.update({
+            where: { id: cons.id },
+            data: { status: "ESTORNADO" },
+          });
+        }
+
+        const estornoDest = await tx.movimentacao.create({
+          data: {
+            produtoId: item.produtoId,
+            tipoId: estorno.id,
+            usuarioId: user.id,
+            filialId: transf.destinoFilialId,
+            quantidade: item.qtdEnviada,
+            precoUnitario: item.produto.precoUnitario,
+            operacao: "SAIDA",
+            observacao: motivo,
+            status: "CONCLUIDO",
+            estornoDeId: recebidaMov.id,
+            transferenciaItemId: item.id,
+          },
+        });
+        await tx.movimentacao.create({
+          data: {
+            produtoId: item.produtoId,
+            tipoId: estorno.id,
+            usuarioId: user.id,
+            filialId: transf.origemFilialId,
+            filialDestinoId: transf.destinoFilialId,
+            quantidade: item.qtdEnviada,
+            precoUnitario: item.produto.precoUnitario,
+            operacao: "ENTRADA",
+            observacao: `${motivo} — baixa árvore (sem repor pai na origem)`,
+            status: "CONCLUIDO",
+            estornoDeId: enviadaMov.id,
+            transferenciaItemId: item.id,
+          },
+        });
+
+        if (item.produto.controlaSerie) {
+          for (const link of item.series) {
+            await tx.movimentacaoSerie.create({
+              data: {
+                movimentacaoId: estornoDest.id,
+                unidadeSerieId: link.unidadeSerieId,
+              },
+            });
+            await tx.movimentacaoSerie.deleteMany({
+              where: {
+                unidadeSerieId: link.unidadeSerieId,
+                movimentacaoId: { not: estornoDest.id },
+              },
+            });
+            await tx.transferenciaItemSerie.delete({ where: { id: link.id } });
+            await tx.unidadeSerie.delete({
+              where: { id: link.unidadeSerieId },
+            });
+          }
+        }
+      } else {
+        // Devolve à origem
+        await aplicarSaldo(tx, {
           produtoId: item.produtoId,
-          tipoId: estorno.id,
-          usuarioId: user.id,
-          filialId: transf.destinoFilialId,
-          quantidade: item.qtdEnviada,
-          precoUnitario: item.produto.precoUnitario,
-          operacao: "SAIDA",
-          observacao: motivo,
-          status: "CONCLUIDO",
-          estornoDeId: recebidaMov.id,
-          transferenciaItemId: item.id,
-        },
-      });
-      const estornoOrig = await tx.movimentacao.create({
-        data: {
-          produtoId: item.produtoId,
-          tipoId: estorno.id,
-          usuarioId: user.id,
           filialId: transf.origemFilialId,
-          filialDestinoId: transf.destinoFilialId,
-          quantidade: item.qtdEnviada,
-          precoUnitario: item.produto.precoUnitario,
           operacao: "ENTRADA",
-          observacao: motivo,
-          status: "CONCLUIDO",
-          estornoDeId: enviadaMov.id,
-          transferenciaItemId: item.id,
-        },
-      });
+          quantidade: qtd,
+        });
 
-      if (item.produto.controlaSerie) {
-        for (const link of item.series) {
-          await tx.unidadeSerie.update({
-            where: { id: link.unidadeSerieId },
-            data: {
-              status: SERIE_STATUS.EM_ESTOQUE,
-              filialId: transf.origemFilialId,
-              clienteId: null,
-            },
-          });
-          await tx.movimentacaoSerie.create({
-            data: {
-              movimentacaoId: estornoDest.id,
-              unidadeSerieId: link.unidadeSerieId,
-            },
-          });
-          await tx.movimentacaoSerie.create({
-            data: {
-              movimentacaoId: estornoOrig.id,
-              unidadeSerieId: link.unidadeSerieId,
-            },
-          });
+        const estornoDest = await tx.movimentacao.create({
+          data: {
+            produtoId: item.produtoId,
+            tipoId: estorno.id,
+            usuarioId: user.id,
+            filialId: transf.destinoFilialId,
+            quantidade: item.qtdEnviada,
+            precoUnitario: item.produto.precoUnitario,
+            operacao: "SAIDA",
+            observacao: motivo,
+            status: "CONCLUIDO",
+            estornoDeId: recebidaMov.id,
+            transferenciaItemId: item.id,
+          },
+        });
+        const estornoOrig = await tx.movimentacao.create({
+          data: {
+            produtoId: item.produtoId,
+            tipoId: estorno.id,
+            usuarioId: user.id,
+            filialId: transf.origemFilialId,
+            filialDestinoId: transf.destinoFilialId,
+            quantidade: item.qtdEnviada,
+            precoUnitario: item.produto.precoUnitario,
+            operacao: "ENTRADA",
+            observacao: motivo,
+            status: "CONCLUIDO",
+            estornoDeId: enviadaMov.id,
+            transferenciaItemId: item.id,
+          },
+        });
+
+        if (item.produto.controlaSerie) {
+          for (const link of item.series) {
+            await tx.unidadeSerie.update({
+              where: { id: link.unidadeSerieId },
+              data: {
+                status: SERIE_STATUS.EM_ESTOQUE,
+                filialId: transf.origemFilialId,
+                clienteId: null,
+              },
+            });
+            await tx.movimentacaoSerie.create({
+              data: {
+                movimentacaoId: estornoDest.id,
+                unidadeSerieId: link.unidadeSerieId,
+              },
+            });
+            await tx.movimentacaoSerie.create({
+              data: {
+                movimentacaoId: estornoOrig.id,
+                unidadeSerieId: link.unidadeSerieId,
+              },
+            });
+          }
         }
       }
 

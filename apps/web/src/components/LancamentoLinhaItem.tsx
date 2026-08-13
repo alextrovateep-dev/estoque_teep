@@ -337,8 +337,8 @@ export function LancamentoLinhaItem({
     }, 400);
   }
 
-  const usaCamposSerie =
-    controlaSerie && (validarSerieEstoque || modoSerieNascimento);
+  const usaCamposSerieNascimento = controlaSerie && modoSerieNascimento;
+  const usaCamposSerieEstoque = controlaSerie && validarSerieEstoque;
   const usaSeriesInput =
     controlaSerie && !validarSerieEstoque && !modoSerieNascimento;
 
@@ -457,21 +457,63 @@ export function LancamentoLinhaItem({
         </div>
       )}
 
-      {usaCamposSerie && qtdInt > 0 && linha.produto ? (
+      {usaCamposSerieNascimento && qtdInt > 0 && linha.produto ? (
         <SerieCamposPrefixo
           codigoProduto={linha.produto.codigo}
           config={linha.produto.configuracaoSerie}
           series={linha.series}
           serieStatus={linha.serieStatus}
           serieMsgs={linha.serieMsgs}
-          validarEstoque={validarSerieEstoque}
+          validarEstoque={false}
           onChangeSerie={(i, full) => onSerieChange(i, full)}
-          onBlurSerie={
-            validarSerieEstoque
-              ? (i, full) => void validarSerieCampo(i, full)
-              : undefined
-          }
         />
+      ) : null}
+
+      {usaCamposSerieEstoque && qtdInt > 0 ? (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs font-medium text-slate-600">
+            Números de série ({qtdInt}) — digite o código completo da unidade
+          </p>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {linha.series.map((sn, i) => {
+              const st = linha.serieStatus[i] || "idle";
+              const border =
+                st === "ok"
+                  ? "border-emerald-400 focus:ring-emerald-200"
+                  : st === "err"
+                    ? "border-rose-400 focus:ring-rose-200"
+                    : st === "checking"
+                      ? "border-amber-300"
+                      : "border-slate-200";
+              return (
+                <div key={i}>
+                  <input
+                    value={sn}
+                    onChange={(e) => onSerieChange(i, e.target.value)}
+                    onBlur={() => void validarSerieCampo(i, sn)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        void validarSerieCampo(i, sn);
+                      }
+                    }}
+                    placeholder={`Série ${i + 1}`}
+                    className={`w-full rounded-lg border bg-white px-3 py-2 font-mono text-sm ${border}`}
+                  />
+                  {linha.serieMsgs[i] ? (
+                    <p className="mt-0.5 text-[11px] text-rose-600">
+                      {linha.serieMsgs[i]}
+                    </p>
+                  ) : st === "ok" ? (
+                    <p className="mt-0.5 text-[11px] text-emerald-700">
+                      Disponível no estoque
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       ) : null}
 
       {usaSeriesInput ? (
