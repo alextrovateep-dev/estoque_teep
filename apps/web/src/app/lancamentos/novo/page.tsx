@@ -2044,8 +2044,10 @@ function NovoLancamentoForm() {
             Number(quantidade) > 0 ? (
               <SerieCamposPrefixo
                 codigoProduto={produto.codigo}
+                produtoId={produto.id}
                 config={produto.configuracaoSerie}
                 series={series}
+                validarNascimento
                 onChangeSerie={(i, full) => {
                   setSeries((prev) => {
                     const next = [...prev];

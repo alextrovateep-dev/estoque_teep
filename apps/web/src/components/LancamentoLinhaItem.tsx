@@ -460,12 +460,24 @@ export function LancamentoLinhaItem({
       {usaCamposSerieNascimento && qtdInt > 0 && linha.produto ? (
         <SerieCamposPrefixo
           codigoProduto={linha.produto.codigo}
+          produtoId={linha.produto.id}
           config={linha.produto.configuracaoSerie}
           series={linha.series}
           serieStatus={linha.serieStatus}
           serieMsgs={linha.serieMsgs}
           validarEstoque={false}
+          validarNascimento
           onChangeSerie={(i, full) => onSerieChange(i, full)}
+          onStatusSerie={(i, status, msg) => {
+            const cur = linhaRef.current;
+            const serieStatus = [...cur.serieStatus];
+            const serieMsgs = [...cur.serieMsgs];
+            while (serieStatus.length < i + 1) serieStatus.push("idle");
+            while (serieMsgs.length < i + 1) serieMsgs.push("");
+            serieStatus[i] = status;
+            serieMsgs[i] = msg;
+            onPatch({ serieStatus, serieMsgs });
+          }}
         />
       ) : null}
 

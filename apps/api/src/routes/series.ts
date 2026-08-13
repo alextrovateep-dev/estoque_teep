@@ -1,7 +1,12 @@
 import { Router } from "express";
 import {
   alocarSeriesSchema,
+  clampTamanhoSequencial,
   desfazerAlocacaoSerieSchema,
+  prefixoSerieProduto,
+  sequenciaDeSerieCompleta,
+  serieCompletaDeSequencia,
+  validarSequenciaSerieTamanho,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import {
@@ -202,6 +207,99 @@ seriesRouter.post("/validar-saida", async (req: AuthedRequest, res, next) => {
     next(e);
   }
 });
+
+/**
+ * Valida nascimento de série (entrada / montagem):
+ * formato (seqüência com N dígitos do produto) + ainda não usada no produto.
+ */
+seriesRouter.post(
+  "/validar-nascimento",
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const produtoId = String(req.body?.produtoId || "");
+      const numero = String(req.body?.numero || "").trim();
+      if (!produtoId || !numero) {
+        throw new AppError(400, "produtoId e numero são obrigatórios");
+      }
+
+      const produto = await prisma.produto.findFirst({
+        where: { id: produtoId, ativo: true },
+        include: { configuracaoSerie: true },
+      });
+      if (!produto) throw new AppError(404, "Produto não encontrado");
+      if (!produto.controlaSerie) {
+        throw new AppError(400, "Produto não controla série");
+      }
+
+      const cfg = produto.configuracaoSerie;
+      const tamanho = clampTamanhoSequencial(cfg?.tamanhoSequencial);
+      const prefixo = prefixoSerieProduto({
+        codigoProduto: produto.codigo,
+        formato: cfg?.formato,
+        tamanhoSequencial: tamanho,
+        prefixoFixo: cfg?.prefixoFixo,
+        sufixoFixo: cfg?.sufixoFixo,
+      });
+      const seq = sequenciaDeSerieCompleta(
+        numero,
+        prefixo,
+        cfg?.sufixoFixo
+      );
+      const tam = validarSequenciaSerieTamanho(seq, tamanho);
+      if (!tam.ok) {
+        return res.json({
+          ok: false,
+          numeroSerie: numero,
+          motivo: tam.motivo,
+        });
+      }
+      const normalizado = serieCompletaDeSequencia(
+        prefixo,
+        seq,
+        tamanho,
+        cfg?.sufixoFixo,
+        { finalizar: true }
+      );
+
+      const existente = await prisma.unidadeSerie.findFirst({
+        where: {
+          produtoId,
+          numeroSerie: { equals: normalizado, mode: "insensitive" },
+        },
+        select: { id: true, numeroSerie: true, status: true },
+      });
+      if (existente) {
+        return res.json({
+          ok: false,
+          numeroSerie: existente.numeroSerie,
+          status: existente.status,
+          motivo: `Número de série já cadastrado para este produto: ${existente.numeroSerie}`,
+        });
+      }
+
+      const alocPend = await prisma.serieAlocacao.findMany({
+        where: { produtoId, status: "PENDENTE" },
+        select: { series: true },
+        take: 50,
+      });
+      const key = normalizado.toUpperCase();
+      for (const a of alocPend) {
+        const arr = Array.isArray(a.series) ? (a.series as string[]) : [];
+        if (arr.some((s) => String(s).trim().toUpperCase() === key)) {
+          return res.json({
+            ok: false,
+            numeroSerie: normalizado,
+            motivo: `Série ${normalizado} está reservada em alocação pendente`,
+          });
+        }
+      }
+
+      res.json({ ok: true, numeroSerie: normalizado, motivo: null });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 /**
  * Aloca bloco de séries no contador (não cria UnidadeSerie).

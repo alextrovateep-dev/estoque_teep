@@ -1,4 +1,11 @@
 import { Prisma } from "@prisma/client";
+import {
+  clampTamanhoSequencial,
+  prefixoSerieProduto,
+  sequenciaDeSerieCompleta,
+  serieCompletaDeSequencia,
+  validarSequenciaSerieTamanho,
+} from "@teep/shared";
 import { AppError } from "../middleware/error";
 import {
   confirmarAlocacoesPorIds,
@@ -47,6 +54,74 @@ export function assertQuantidadeInteiraSerie(quantidade: number, seriesLen: numb
     throw new AppError(
       400,
       `Informe exatamente ${quantidade} número(s) de série (recebido: ${seriesLen})`
+    );
+  }
+}
+
+/**
+ * Garante que cada série respeita o tamanho de sequência do produto
+ * (ex.: 4 dígitos → …0023, não …000023).
+ */
+export async function assertFormatoSeriesNascimento(
+  tx: Tx,
+  produtoId: string,
+  series: string[]
+) {
+  const produto = await tx.produto.findUnique({
+    where: { id: produtoId },
+    include: { configuracaoSerie: true },
+  });
+  if (!produto?.controlaSerie) return;
+
+  const cfg = produto.configuracaoSerie;
+  const tamanho = clampTamanhoSequencial(cfg?.tamanhoSequencial);
+  const prefixo = prefixoSerieProduto({
+    codigoProduto: produto.codigo,
+    formato: cfg?.formato,
+    tamanhoSequencial: tamanho,
+    prefixoFixo: cfg?.prefixoFixo,
+    sufixoFixo: cfg?.sufixoFixo,
+  });
+  const sufixo = cfg?.sufixoFixo ?? null;
+
+  for (const sn of series) {
+    const seq = sequenciaDeSerieCompleta(sn, prefixo, sufixo);
+    const check = validarSequenciaSerieTamanho(seq, tamanho);
+    if (!check.ok) {
+      throw new AppError(400, `Série ${sn}: ${check.motivo}`);
+    }
+    const esperado = serieCompletaDeSequencia(
+      prefixo,
+      seq,
+      tamanho,
+      sufixo,
+      { finalizar: true }
+    );
+    if (esperado.toUpperCase() !== sn.toUpperCase()) {
+      throw new AppError(
+        400,
+        `Série ${sn} não confere com o padrão do produto (esperado ${esperado})`
+      );
+    }
+  }
+}
+
+async function assertSerieNaoExisteNoProduto(
+  tx: Tx,
+  produtoId: string,
+  numeroSerie: string
+) {
+  const existente = await tx.unidadeSerie.findFirst({
+    where: {
+      produtoId,
+      numeroSerie: { equals: numeroSerie, mode: "insensitive" },
+    },
+    select: { numeroSerie: true, status: true },
+  });
+  if (existente) {
+    throw new AppError(
+      400,
+      `Número de série já cadastrado para este produto: ${existente.numeroSerie}`
     );
   }
 }
@@ -143,18 +218,20 @@ export async function aplicarSeriesEntrada(
   const series = normalizarSeries(opts.series);
   assertQuantidadeInteiraSerie(opts.quantidade, series.length);
 
+  if (!opts.permitirReativarSaido) {
+    await assertFormatoSeriesNascimento(tx, opts.produtoId, series);
+  }
+
   const alocacoesParaConfirmar = await prepararEntradaComAlocacoes(tx, {
     produtoId: opts.produtoId,
     series,
   });
 
   for (const numeroSerie of series) {
-    const existente = await tx.unidadeSerie.findUnique({
+    const existente = await tx.unidadeSerie.findFirst({
       where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
+        produtoId: opts.produtoId,
+        numeroSerie: { equals: numeroSerie, mode: "insensitive" },
       },
     });
 
@@ -177,7 +254,7 @@ export async function aplicarSeriesEntrada(
       } else {
         throw new AppError(
           400,
-          `Número de série já cadastrado para este produto: ${numeroSerie}`
+          `Número de série já cadastrado para este produto: ${existente.numeroSerie}`
         );
       }
     } else {
@@ -460,14 +537,15 @@ export async function validarSeriesEntradaNovas(
 ) {
   const series = normalizarSeries(opts.series);
   assertQuantidadeInteiraSerie(opts.quantidade, series.length);
+  if (!opts.permitirReativarSaido) {
+    await assertFormatoSeriesNascimento(tx, opts.produtoId, series);
+  }
 
   for (const numeroSerie of series) {
-    const existente = await tx.unidadeSerie.findUnique({
+    const existente = await tx.unidadeSerie.findFirst({
       where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
+        produtoId: opts.produtoId,
+        numeroSerie: { equals: numeroSerie, mode: "insensitive" },
       },
     });
     if (!existente) continue;
@@ -479,7 +557,7 @@ export async function validarSeriesEntradaNovas(
     }
     throw new AppError(
       400,
-      `Número de série já cadastrado para este produto: ${numeroSerie}`
+      `Número de série já cadastrado para este produto: ${existente.numeroSerie}`
     );
   }
   return series;
@@ -672,6 +750,7 @@ export async function aplicarSeriesMontagemNascimento(
 ) {
   const series = normalizarSeries(opts.series);
   assertQuantidadeInteiraSerie(opts.quantidade, series.length);
+  await assertFormatoSeriesNascimento(tx, opts.produtoId, series);
 
   const reservadas = await seriesReservadasPendentes(tx, opts.produtoId);
   const emPendTransf = await seriesEmTransferenciaPendente(tx, opts.produtoId);
@@ -685,20 +764,7 @@ export async function aplicarSeriesMontagemNascimento(
       );
     }
 
-    const existente = await tx.unidadeSerie.findUnique({
-      where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
-      },
-    });
-    if (existente) {
-      throw new AppError(
-        400,
-        `Número de série já cadastrado para este produto: ${numeroSerie}`
-      );
-    }
+    await assertSerieNaoExisteNoProduto(tx, opts.produtoId, numeroSerie);
 
     const created = await tx.unidadeSerie.create({
       data: {

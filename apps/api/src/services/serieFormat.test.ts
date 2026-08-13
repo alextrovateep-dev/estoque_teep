@@ -5,6 +5,10 @@ import {
   gerarSequenciaSeries,
   anoDoisDigitos,
   formatoComTamanho,
+  digitosSequenciaLimitados,
+  sequenciaNormalizada,
+  serieCompletaDeSequencia,
+  validarSequenciaSerieTamanho,
 } from "@teep/shared";
 
 describe("serieFormat", () => {
@@ -76,5 +80,33 @@ describe("serieFormat", () => {
   it("anoDoisDigitos retorna 0-99", () => {
     const a = anoDoisDigitos(new Date("2026-01-01T12:00:00Z"));
     assert.equal(a, 26);
+  });
+
+  it("limita dígitos da sequência ao tamanho do produto", () => {
+    assert.equal(digitosSequenciaLimitados("000023", 4), "0000");
+    assert.equal(digitosSequenciaLimitados("23", 4), "23");
+    assert.equal(sequenciaNormalizada("23", 4), "0023");
+    assert.equal(sequenciaNormalizada("000023", 4), "0000");
+  });
+
+  it("serieCompletaDeSequencia não estoura o tamanho", () => {
+    assert.equal(
+      serieCompletaDeSequencia("TMP202026", "000023", 4, null, {
+        finalizar: false,
+      }),
+      "TMP2020260000"
+    );
+    assert.equal(
+      serieCompletaDeSequencia("TMP202026", "23", 4, null, {
+        finalizar: true,
+      }),
+      "TMP2020260023"
+    );
+  });
+
+  it("validarSequenciaSerieTamanho exige exatamente N dígitos", () => {
+    assert.equal(validarSequenciaSerieTamanho("0023", 4).ok, true);
+    assert.equal(validarSequenciaSerieTamanho("000023", 4).ok, false);
+    assert.equal(validarSequenciaSerieTamanho("23", 4).ok, false);
   });
 });

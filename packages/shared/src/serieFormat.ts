@@ -49,9 +49,61 @@ export function anoDoisDigitos(d = new Date()): number {
   return d.getFullYear() % 100;
 }
 
+/** Tamanho da sequência (3–6), padrão 4. */
+export function clampTamanhoSequencial(n?: number | null): number {
+  return Math.min(6, Math.max(3, n ?? TAMANHO_SEQ_PADRAO));
+}
+
+/**
+ * Só dígitos, no máximo `tamanho` caracteres (bloqueia 000023 quando tamanho=4).
+ */
+export function digitosSequenciaLimitados(
+  raw: string,
+  tamanhoSequencial?: number | null
+): string {
+  const tamanho = clampTamanhoSequencial(tamanhoSequencial);
+  return (raw || "").replace(/\D/g, "").slice(0, tamanho);
+}
+
+/**
+ * Sequência final para gravar: exatamente `tamanho` dígitos (zero à esquerda).
+ * Vazio se não houver dígitos.
+ */
+export function sequenciaNormalizada(
+  raw: string,
+  tamanhoSequencial?: number | null
+): string {
+  const tamanho = clampTamanhoSequencial(tamanhoSequencial);
+  const digits = digitosSequenciaLimitados(raw, tamanho);
+  if (!digits) return "";
+  return digits.padStart(tamanho, "0");
+}
+
+/** Valida se a sequência (já extraída) tem exatamente N dígitos. */
+export function validarSequenciaSerieTamanho(
+  sequencia: string,
+  tamanhoSequencial?: number | null
+): { ok: true } | { ok: false; motivo: string } {
+  const tamanho = clampTamanhoSequencial(tamanhoSequencial);
+  const s = (sequencia || "").trim();
+  if (!s) {
+    return { ok: false, motivo: "Informe a sequência" };
+  }
+  if (!/^\d+$/.test(s)) {
+    return { ok: false, motivo: "A sequência deve conter só dígitos" };
+  }
+  if (s.length !== tamanho) {
+    return {
+      ok: false,
+      motivo: `A sequência deve ter exatamente ${tamanho} dígito(s) (ex.: ${"0".repeat(Math.max(0, tamanho - 1))}1)`,
+    };
+  }
+  return { ok: true };
+}
+
 /** Garante {seqN} alinhado ao tamanhoSequencial no template. */
 export function formatoComTamanho(formato: string, tamanho: number): string {
-  const t = Math.min(6, Math.max(3, tamanho));
+  const t = clampTamanhoSequencial(tamanho);
   const base = (formato || FORMATO_SERIE_PADRAO).trim() || FORMATO_SERIE_PADRAO;
   if (/\{seq\d?\}/i.test(base)) {
     return base.replace(/\{seq\d?\}/gi, `{seq${t}}`);
@@ -80,10 +132,7 @@ export function prefixoSerieProduto(opts: {
   prefixoFixo?: string | null;
   sufixoFixo?: string | null;
 }): string {
-  const tamanho = Math.min(
-    6,
-    Math.max(3, opts.tamanhoSequencial ?? TAMANHO_SEQ_PADRAO)
-  );
+  const tamanho = clampTamanhoSequencial(opts.tamanhoSequencial);
   const codigo = normalizarCodigoProduto(opts.codigoProduto);
   const ano = String(opts.ano2 ?? anoDoisDigitos())
     .padStart(2, "0")
@@ -106,17 +155,19 @@ export function prefixoSerieProduto(opts: {
   return out;
 }
 
-/** Junta prefixo + sequência digitada (+ sufixo opcional). */
+/**
+ * Junta prefixo + sequência digitada (+ sufixo opcional).
+ * Enquanto digita (`finalizar=false`): no máx. N dígitos, sem pad.
+ * Ao confirmar (`finalizar=true`): exatamente N dígitos com zero à esquerda.
+ */
 export function serieCompletaDeSequencia(
   prefixo: string,
   sequenciaDigitada: string,
   tamanhoSequencial?: number,
-  sufixoFixo?: string | null
+  sufixoFixo?: string | null,
+  opts?: { finalizar?: boolean }
 ): string {
-  const tamanho = Math.min(
-    6,
-    Math.max(3, tamanhoSequencial ?? TAMANHO_SEQ_PADRAO)
-  );
+  const tamanho = clampTamanhoSequencial(tamanhoSequencial);
   const raw = (sequenciaDigitada || "").trim();
   if (!raw) return "";
   const pref = prefixo || "";
@@ -128,11 +179,9 @@ export function serieCompletaDeSequencia(
     }
     return `${raw.toUpperCase()}${suf && !mid.toUpperCase().endsWith(suf.toUpperCase()) ? suf : ""}`;
   }
-  const digits = raw.replace(/\D/g, "");
-  const seq =
-    digits.length > 0
-      ? digits.padStart(tamanho, "0").slice(-Math.max(tamanho, digits.length))
-      : raw.toUpperCase();
+  const digits = digitosSequenciaLimitados(raw, tamanho);
+  if (!digits) return "";
+  const seq = opts?.finalizar ? sequenciaNormalizada(digits, tamanho) : digits;
   return `${pref}${seq}${suf}`;
 }
 
@@ -165,10 +214,7 @@ export function formatarNumeroSerie(opts: {
   prefixoFixo?: string | null;
   sufixoFixo?: string | null;
 }): string {
-  const tamanho = Math.min(
-    6,
-    Math.max(3, opts.tamanhoSequencial ?? TAMANHO_SEQ_PADRAO)
-  );
+  const tamanho = clampTamanhoSequencial(opts.tamanhoSequencial);
   const codigo = normalizarCodigoProduto(opts.codigoProduto);
   const ano = String(opts.ano2).padStart(2, "0").slice(-2);
   const seqPad = (t: number) => String(opts.sequencial).padStart(t, "0");
