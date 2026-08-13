@@ -1205,7 +1205,7 @@ export default function MovimentacoesPage() {
                             </div>
                           ) : null}
                           {anexosVisiveis.length > 0 ? (
-                            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 rounded bg-sky-50 px-1.5 py-1 ring-1 ring-sky-100">
                               {anexosVisiveis.map((a) => {
                                 const href = resolveAssetUrl(a.arquivo);
                                 const label =
@@ -1223,7 +1223,7 @@ export default function MovimentacoesPage() {
                                     href={href}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="text-[10px] font-medium text-brand hover:underline"
+                                    className="text-[10px] font-medium text-sky-800 hover:underline"
                                     title={label}
                                   >
                                     {label}
@@ -1231,7 +1231,7 @@ export default function MovimentacoesPage() {
                                 ) : (
                                   <span
                                     key={a.id}
-                                    className="text-[10px] text-slate-400"
+                                    className="text-[10px] text-sky-600"
                                   >
                                     {label}
                                   </span>
