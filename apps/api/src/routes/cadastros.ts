@@ -14,6 +14,7 @@ import {
   normalizeDocumento,
   onlyDigits,
   sameDocumento,
+  TIPO_TRANSF_ENTRE_ESTOQUES,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { upsertConfiguracaoSerie } from "../services/geracaoSerieService";
@@ -1257,14 +1258,20 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
       return res.json(all.filter((t) => !t.sistema));
     }
 
-    // Lançamento: filtra por flags de perfil (cadastro), não por lista fixa de nomes
+    // Lançamento: filtra por flags de perfil (cadastro), não por lista fixa de nomes.
+    // Tipos sistema ficam ocultos, exceto Transferência entre estoques (fluxo A→B).
     const perfil = req.user!.perfil;
     res.json(
       all.filter((t) => {
-        if (t.sistema) return false;
-        if (perfil === "OPERADOR") return t.permitidoOperador;
-        if (perfil === "GERENTE" || perfil === "ADMIN") return t.permitidoGerente;
-        return false;
+        const permitido =
+          perfil === "OPERADOR"
+            ? t.permitidoOperador
+            : perfil === "GERENTE" || perfil === "ADMIN"
+              ? t.permitidoGerente
+              : false;
+        if (!permitido) return false;
+        if (t.sistema) return t.nome === TIPO_TRANSF_ENTRE_ESTOQUES;
+        return true;
       })
     );
   } catch (e) {

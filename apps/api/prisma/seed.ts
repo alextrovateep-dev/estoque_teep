@@ -174,11 +174,10 @@ async function main() {
     }
   }
 
-  // —— Tipos de movimentação (sempre; catálogo operacional do sistema) ——
-  // Categorias de produto: só com SEED_DEMO=1 (cadastro real fica a cargo do admin).
+  // —— Tipos: só os que o código referencia por nome (inventário, transferência, RMA, árvore).
+  // Compra/Venda/demo/comodato etc. = cadastro do admin (ou SEED_DEMO=1).
 
-  /** Seed inicial — Admin pode criar/editar tipos livres depois */
-  const tipos: Array<{
+  type TipoSeed = {
     nome: string;
     operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
     requerCliente: boolean;
@@ -188,17 +187,10 @@ async function main() {
     sistema: boolean;
     descricao: string;
     baixaPorArvore?: boolean;
-  }> = [
-    {
-      nome: "Compra",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Recebimento no estoque da filial informada",
-    },
+  };
+
+  /** Obrigatórios para o sistema funcionar (não são “cadastro de negócio”). */
+  const tiposObrigatorios: TipoSeed[] = [
     {
       nome: "Inventário / Saldo Inicial",
       operacao: "ENTRADA",
@@ -208,17 +200,6 @@ async function main() {
       permitidoGerente: false,
       sistema: true,
       descricao: "Somente via Inicialização de Estoque",
-    },
-    {
-      nome: "Devolução de Cliente",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: true,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao:
-        "Entra no estoque da filial — Operador gera PENDENTE (F6 aprovação)",
     },
     {
       nome: "Transferência Recebida",
@@ -237,8 +218,105 @@ async function main() {
       requerAprovacao: true,
       permitidoOperador: false,
       permitidoGerente: true,
+      sistema: true,
+      descricao: "Usado pelo Inventário / saldo inicial",
+    },
+    {
+      nome: "Baixa de componente (árvore)",
+      operacao: "SAIDA",
+      requerCliente: false,
+      requerAprovacao: false,
+      permitidoOperador: false,
+      permitidoGerente: false,
+      sistema: true,
+      descricao:
+        "Gerado automaticamente ao baixar um componente da árvore (saída ou transferência)",
+    },
+    {
+      nome: "Transferência Enviada",
+      operacao: "SAIDA",
+      requerCliente: false,
+      requerAprovacao: false,
+      permitidoOperador: false,
+      permitidoGerente: false,
+      sistema: true,
+      descricao: "Gerado pelo módulo Transferências (F8)",
+    },
+    {
+      nome: "Ajuste Negativo",
+      operacao: "SAIDA",
+      requerCliente: false,
+      requerAprovacao: true,
+      permitidoOperador: false,
+      permitidoGerente: true,
+      sistema: true,
+      descricao: "Usado pelo Inventário / saldo inicial",
+    },
+    {
+      nome: "Estorno",
+      operacao: "ENTRADA",
+      requerCliente: false,
+      requerAprovacao: true,
+      permitidoOperador: false,
+      permitidoGerente: false,
+      sistema: true,
+      descricao: "Gerado pelo sistema ao estornar",
+    },
+    {
+      nome: "Transferência entre estoques",
+      operacao: "TRANSFERENCIA",
+      requerCliente: false,
+      requerAprovacao: false,
+      permitidoOperador: true,
+      permitidoGerente: true,
+      sistema: true,
+      descricao:
+        "Lançamento A->B: creditar destino agora ou aguardar confirmação de recebimento (F15)",
+    },
+    {
+      nome: "Entrada RMA",
+      operacao: "ENTRADA",
+      requerCliente: true,
+      requerAprovacao: false,
+      permitidoOperador: true,
+      permitidoGerente: true,
+      sistema: true,
+      descricao: "Usado pelo módulo RMA",
+    },
+    {
+      nome: "Saída RMA",
+      operacao: "SAIDA",
+      requerCliente: true,
+      requerAprovacao: false,
+      permitidoOperador: true,
+      permitidoGerente: true,
+      sistema: true,
+      descricao: "Usado pelo módulo RMA (devolução ao cliente)",
+    },
+  ];
+
+  /** Homologação: operações de negócio que o admin cadastra na validação real. */
+  const tiposHomolog: TipoSeed[] = [
+    {
+      nome: "Compra",
+      operacao: "ENTRADA",
+      requerCliente: true,
+      requerAprovacao: false,
+      permitidoOperador: true,
+      permitidoGerente: true,
       sistema: false,
-      descricao: "Entra no estoque da filial informada",
+      descricao: "Recebimento no estoque da filial informada",
+    },
+    {
+      nome: "Devolução de Cliente",
+      operacao: "ENTRADA",
+      requerCliente: true,
+      requerAprovacao: true,
+      permitidoOperador: true,
+      permitidoGerente: true,
+      sistema: false,
+      descricao:
+        "Entra no estoque da filial — Operador gera PENDENTE (F6 aprovação)",
     },
     {
       nome: "Venda / Entrega",
@@ -263,27 +341,6 @@ async function main() {
         "Na saída, baixa os componentes da árvore deste produto no mesmo estoque",
     },
     {
-      nome: "Baixa de componente (árvore)",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao:
-        "Gerado automaticamente ao baixar um componente da árvore (saída ou transferência)",
-    },
-    {
-      nome: "Transferência Enviada",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao: "Gerado pelo módulo Transferências (F8)",
-    },
-    {
       nome: "Perda / Avaria",
       operacao: "SAIDA",
       requerCliente: false,
@@ -292,37 +349,6 @@ async function main() {
       permitidoGerente: true,
       sistema: false,
       descricao: "Sai do estoque da filial informada (perda)",
-    },
-    {
-      nome: "Ajuste Negativo",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: true,
-      permitidoOperador: false,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Sai do estoque da filial informada",
-    },
-    {
-      nome: "Estorno",
-      operacao: "ENTRADA",
-      requerCliente: false,
-      requerAprovacao: true,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao: "Gerado pelo sistema ao estornar",
-    },
-    {
-      nome: "Transferência entre estoques",
-      operacao: "TRANSFERENCIA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao:
-        "Lançamento A->B: creditar destino agora ou aguardar confirmação de recebimento (F15)",
     },
     {
       nome: "Saída Demonstração",
@@ -366,26 +392,6 @@ async function main() {
       sistema: false,
       descricao: "Retorno de equipamento em comodato (vincular à saída aberta)",
     },
-    {
-      nome: "Entrada RMA",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Equipamento do cliente entra no Estoque RMA",
-    },
-    {
-      nome: "Saída RMA",
-      operacao: "SAIDA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Devolução ao cliente — sai do Estoque RMA",
-    },
   ];
 
   /** Renomeia tipos legados (montagem → baixa pela árvore) sem duplicar. */
@@ -398,7 +404,6 @@ async function main() {
       where: { nome: to },
     });
     if (novo) {
-      // Já existe o nome novo: desativa o legado para não aparecer no lançamento
       if (antigo.id !== novo.id) {
         await prisma.tipoMovimentacao.update({
           where: { id: antigo.id },
@@ -412,87 +417,96 @@ async function main() {
       data: { nome: to },
     });
   }
-  await renameTipoLegado("Montagem / Produção", "Saída com árvore");
   await renameTipoLegado("Consumo Montagem", "Baixa de componente (árvore)");
-
-  for (const t of tipos) {
-    const { baixaPorArvore, ...base } = t;
-    await prisma.tipoMovimentacao.upsert({
-      where: { nome: t.nome },
-      update: {
-        operacao: base.operacao,
-        requerCliente: base.requerCliente,
-        requerAprovacao: base.requerAprovacao,
-        permitidoOperador: base.permitidoOperador,
-        permitidoGerente: base.permitidoGerente,
-        sistema: base.sistema,
-        descricao: base.descricao,
-        baixaPorArvore: baixaPorArvore === true,
-        ativo: true,
-      },
-      create: {
-        ...base,
-        baixaPorArvore: baixaPorArvore === true,
-      },
-    });
+  if (seedDemo) {
+    await renameTipoLegado("Montagem / Produção", "Saída com árvore");
   }
 
-  /** Demo/Comodato: flags de alerta e vínculo retorno → saída */
-  const saidaDemo = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Saída Demonstração" },
-  });
-  const retornoDemo = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Retorno Demonstração" },
-  });
-  const saidaComodato = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Saída Comodato" },
-  });
-  const retornoComodato = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Retorno Comodato" },
-  });
+  async function upsertTipos(lista: TipoSeed[]) {
+    for (const t of lista) {
+      const { baixaPorArvore, ...base } = t;
+      await prisma.tipoMovimentacao.upsert({
+        where: { nome: t.nome },
+        update: {
+          operacao: base.operacao,
+          requerCliente: base.requerCliente,
+          requerAprovacao: base.requerAprovacao,
+          permitidoOperador: base.permitidoOperador,
+          permitidoGerente: base.permitidoGerente,
+          sistema: base.sistema,
+          descricao: base.descricao,
+          baixaPorArvore: baixaPorArvore === true,
+          ativo: true,
+        },
+        create: {
+          ...base,
+          baixaPorArvore: baixaPorArvore === true,
+        },
+      });
+    }
+  }
 
-  if (saidaDemo) {
-    await prisma.tipoMovimentacao.update({
-      where: { id: saidaDemo.id },
-      data: {
-        geraAlertaRetorno: true,
-        diasAlerta: [15, 30, 45, 60],
-        ehRetornoDeId: null,
-        requerCliente: true,
-      },
+  await upsertTipos(tiposObrigatorios);
+  if (seedDemo) {
+    await upsertTipos(tiposHomolog);
+
+    /** Demo/Comodato: flags de alerta e vínculo retorno → saída */
+    const saidaDemo = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: "Saída Demonstração" },
     });
-  }
-  if (retornoDemo && saidaDemo) {
-    await prisma.tipoMovimentacao.update({
-      where: { id: retornoDemo.id },
-      data: {
-        geraAlertaRetorno: false,
-        ehRetornoDeId: saidaDemo.id,
-        requerCliente: true,
-      },
+    const retornoDemo = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: "Retorno Demonstração" },
     });
-  }
-  if (saidaComodato) {
-    await prisma.tipoMovimentacao.update({
-      where: { id: saidaComodato.id },
-      data: {
-        geraAlertaRetorno: true,
-        diasAlerta: [15, 30, 45, 60],
-        ehRetornoDeId: null,
-        requerTermoComodato: true,
-        requerCliente: true,
-      },
+    const saidaComodato = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: "Saída Comodato" },
     });
-  }
-  if (retornoComodato && saidaComodato) {
-    await prisma.tipoMovimentacao.update({
-      where: { id: retornoComodato.id },
-      data: {
-        geraAlertaRetorno: false,
-        ehRetornoDeId: saidaComodato.id,
-        requerCliente: true,
-      },
+    const retornoComodato = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: "Retorno Comodato" },
     });
+
+    if (saidaDemo) {
+      await prisma.tipoMovimentacao.update({
+        where: { id: saidaDemo.id },
+        data: {
+          geraAlertaRetorno: true,
+          diasAlerta: [15, 30, 45, 60],
+          ehRetornoDeId: null,
+          requerCliente: true,
+        },
+      });
+    }
+    if (retornoDemo && saidaDemo) {
+      await prisma.tipoMovimentacao.update({
+        where: { id: retornoDemo.id },
+        data: {
+          geraAlertaRetorno: false,
+          ehRetornoDeId: saidaDemo.id,
+          requerCliente: true,
+        },
+      });
+    }
+    if (saidaComodato) {
+      await prisma.tipoMovimentacao.update({
+        where: { id: saidaComodato.id },
+        data: {
+          geraAlertaRetorno: true,
+          diasAlerta: [15, 30, 45, 60],
+          ehRetornoDeId: null,
+          requerTermoComodato: true,
+          requerCliente: true,
+        },
+      });
+    }
+    if (retornoComodato && saidaComodato) {
+      await prisma.tipoMovimentacao.update({
+        where: { id: retornoComodato.id },
+        data: {
+          geraAlertaRetorno: false,
+          ehRetornoDeId: saidaComodato.id,
+          requerCliente: true,
+        },
+      });
+    }
   }
 
   const entradaRma = await prisma.tipoMovimentacao.findUnique({
@@ -618,7 +632,8 @@ async function main() {
   console.log("Seed OK:", {
     admin: email,
     filiais: filiaisSeed.length ? filiaisSeed : "(nenhum — cadastre em Admin → Estoques)",
-    tipos: tipos.length,
+    tiposObrigatorios: tiposObrigatorios.length,
+    tiposHomolog: seedDemo ? tiposHomolog.length : 0,
     ops: seedDemo
       ? ["gerente@teep.com.br", "operador@teep.com.br", "operador.tbo@teep.com.br"]
       : [],

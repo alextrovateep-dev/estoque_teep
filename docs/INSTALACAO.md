@@ -371,7 +371,7 @@ Mantenha `SEED_ON_START=0` em updates.
 
 **DoD:** stack no ar · cadastros reais · init de saldos · smoke OK · transferência se ≥2 estoques (Go-Live B).
 
-**Seed:** tipos de movimentação sempre. Categorias, estoques PLN/TBO/RMA/DESC, usuários gerente/operador e produtos demo **só** com `SEED_DEMO=1` (em prod Docker o seed de boot cria o admin; demo/homolog costuma ser em dev ou seed manual). Sem demo, admin nasce sem estoque/categorias — cadastre em Admin.
+**Seed:** tipos internos obrigatórios (inventário, transferência, estorno, RMA, árvore). Categorias, Compra/Venda/demo/comodato, estoques PLN/TBO e usuários homolog **só** com `SEED_DEMO=1`. Sem demo, admin cadastra operações e categorias na validação.
 
 ### 9.1 Credenciais (SEED_DEMO=1)
 
