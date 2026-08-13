@@ -371,7 +371,7 @@ Mantenha `SEED_ON_START=0` em updates.
 
 **DoD:** stack no ar · cadastros reais · init de saldos · smoke OK · transferência se ≥2 estoques (Go-Live B).
 
-**Seed:** tipos internos obrigatórios (inventário, transferência, estorno, RMA, árvore). Categorias, Compra/Venda/demo/comodato, estoques PLN/TBO e usuários homolog **só** com `SEED_DEMO=1`. Sem demo, admin cadastra operações e categorias na validação.
+**Seed (instalação limpa):** só admin + tipos **internos** (`sistema`, ocultos no cadastro). Categorias, Compra/Venda, estoques PLN/TBO e usuários homolog **só** com `SEED_DEMO=1`. Sem demo, Admin → Tipos começa vazio — você cadastra as operações na validação. Herança antiga: `prisma migrate reset --force` (não use só `db:seed`).
 
 ### 9.1 Credenciais (SEED_DEMO=1)
 

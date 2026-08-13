@@ -16,6 +16,7 @@ import { startEmailQueueWorker } from "./lib/emailQueue";
 import { startAlertaRetornoJob } from "./lib/alertaRetornoJob";
 import { ensureUploadDirs, getUploadRoot } from "./lib/uploads";
 import { assertProductionEnv } from "./lib/env";
+import { ensureSystemTipos } from "./lib/ensureSystemTipos";
 import { errorHandler } from "./middleware/error";
 import { verifyAccessToken } from "./middleware/auth";
 import { authRouter } from "./routes/auth";
@@ -124,4 +125,9 @@ server.listen(port, () => {
   logger.startup(`Uploads dir: ${path.resolve(getUploadRoot())}`);
   startEmailQueueWorker();
   startAlertaRetornoJob();
+  ensureSystemTipos()
+    .then((n) => logger.startup(`Tipos sistema OK (${n})`))
+    .catch((e) =>
+      logger.error("Falha ao garantir tipos sistema", { error: String(e) })
+    );
 });

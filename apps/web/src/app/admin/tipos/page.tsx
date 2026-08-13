@@ -117,8 +117,8 @@ function TiposPageInner() {
             Tipos de Movimentação
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {lista.length} tipo{lista.length === 1 ? "" : "s"} cadastrado
-            {lista.length === 1 ? "" : "s"}
+            Cadastre Compra, Venda e demais operações de negócio. Tipos internos
+            (inventário, estorno, RMA) não aparecem aqui.
           </p>
         </div>
         <Link
@@ -141,6 +141,13 @@ function TiposPageInner() {
       )}
 
       <section className="mt-6">
+        {lista.length === 0 ? (
+          <p className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+            Nenhum tipo de movimentação cadastrado. Use{" "}
+            <span className="font-medium text-slate-700">Cadastrar</span> para
+            criar Compra, Venda, etc.
+          </p>
+        ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -250,6 +257,7 @@ function TiposPageInner() {
             </tbody>
           </table>
         </div>
+        )}
       </section>
     </>
   );

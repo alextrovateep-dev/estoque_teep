@@ -1,8 +1,22 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { ensureSystemTipos } from "../src/lib/ensureSystemTipos";
 
 const prisma = new PrismaClient();
 
+const DEMO_USER_EMAILS = [
+  "gerente@teep.com.br",
+  "operador@teep.com.br",
+  "operador.tbo@teep.com.br",
+];
+
+/**
+ * Instalação limpa (SEED_DEMO≠1):
+ * - só admin + tipos internos (sistema)
+ * - remove herança de cadastros de negócio sem uso (Compra/Venda/categorias/demo users)
+ *
+ * Homologação: SEED_DEMO=1 cria estoques, ops, categorias, produtos demo.
+ */
 async function main() {
   const email = process.env.SEED_ADMIN_EMAIL || "admin@teep.com.br";
   const password = process.env.SEED_ADMIN_PASSWORD || "Admin@123";
@@ -10,7 +24,6 @@ async function main() {
 
   const senhaHash = await bcrypt.hash(password, 12);
 
-  /** Admin sem estoque obrigatório — instalação começa no cadastro de estoques. */
   const admin = await prisma.usuario.upsert({
     where: { email },
     update: {
@@ -18,7 +31,6 @@ async function main() {
       ativo: true,
       perfil: "ADMIN",
       perfilCompleto: true,
-      // Sem demo: não prende o admin a filial antiga de seed anterior
       ...(!seedDemo ? { filialId: null } : {}),
     },
     create: {
@@ -33,11 +45,11 @@ async function main() {
     await prisma.usuarioFilial.deleteMany({ where: { usuarioId: admin.id } });
   }
 
-  /**
-   * Estoques de exemplo + usuários de homologação só com SEED_DEMO=1.
-   * Premissa de produto: estoque não é padrão do sistema — nasce no cadastro.
-   */
+  /** Tipos internos (não são cadastro de negócio). */
+  const nSistema = await ensureSystemTipos();
+
   let filiaisSeed: string[] = [];
+
   if (seedDemo) {
     const paulinia = await prisma.filial.upsert({
       where: { sigla: "PLN" },
@@ -117,7 +129,6 @@ async function main() {
       return u;
     }
 
-    // Vincula o admin ao estoque demo (homologação)
     await upsertUsuarioComFiliais({
       email,
       nome: "Administrador TEEP",
@@ -152,13 +163,7 @@ async function main() {
       filialId: timbo.id,
     });
 
-    const emailsComRma = [
-      email,
-      "gerente@teep.com.br",
-      "operador@teep.com.br",
-      "operador.tbo@teep.com.br",
-    ];
-    for (const em of emailsComRma) {
+    for (const em of [email, ...DEMO_USER_EMAILS]) {
       const u = await prisma.usuario.findUnique({ where: { email: em } });
       if (!u) continue;
       await prisma.usuarioFilial.upsert({
@@ -172,269 +177,145 @@ async function main() {
         create: { usuarioId: u.id, filialId: estoqueRma.id },
       });
     }
-  }
 
-  // —— Tipos: só os que o código referencia por nome (inventário, transferência, RMA, árvore).
-  // Compra/Venda/demo/comodato etc. = cadastro do admin (ou SEED_DEMO=1).
+    type TipoSeed = {
+      nome: string;
+      operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
+      requerCliente: boolean;
+      requerAprovacao: boolean;
+      permitidoOperador: boolean;
+      permitidoGerente: boolean;
+      sistema: boolean;
+      descricao: string;
+      baixaPorArvore?: boolean;
+    };
 
-  type TipoSeed = {
-    nome: string;
-    operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
-    requerCliente: boolean;
-    requerAprovacao: boolean;
-    permitidoOperador: boolean;
-    permitidoGerente: boolean;
-    sistema: boolean;
-    descricao: string;
-    baixaPorArvore?: boolean;
-  };
+    const tiposHomolog: TipoSeed[] = [
+      {
+        nome: "Compra",
+        operacao: "ENTRADA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        descricao: "Recebimento no estoque da filial informada",
+      },
+      {
+        nome: "Devolução de Cliente",
+        operacao: "ENTRADA",
+        requerCliente: true,
+        requerAprovacao: true,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        descricao:
+          "Entra no estoque da filial — Operador gera PENDENTE (F6 aprovação)",
+      },
+      {
+        nome: "Venda / Entrega",
+        operacao: "SAIDA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        descricao: "Sai do estoque da filial informada",
+      },
+      {
+        nome: "Saída com árvore",
+        operacao: "SAIDA",
+        requerCliente: false,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        baixaPorArvore: true,
+        descricao:
+          "Na saída, baixa os componentes da árvore deste produto no mesmo estoque",
+      },
+      {
+        nome: "Perda / Avaria",
+        operacao: "SAIDA",
+        requerCliente: false,
+        requerAprovacao: true,
+        permitidoOperador: false,
+        permitidoGerente: true,
+        sistema: false,
+        descricao: "Sai do estoque da filial informada (perda)",
+      },
+      {
+        nome: "Saída Demonstração",
+        operacao: "SAIDA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        descricao:
+          "Equipamento enviado para demonstração — alertas de retorno 15/30/45/60 dias",
+      },
+      {
+        nome: "Retorno Demonstração",
+        operacao: "ENTRADA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        descricao:
+          "Retorno de equipamento de demonstração (vincular à saída aberta)",
+      },
+      {
+        nome: "Saída Comodato",
+        operacao: "SAIDA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        descricao:
+          "Equipamento em comodato — alertas de retorno; anexe o termo assinado",
+      },
+      {
+        nome: "Retorno Comodato",
+        operacao: "ENTRADA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        descricao:
+          "Retorno de equipamento em comodato (vincular à saída aberta)",
+      },
+    ];
 
-  /** Obrigatórios para o sistema funcionar (não são “cadastro de negócio”). */
-  const tiposObrigatorios: TipoSeed[] = [
-    {
-      nome: "Inventário / Saldo Inicial",
-      operacao: "ENTRADA",
-      requerCliente: false,
-      requerAprovacao: true,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao: "Somente via Inicialização de Estoque",
-    },
-    {
-      nome: "Transferência Recebida",
-      operacao: "ENTRADA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao: "Gerado pelo módulo Transferências na conferência do destino",
-    },
-    {
-      nome: "Ajuste Positivo",
-      operacao: "ENTRADA",
-      requerCliente: false,
-      requerAprovacao: true,
-      permitidoOperador: false,
-      permitidoGerente: true,
-      sistema: true,
-      descricao: "Usado pelo Inventário / saldo inicial",
-    },
-    {
-      nome: "Baixa de componente (árvore)",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao:
-        "Gerado automaticamente ao baixar um componente da árvore (saída ou transferência)",
-    },
-    {
-      nome: "Transferência Enviada",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao: "Gerado pelo módulo Transferências (F8)",
-    },
-    {
-      nome: "Ajuste Negativo",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: true,
-      permitidoOperador: false,
-      permitidoGerente: true,
-      sistema: true,
-      descricao: "Usado pelo Inventário / saldo inicial",
-    },
-    {
-      nome: "Estorno",
-      operacao: "ENTRADA",
-      requerCliente: false,
-      requerAprovacao: true,
-      permitidoOperador: false,
-      permitidoGerente: false,
-      sistema: true,
-      descricao: "Gerado pelo sistema ao estornar",
-    },
-    {
-      nome: "Transferência entre estoques",
-      operacao: "TRANSFERENCIA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: true,
-      descricao:
-        "Lançamento A->B: creditar destino agora ou aguardar confirmação de recebimento (F15)",
-    },
-    {
-      nome: "Entrada RMA",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: true,
-      descricao: "Usado pelo módulo RMA",
-    },
-    {
-      nome: "Saída RMA",
-      operacao: "SAIDA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: true,
-      descricao: "Usado pelo módulo RMA (devolução ao cliente)",
-    },
-  ];
-
-  /** Homologação: operações de negócio que o admin cadastra na validação real. */
-  const tiposHomolog: TipoSeed[] = [
-    {
-      nome: "Compra",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Recebimento no estoque da filial informada",
-    },
-    {
-      nome: "Devolução de Cliente",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: true,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao:
-        "Entra no estoque da filial — Operador gera PENDENTE (F6 aprovação)",
-    },
-    {
-      nome: "Venda / Entrega",
-      operacao: "SAIDA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Sai do estoque da filial informada",
-    },
-    {
-      nome: "Saída com árvore",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      baixaPorArvore: true,
-      descricao:
-        "Na saída, baixa os componentes da árvore deste produto no mesmo estoque",
-    },
-    {
-      nome: "Perda / Avaria",
-      operacao: "SAIDA",
-      requerCliente: false,
-      requerAprovacao: true,
-      permitidoOperador: false,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Sai do estoque da filial informada (perda)",
-    },
-    {
-      nome: "Saída Demonstração",
-      operacao: "SAIDA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao:
-        "Equipamento enviado para demonstração — alertas de retorno 15/30/45/60 dias",
-    },
-    {
-      nome: "Retorno Demonstração",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Retorno de equipamento de demonstração (vincular à saída aberta)",
-    },
-    {
-      nome: "Saída Comodato",
-      operacao: "SAIDA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao:
-        "Equipamento em comodato — alertas de retorno; anexe o termo assinado",
-    },
-    {
-      nome: "Retorno Comodato",
-      operacao: "ENTRADA",
-      requerCliente: true,
-      requerAprovacao: false,
-      permitidoOperador: true,
-      permitidoGerente: true,
-      sistema: false,
-      descricao: "Retorno de equipamento em comodato (vincular à saída aberta)",
-    },
-  ];
-
-  /** Renomeia tipos legados (montagem → baixa pela árvore) sem duplicar. */
-  async function renameTipoLegado(from: string, to: string) {
-    const antigo = await prisma.tipoMovimentacao.findUnique({
-      where: { nome: from },
+    const antigoMontagem = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: "Montagem / Produção" },
     });
-    if (!antigo) return;
-    const novo = await prisma.tipoMovimentacao.findUnique({
-      where: { nome: to },
-    });
-    if (novo) {
-      if (antigo.id !== novo.id) {
+    if (antigoMontagem) {
+      const novo = await prisma.tipoMovimentacao.findUnique({
+        where: { nome: "Saída com árvore" },
+      });
+      if (!novo) {
         await prisma.tipoMovimentacao.update({
-          where: { id: antigo.id },
+          where: { id: antigoMontagem.id },
+          data: { nome: "Saída com árvore" },
+        });
+      } else if (antigoMontagem.id !== novo.id) {
+        await prisma.tipoMovimentacao.update({
+          where: { id: antigoMontagem.id },
           data: { ativo: false, baixaPorArvore: false },
         });
       }
-      return;
     }
-    await prisma.tipoMovimentacao.update({
-      where: { id: antigo.id },
-      data: { nome: to },
-    });
-  }
-  await renameTipoLegado("Consumo Montagem", "Baixa de componente (árvore)");
-  if (seedDemo) {
-    await renameTipoLegado("Montagem / Produção", "Saída com árvore");
-  }
 
-  async function upsertTipos(lista: TipoSeed[]) {
-    for (const t of lista) {
+    for (const t of tiposHomolog) {
       const { baixaPorArvore, ...base } = t;
       await prisma.tipoMovimentacao.upsert({
         where: { nome: t.nome },
         update: {
-          operacao: base.operacao,
-          requerCliente: base.requerCliente,
-          requerAprovacao: base.requerAprovacao,
-          permitidoOperador: base.permitidoOperador,
-          permitidoGerente: base.permitidoGerente,
-          sistema: base.sistema,
-          descricao: base.descricao,
+          ...base,
           baixaPorArvore: baixaPorArvore === true,
           ativo: true,
         },
@@ -444,13 +325,7 @@ async function main() {
         },
       });
     }
-  }
 
-  await upsertTipos(tiposObrigatorios);
-  if (seedDemo) {
-    await upsertTipos(tiposHomolog);
-
-    /** Demo/Comodato: flags de alerta e vínculo retorno → saída */
     const saidaDemo = await prisma.tipoMovimentacao.findUnique({
       where: { nome: "Saída Demonstração" },
     });
@@ -507,38 +382,7 @@ async function main() {
         },
       });
     }
-  }
 
-  const entradaRma = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Entrada RMA" },
-  });
-  const saidaRma = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Saída RMA" },
-  });
-  if (saidaRma && entradaRma) {
-    await prisma.tipoMovimentacao.update({
-      where: { id: saidaRma.id },
-      data: {
-        // NÃO usar ehRetornoDe (fluxo demo/comodato). Devolução RMA = SAIDA normal do Estoque RMA.
-        geraAlertaRetorno: false,
-        ehRetornoDeId: null,
-        requerCliente: true,
-      },
-    });
-  }
-  if (entradaRma) {
-    await prisma.tipoMovimentacao.update({
-      where: { id: entradaRma.id },
-      data: {
-        geraAlertaRetorno: false,
-        ehRetornoDeId: null,
-        requerCliente: true,
-      },
-    });
-  }
-
-  /** Homologação / smoke (F10): SEED_DEMO=1 — categorias, produtos e cliente (sem saldos). */
-  if (seedDemo) {
     const categorias = [
       "Eletrônico",
       "Adesivos",
@@ -627,16 +471,51 @@ async function main() {
     }
 
     console.log("Seed DEMO OK: 3 produtos + 1 fornecedor (saldos via /estoque/init)");
+  } else {
+    /**
+     * Remove herança de seeds antigos (Compra/Venda/categorias/usuários demo)
+     * quando não há vínculo em movimentação. Banco sujo com movimentos → use migrate reset.
+     */
+    await prisma.usuario.deleteMany({
+      where: { email: { in: DEMO_USER_EMAILS } },
+    });
+
+    const categorias = await prisma.categoria.findMany({
+      select: { id: true },
+    });
+    for (const c of categorias) {
+      const usados = await prisma.produto.count({
+        where: { categoriaId: c.id },
+      });
+      if (usados === 0) {
+        await prisma.categoria.delete({ where: { id: c.id } }).catch(() => {});
+      }
+    }
+
+    const tiposLivres = await prisma.tipoMovimentacao.findMany({
+      where: { sistema: false },
+      select: { id: true, nome: true },
+    });
+    for (const t of tiposLivres) {
+      const usados = await prisma.movimentacao.count({
+        where: { tipoId: t.id },
+      });
+      if (usados === 0) {
+        await prisma.tipoMovimentacao
+          .delete({ where: { id: t.id } })
+          .catch(() => {});
+      }
+    }
   }
 
   console.log("Seed OK:", {
     admin: email,
-    filiais: filiaisSeed.length ? filiaisSeed : "(nenhum — cadastre em Admin → Estoques)",
-    tiposObrigatorios: tiposObrigatorios.length,
-    tiposHomolog: seedDemo ? tiposHomolog.length : 0,
-    ops: seedDemo
-      ? ["gerente@teep.com.br", "operador@teep.com.br", "operador.tbo@teep.com.br"]
-      : [],
+    filiais: filiaisSeed.length
+      ? filiaisSeed
+      : "(nenhum — cadastre em Admin → Estoques)",
+    tiposSistema: nSistema,
+    tiposCadastro: seedDemo ? "homolog" : "(nenhum — cadastre em Admin → Tipos)",
+    ops: seedDemo ? DEMO_USER_EMAILS : [],
     demo: seedDemo,
   });
 }

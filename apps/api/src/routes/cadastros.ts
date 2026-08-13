@@ -1244,8 +1244,13 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
     }
 
     if (!paraLancamento && req.user?.perfil === "ADMIN") {
+      const incluirSistema = req.query.incluirSistema === "1";
+      const all = await prisma.tipoMovimentacao.findMany({
+        orderBy: { nome: "asc" },
+      });
+      // Cadastro: só tipos de negócio. Tipos sistema ficam ocultos (internos).
       return res.json(
-        await prisma.tipoMovimentacao.findMany({ orderBy: { nome: "asc" } })
+        incluirSistema ? all : all.filter((t) => !t.sistema)
       );
     }
 
