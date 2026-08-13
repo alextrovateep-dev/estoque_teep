@@ -20,6 +20,14 @@ type Item = {
   justificativaDivergencia: string | null;
   produto: { codigo: string; descricao: string; controlaSerie?: boolean };
   series?: ItemSerie[];
+  movimentacoes?: Array<{
+    id: string;
+    operacao: string;
+    quantidade: string | number;
+    status: string;
+    dataMovimento: string;
+    tipo: { nome: string; operacao?: string };
+  }>;
 };
 
 type Anexo = {
@@ -66,6 +74,60 @@ const ANEXO_TIPO_LABEL: Record<string, string> = {
 
 function formatQty(n: number) {
   return n.toLocaleString("pt-BR", { maximumFractionDigits: 4 });
+}
+
+function ItemMovimentacoes({
+  movs,
+}: {
+  movs?: Item["movimentacoes"];
+}) {
+  if (!movs?.length) return null;
+  return (
+    <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+      <li className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        Operações geradas
+      </li>
+      {movs.map((m) => {
+        const op = m.tipo?.operacao || m.operacao;
+        return (
+          <li
+            key={m.id}
+            className="flex flex-wrap items-center gap-2 text-xs text-slate-700"
+          >
+            <span
+              className={
+                op === "ENTRADA"
+                  ? "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800"
+                  : op === "SAIDA"
+                    ? "rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-800"
+                    : "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900"
+              }
+            >
+              {op === "ENTRADA" ? "ENT." : op === "SAIDA" ? "SAÍDA" : op}
+            </span>
+            <span className="font-medium">{m.tipo.nome}</span>
+            <span className="tabular-nums text-slate-500">
+              {formatQty(Number(m.quantidade))}
+            </span>
+            <span className="text-slate-400">
+              {new Date(m.dataMovimento).toLocaleString("pt-BR", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </span>
+            {m.status !== "CONCLUIDO" ? (
+              <span className="rounded bg-slate-100 px-1 py-0.5 text-[10px] text-slate-600">
+                {m.status}
+              </span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 function applyFormState(t: Transferencia) {
@@ -518,6 +580,7 @@ export default function TransferenciaDetalhePage() {
                         Enviado: {formatQty(enviada)}
                         {controla ? " (por série)" : ""}
                       </p>
+                      <ItemMovimentacoes movs={i.movimentacoes} />
                     </div>
 
                     {controla ? (
@@ -641,6 +704,7 @@ export default function TransferenciaDetalhePage() {
                       <tr key={i.id} className="border-t align-top">
                         <td className="px-3 py-2">
                           {i.produto.codigo} — {i.produto.descricao}
+                          <ItemMovimentacoes movs={i.movimentacoes} />
                         </td>
                         <td className="px-3 py-2">
                           {formatQty(Number(i.qtdEnviada))}

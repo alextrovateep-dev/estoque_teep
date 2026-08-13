@@ -488,17 +488,11 @@ estoqueRouter.get(
         .map((t) => [t.ehRetornoDeId!, t])
     );
 
-    /** Transferências Enviadas ainda EM_TRANSITO → badge + atalho confirmar. */
+    /** Itens de transferência nas linhas da página → badge A→B, anexos da carga, CTA receber. */
     const itemIdsTransf = [
       ...new Set(
         data
-          .filter(
-            (m) =>
-              m.transferenciaItemId &&
-              m.operacao === "SAIDA" &&
-              m.status === "CONCLUIDO" &&
-              !m.estornoDeId
-          )
+          .filter((m) => m.transferenciaItemId)
           .map((m) => m.transferenciaItemId as string)
       ),
     ];
@@ -510,19 +504,44 @@ estoqueRouter.get(
               id: true,
               transferenciaId: true,
               transferencia: {
-                select: { status: true, destinoFilialId: true },
+                select: {
+                  status: true,
+                  destinoFilialId: true,
+                  notaFiscalNumero: true,
+                  anexos: {
+                    select: {
+                      id: true,
+                      tipo: true,
+                      arquivo: true,
+                      label: true,
+                    },
+                    orderBy: { criadoEm: "asc" },
+                  },
+                },
               },
             },
           })
         : [];
+    const cargaPorItem = new Map(
+      itensTransf.map((i) => [
+        i.id,
+        {
+          transferenciaId: i.transferenciaId,
+          destinoFilialId: i.transferencia.destinoFilialId,
+          status: i.transferencia.status,
+          notaFiscalNumero: i.transferencia.notaFiscalNumero,
+          anexos: i.transferencia.anexos,
+        },
+      ])
+    );
     const aguardandoPorItem = new Map(
-      itensTransf
-        .filter((i) => i.transferencia.status === "EM_TRANSITO")
-        .map((i) => [
-          i.id,
+      [...cargaPorItem.entries()]
+        .filter(([, c]) => c.status === "EM_TRANSITO")
+        .map(([itemId, c]) => [
+          itemId,
           {
-            transferenciaId: i.transferenciaId,
-            destinoFilialId: i.transferencia.destinoFilialId,
+            transferenciaId: c.transferenciaId,
+            destinoFilialId: c.destinoFilialId,
           },
         ])
     );
@@ -543,10 +562,17 @@ estoqueRouter.get(
           ? aguardandoPorItem.get(m.transferenciaItemId) || null
           : null;
 
+      const carga = m.transferenciaItemId
+        ? cargaPorItem.get(m.transferenciaItemId) || null
+        : null;
+
       const base = {
         ...m,
         termoPendente,
         aguardandoRecebimento,
+        transferenciaId: carga?.transferenciaId ?? null,
+        transferenciaNotaFiscalNumero: carga?.notaFiscalNumero ?? null,
+        transferenciaAnexos: carga?.anexos ?? [],
       };
 
       if (

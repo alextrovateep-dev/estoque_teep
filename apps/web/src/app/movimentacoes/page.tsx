@@ -3,6 +3,7 @@
 import { ConfirmMotivoPanel } from "@/components/ConfirmMotivoPanel";
 import { api, apiDownload, apiUpload, getStoredUser, User, userFilialIds } from "@/lib/api";
 import { userHas } from "@/lib/access";
+import { resolveAssetUrl } from "@/lib/assets";
 import { matchNomeOuDocumento, onlyDigits } from "@/lib/documento";
 import { useSerieFiltro } from "@/hooks/useSerieFiltro";
 import Link from "next/link";
@@ -15,6 +16,11 @@ type Mov = {
   status: string;
   dataMovimento: string;
   estornoDeId?: string | null;
+  transferenciaItemId?: string | null;
+  transferenciaId?: string | null;
+  notaFiscalNumero?: string | null;
+  notaFiscalArquivo?: string | null;
+  transferenciaNotaFiscalNumero?: string | null;
   produto: { codigo: string; descricao: string };
   tipo: { nome: string };
   filial: { sigla: string };
@@ -22,6 +28,18 @@ type Mov = {
   cliente?: { id: string; nome: string; tipo: string; documento?: string | null } | null;
   usuario: { nome: string };
   series?: Array<{ unidadeSerie: { numeroSerie: string } }>;
+  anexos?: Array<{
+    id: string;
+    tipo: string;
+    arquivo: string;
+    label?: string | null;
+  }>;
+  transferenciaAnexos?: Array<{
+    id: string;
+    tipo: string;
+    arquivo: string;
+    label?: string | null;
+  }>;
   termoPendente?: boolean;
   retornoPendente?: {
     qtyRestante: number;
@@ -1047,19 +1065,52 @@ export default function MovimentacoesPage() {
                     canConfirmarRecebimento;
                   const painelAberto = painelId === m.id;
                   const isTransfLinha = Boolean(
-                    m.operacao === "TRANSFERENCIA" ||
+                    m.transferenciaItemId ||
                       m.filialDestino ||
                       m.aguardandoRecebimento
                   );
-                  const accent = isTransfLinha
-                    ? "border-l-amber-500"
-                    : m.operacao === "ENTRADA"
+                  const accent =
+                    m.operacao === "ENTRADA"
                       ? "border-l-emerald-500"
-                      : "border-l-red-500";
+                      : m.operacao === "SAIDA"
+                        ? "border-l-red-500"
+                        : "border-l-amber-500";
                   const destaque =
                     m.retornoPendente ||
                     m.termoPendente ||
                     m.aguardandoRecebimento;
+                  const nfNumero =
+                    m.notaFiscalNumero || m.transferenciaNotaFiscalNumero || null;
+                  const anexosVisiveis = (() => {
+                    const seen = new Set<string>();
+                    const out: Array<{
+                      id: string;
+                      tipo: string;
+                      arquivo: string;
+                      label?: string | null;
+                    }> = [];
+                    const push = (a: {
+                      id: string;
+                      tipo: string;
+                      arquivo: string;
+                      label?: string | null;
+                    }) => {
+                      if (!a.arquivo || seen.has(a.arquivo)) return;
+                      seen.add(a.arquivo);
+                      out.push(a);
+                    };
+                    if (m.notaFiscalArquivo) {
+                      push({
+                        id: `nf-${m.id}`,
+                        tipo: "NOTA_FISCAL",
+                        arquivo: m.notaFiscalArquivo,
+                        label: nfNumero ? `NF ${nfNumero}` : "Nota fiscal",
+                      });
+                    }
+                    for (const a of m.anexos || []) push(a);
+                    for (const a of m.transferenciaAnexos || []) push(a);
+                    return out;
+                  })();
 
                   return (
                     <Fragment key={m.id}>
@@ -1074,19 +1125,24 @@ export default function MovimentacoesPage() {
                           <div className="flex flex-nowrap items-center gap-1">
                             <span
                               className={
-                                isTransfLinha
-                                  ? "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900"
-                                  : m.operacao === "ENTRADA"
-                                    ? "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800"
-                                    : "rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-800"
+                                m.operacao === "ENTRADA"
+                                  ? "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800"
+                                  : m.operacao === "SAIDA"
+                                    ? "rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-800"
+                                    : "rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-900"
                               }
                             >
-                              {isTransfLinha
-                                ? "TRANSF."
-                                : m.operacao === "ENTRADA"
-                                  ? "ENT."
-                                  : "SAÍDA"}
+                              {m.operacao === "ENTRADA"
+                                ? "ENT."
+                                : m.operacao === "SAIDA"
+                                  ? "SAÍDA"
+                                  : "TRANSF."}
                             </span>
+                            {isTransfLinha ? (
+                              <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-900">
+                                A→B
+                              </span>
+                            ) : null}
                             {m.status !== "CONCLUIDO" && (
                               <span
                                 className={
@@ -1140,6 +1196,47 @@ export default function MovimentacoesPage() {
                               {m.series
                                 .map((s) => s.unidadeSerie.numeroSerie)
                                 .join(", ")}
+                            </div>
+                          ) : null}
+                          {nfNumero &&
+                          !anexosVisiveis.some((a) => a.tipo === "NOTA_FISCAL") ? (
+                            <div className="mt-0.5 text-[10px] text-slate-500">
+                              NF {nfNumero}
+                            </div>
+                          ) : null}
+                          {anexosVisiveis.length > 0 ? (
+                            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                              {anexosVisiveis.map((a) => {
+                                const href = resolveAssetUrl(a.arquivo);
+                                const label =
+                                  a.label ||
+                                  (a.tipo === "NOTA_FISCAL"
+                                    ? "NF"
+                                    : a.tipo === "TERMO_COMODATO"
+                                      ? "Termo"
+                                      : a.tipo === "LAUDO"
+                                        ? "Laudo"
+                                        : "Anexo");
+                                return href ? (
+                                  <a
+                                    key={a.id}
+                                    href={href}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[10px] font-medium text-brand hover:underline"
+                                    title={label}
+                                  >
+                                    {label}
+                                  </a>
+                                ) : (
+                                  <span
+                                    key={a.id}
+                                    className="text-[10px] text-slate-400"
+                                  >
+                                    {label}
+                                  </span>
+                                );
+                              })}
                             </div>
                           ) : null}
                         </td>
