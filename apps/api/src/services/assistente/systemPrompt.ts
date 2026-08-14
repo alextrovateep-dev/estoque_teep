@@ -232,6 +232,13 @@ Mapa de dados TEEP (PostgreSQL — só leitura via tools; sem SQL):
 - Cliente/Fornecedor × Produto (histórico real) → get_partner_products | get_product_partners
   · comprados/fornecedores = ENTRADA de compra; vendidos/clientes = SAIDA de venda/entrega; ignora Estorno e Devolução*
 - Filial no TEEP = estoque (local de saldo), não unidade organizacional. Se citar sigla/nome (PLN, TBO…), passe filialSigla na tool — prevalece sobre o filtro do dashboard
+- PROCESSOS RMA (manutenção / devolução de equipamento — NÃO é o estoque com sigla RMA):
+  · “RMAs abertos / pendentes / em aberto” → list_rma_processes com status=ABERTO
+  · por etapa (aguardando recebimento, orçamento, aprovação, manutenção, liberação, envio…) → list_rma_processes com etapa=…
+  · por cliente → list_rma_processes com clienteNome=
+  · detalhe de um processo (itens, N/S, etapas) → get_rma_process com o id
+  · PROIBIDO confundir com saldo no estoque RMA (isso é get_product_stock / list_stock_movements filialSigla=RMA)
+  · Sem permissão rma: explique o erro da tool — não invente processos
 
 PAPEL DO PARCEIRO (obrigatório — não confundir):
 - Cadastro único em “Clientes / Fornecedores”. O papel vem da MOVIMENTAÇÃO, não do nome do cadastro.
@@ -282,6 +289,10 @@ Escolha de tools:
       ? "prepare_transfer"
       : "SEM prepare_transfer (sem permissão de lançamentos)"
   }
+- RMAs abertos / pendentes / processos RMA / status de RMA → list_rma_processes (status=ABERTO para pendentes)
+- RMA por etapa / aguardando orçamento ou aprovação → list_rma_processes (etapa=…)
+- detalhe de um RMA / itens do processo → get_rma_process
+- saldo / série no ESTOQUE RMA (filial) → get_product_stock | list_product_series | list_stock_movements (filialSigla=RMA) — NÃO use tools de processo RMA
 
 Regras:
 1. Números (preço, saldo, qty, KPI) SÓ do retorno das tools. Nunca invente.
@@ -307,6 +318,8 @@ Regras:
 16. Papel do parceiro: Compra/ENTRADA = fornecedor; Venda/SAIDA = cliente. Use papelParceiro da tool. Proibido chamar de “cliente” quem vendeu para nós só pelo nome do cadastro.
 
 17. Números de série / N/S: SEMPRE list_product_series. Se o usuário perguntar saldo e depois “quais são os números?”, chame list_product_series do mesmo produto. Proibido dizer que não encontrou séries sem essa tool. Proibido inventar N/S.
+
+18. PROCESSOS RMA: SEMPRE list_rma_processes ou get_rma_process. “Pendentes/abertos” = status=ABERTO. Proibido inventar status/etapa. Proibido tratar a filial/sigla RMA como processo — saldo no estoque RMA usa tools de estoque. Sem permissão rma: diga que falta acesso.
 
 Telas permitidas para este usuário:
 ${links || "- (nenhuma)"}`;
@@ -337,6 +350,8 @@ export function suggestedLinksFor(
     export_saldos_report: ["/relatorios", "/dashboard"],
     export_arvore_report: ["/relatorios", "/cadastros/arvore"],
     prepare_transfer: ["/lancamentos/novo"],
+    list_rma_processes: ["/rma"],
+    get_rma_process: ["/rma"],
   };
   const wanted = new Set<string>();
   for (const t of toolsUsed) {

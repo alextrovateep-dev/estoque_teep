@@ -69,9 +69,23 @@ export function collectActionLink(
   if (typeof a.href !== "string" || typeof a.label !== "string") return;
   if (!a.href.startsWith("/")) return;
   const pathOnly = a.href.split("?")[0] || a.href;
-  if (!allowedHrefs.has(pathOnly)) return;
+  if (!isActionHrefAllowed(pathOnly, allowedHrefs)) return;
   if (out.some((x) => x.href === a.href)) return;
   out.push({ href: a.href, label: a.label });
+}
+
+/** Exact allowlist match, or /rma/<uuid> when /rma is allowed. */
+function isActionHrefAllowed(pathOnly: string, allowedHrefs: Set<string>): boolean {
+  if (allowedHrefs.has(pathOnly)) return true;
+  if (
+    allowedHrefs.has("/rma") &&
+    /^\/rma\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      pathOnly
+    )
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Remove actionLink do payload enviado ao LLM quando a ACL não liberou o botão. */

@@ -3,6 +3,9 @@ import {
   hasPermissao,
   resolvePermissoes,
   type PermissoesUsuario,
+  RMA_PROCESSO_STATUS,
+  RMA_ITEM_ETAPA,
+  RMA_ITEM_ETAPA_LABELS,
 } from "@teep/shared";
 import { AuthUser } from "../../middleware/auth";
 import { AppError } from "../../middleware/error";
@@ -13,6 +16,7 @@ import {
   relacionamentosDoProduto,
 } from "../parceiroHistoricoService";
 import { mapaQtyOcupadaPorSaidas } from "../retornoVinculoHelper";
+import { listarRma, obterRma } from "../rmaService";
 import { gerarExportDossieProduto } from "./assistenteExportService";
 import { putAssistenteExport } from "./assistenteExportTokenStore";
 import {
@@ -224,6 +228,24 @@ const partnerProductsArgs = z.object({
 
 const productPartnersArgs = z.object({
   codigoOuNome: z.string().min(1).max(120),
+});
+
+const listRmaProcessesArgs = z.object({
+  status: z.enum(RMA_PROCESSO_STATUS).optional().nullable(),
+  etapa: z.enum(RMA_ITEM_ETAPA).optional().nullable(),
+  clienteNome: z.string().min(1).max(120).optional().nullable(),
+  /** Prefira periodo; se de/ate forem passados, prevalecem. */
+  periodo: z
+    .enum(["hoje", "mes_atual", "mes_passado"])
+    .optional()
+    .nullable(),
+  dataInicio: z.string().min(8).max(40).optional().nullable(),
+  dataFim: z.string().min(8).max(40).optional().nullable(),
+  limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+});
+
+const getRmaProcessArgs = z.object({
+  id: z.string().uuid(),
 });
 
 const exportProductReportArgs = z.object({
@@ -651,6 +673,64 @@ export const TOOL_DEFINITIONS = [
       required: ["origem", "destino", "codigoOuNome", "quantidade"],
     },
   },
+  {
+    name: "list_rma_processes",
+    description:
+      "Lista PROCESSOS RMA (manutenção/devolução de equipamento), NÃO o estoque com sigla RMA. Use para ‘RMAs abertos’, ‘pendentes’, ‘aguardando orçamento/aprovação’, ‘RMAs do cliente X’. status=ABERTO para abertos/pendentes. etapa filtra item naquela etapa. Exige permissão rma. Só leitura.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: [...RMA_PROCESSO_STATUS],
+          description:
+            "ABERTO = abertos/pendentes; FECHADO; CANCELADO. Omitir = todos.",
+        },
+        etapa: {
+          type: "string",
+          enum: [...RMA_ITEM_ETAPA],
+          description:
+            "Etapa de item (ex.: AGUARDANDO_ORCAMENTO, AGUARDANDO_APROVACAO). Processo entra se tiver ≥1 item não cancelado nessa etapa.",
+        },
+        clienteNome: {
+          type: "string",
+          description: "Nome (ou trecho) do cliente do processo",
+        },
+        periodo: {
+          type: "string",
+          enum: ["hoje", "mes_atual", "mes_passado"],
+          description: "Janela de criação do processo (America/Sao_Paulo)",
+        },
+        dataInicio: {
+          type: "string",
+          description: "ISO ou YYYY-MM-DD início (criação). Preferir periodo.",
+        },
+        dataFim: {
+          type: "string",
+          description: "ISO ou YYYY-MM-DD fim (criação). Preferir periodo.",
+        },
+        limit: {
+          type: "number",
+          description: "Máx. processos (1–50, padrão 20)",
+        },
+      },
+    },
+  },
+  {
+    name: "get_rma_process",
+    description:
+      "Detalhe de UM processo RMA por id (UUID). Itens com código, N/S, etapa, status, se tem diagnóstico/orçamento. Retorna actionLink /rma/:id. NÃO é saldo do estoque RMA. Exige permissão rma. Só leitura.",
+    parameters: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          description: "UUID do processo RMA",
+        },
+      },
+      required: ["id"],
+    },
+  },
 ] as const;
 
 export type ToolName = (typeof TOOL_DEFINITIONS)[number]["name"];
@@ -695,6 +775,10 @@ export async function executeTool(
       return exportArvoreReport(exportArvoreReportArgs.parse(rawArgs), ctx);
     case "prepare_transfer":
       return prepareTransfer(prepareTransferArgs.parse(rawArgs), ctx);
+    case "list_rma_processes":
+      return listRmaProcesses(listRmaProcessesArgs.parse(rawArgs), ctx);
+    case "get_rma_process":
+      return getRmaProcess(getRmaProcessArgs.parse(rawArgs), ctx);
     default:
       return { error: `Tool desconhecida: ${name}` };
   }
@@ -853,6 +937,213 @@ function assertPermRelatorios(ctx: ToolContext) {
     };
   }
   return null;
+}
+
+function assertPermRma(ctx: ToolContext) {
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  if (!hasPermissao(ctx.user.perfil, perms, "rma")) {
+    return {
+      ok: false as const,
+      error:
+        "Usuário sem permissão de RMA. Oriente pedir acesso ao Admin ou abrir Processos RMA se tiver acesso.",
+    };
+  }
+  return null;
+}
+
+function etiquetaEtapaRma(etapa: string | null | undefined): string {
+  if (!etapa) return "—";
+  return (
+    RMA_ITEM_ETAPA_LABELS[etapa as keyof typeof RMA_ITEM_ETAPA_LABELS] || etapa
+  );
+}
+
+function janelaPeriodoRma(
+  periodo: "hoje" | "mes_atual" | "mes_passado" | null | undefined
+): { dataInicio?: string; dataFim?: string } {
+  if (!periodo) return {};
+  if (periodo === "hoje") {
+    const j = janelaHojeSaoPaulo();
+    return { dataInicio: j.dataCivil, dataFim: j.dataCivil };
+  }
+  const j = janelaMesSaoPaulo(periodo === "mes_passado" ? -1 : 0);
+  /** YYYY-MM-DD civil SP — não usar deIso/ateIso.slice(0,10) (UTC pode virar o dia seguinte). */
+  const dataInicio = `${j.ano}-${String(j.mes).padStart(2, "0")}-01`;
+  const dataFim = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(j.ateIso));
+  return { dataInicio, dataFim };
+}
+
+async function listRmaProcesses(
+  args: z.infer<typeof listRmaProcessesArgs>,
+  ctx: ToolContext
+) {
+  const denied = assertPermRma(ctx);
+  if (denied) return denied;
+
+  let clienteId: string | undefined;
+  if (args.clienteNome?.trim()) {
+    const { match, ambiguos } = await findClienteByNome(args.clienteNome);
+    if (ambiguos.length > 1) {
+      return {
+        ok: false as const,
+        encontrado: false,
+        ambiguo: true,
+        mensagem:
+          "Mais de um cliente corresponde ao nome. Peça para especificar.",
+        candidatos: ambiguos.map((p) => ({
+          nome: p.nome,
+          tipo: p.tipo,
+          ativo: p.ativo,
+        })),
+      };
+    }
+    if (!match) {
+      return {
+        ok: false as const,
+        encontrado: false,
+        mensagem: "Cliente não encontrado no cadastro",
+      };
+    }
+    clienteId = match.id;
+  }
+
+  const fromPeriodo = janelaPeriodoRma(args.periodo);
+  const dataInicio =
+    args.dataInicio?.trim() || fromPeriodo.dataInicio || undefined;
+  const dataFim = args.dataFim?.trim() || fromPeriodo.dataFim || undefined;
+
+  const result = await listarRma(ctx.user, {
+    status: args.status || undefined,
+    etapa: args.etapa || undefined,
+    clienteId,
+    dataInicio,
+    dataFim,
+    page: 1,
+    pageSize: args.limit,
+  });
+
+  const processos = result.data.map((p) => {
+    const itensAtivos = p.itens.filter((i) => i.status !== "CANCELADO");
+    const etapas = [
+      ...new Set(itensAtivos.map((i) => i.etapa).filter(Boolean)),
+    ];
+    return {
+      id: p.id,
+      status: p.status,
+      criadoEm: p.criadoEm,
+      cliente: p.cliente?.nome ?? null,
+      filial: p.filial ? `${p.filial.sigla} — ${p.filial.nome}` : null,
+      comercial: p.responsavelComercial?.nome ?? null,
+      qtdItens: itensAtivos.length,
+      etapas: etapas.map((e) => ({
+        codigo: e,
+        label: etiquetaEtapaRma(e),
+      })),
+      itens: itensAtivos.map((i) => ({
+        status: i.status,
+        etapa: i.etapa,
+        etapaLabel: etiquetaEtapaRma(i.etapa),
+        cobrou: i.cobrou,
+      })),
+    };
+  });
+
+  return {
+    ok: true as const,
+    encontrados: processos.length,
+    total: result.total,
+    page: result.page,
+    pageSize: result.pageSize,
+    truncado: result.total > processos.length,
+    filtro: {
+      status: args.status ?? null,
+      etapa: args.etapa ?? null,
+      clienteNome: args.clienteNome ?? null,
+      periodo: args.periodo ?? null,
+      dataInicio: dataInicio ?? null,
+      dataFim: dataFim ?? null,
+    },
+    processos,
+    nota:
+      "Isto são PROCESSOS RMA. Saldo no estoque com sigla RMA usa get_product_stock / list_stock_movements com filialSigla=RMA.",
+  };
+}
+
+async function getRmaProcess(
+  args: z.infer<typeof getRmaProcessArgs>,
+  ctx: ToolContext
+) {
+  const denied = assertPermRma(ctx);
+  if (denied) return denied;
+
+  let row: Awaited<ReturnType<typeof obterRma>>;
+  try {
+    row = await obterRma(ctx.user, args.id);
+  } catch (e) {
+    if (e instanceof AppError && e.status === 404) {
+      return {
+        ok: false as const,
+        encontrado: false,
+        mensagem: "Processo RMA não encontrado",
+      };
+    }
+    if (e instanceof AppError && (e.status === 403 || e.status === 401)) {
+      return {
+        ok: false as const,
+        encontrado: false,
+        error: e.message,
+      };
+    }
+    throw e;
+  }
+
+  const itens = row.itens
+    .filter((i) => i.status !== "CANCELADO")
+    .map((i) => ({
+      id: i.id,
+      produtoCodigo: i.produto.codigo,
+      produtoDescricao: i.produto.descricao,
+      numeroSerie: i.unidadeSerie?.numeroSerie ?? null,
+      numeroSerieSubstituicao: i.unidadeSerieSubstituicao?.numeroSerie ?? null,
+      status: i.status,
+      etapa: i.etapa,
+      etapaLabel: etiquetaEtapaRma(i.etapa),
+      cobrou: i.cobrou,
+      temDiagnostico: Boolean(i.diagnostico),
+      orcamentoStatus: i.orcamento?.status ?? null,
+      aprovacaoEm: i.aprovacaoEm ?? null,
+    }));
+
+  return {
+    ok: true as const,
+    encontrado: true,
+    processo: {
+      id: row.id,
+      status: row.status,
+      criadoEm: row.criadoEm,
+      atualizadoEm: row.atualizadoEm,
+      cliente: row.cliente?.nome ?? null,
+      documento: row.cliente?.documento ?? null,
+      filial: row.filial
+        ? { sigla: row.filial.sigla, nome: row.filial.nome }
+        : null,
+      comercial: row.responsavelComercial?.nome ?? null,
+      observacao: row.observacao ?? null,
+      nfEntradaNumero: row.nfEntradaNumero ?? null,
+      nfSaidaNumero: row.nfSaidaNumero ?? null,
+      itens,
+    },
+    actionLink: {
+      href: `/rma/${row.id}`,
+      label: "Abrir processo RMA",
+    },
+    nota: "Processo RMA (manutenção). Não confundir com saldo do estoque RMA.",
+  };
 }
 
 async function exportProductReport(

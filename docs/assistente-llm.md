@@ -33,8 +33,16 @@ Flag: `ASSISTENTE_LLM_ENABLED=1`. Off → `/assistente/status` e o painel avisam
 | `rank_product_movements` | Ranking qty no período |
 | `get_inventory_balance` | KPIs + alertas min/máx |
 | `get_partner_products` / `get_product_partners` | Histórico parceiro×produto |
+| `list_rma_processes` | Processos RMA (abertos, etapa, cliente) — **não** saldo do estoque RMA |
+| `get_rma_process` | Detalhe de um processo + atalho `/rma/:id` |
 | `export_*_report` | PDF/Excel (token curto → `GET /assistente/export/:token`) |
 | `prepare_transfer` | Atalho (não executa; abre Novo Lançamento) |
+
+### Processos RMA vs estoque RMA
+
+- **Processo RMA** (manutenção): `list_rma_processes` / `get_rma_process`. “Abertos/pendentes” → `status=ABERTO`. Exige permissão `rma`.
+- **Estoque com sigla RMA** (saldo): tools de estoque com `filialSigla=RMA`.
+- Só leitura — o assistente **não** cria/altera RMA.
 
 ### Ranking de saídas (regra crítica)
 

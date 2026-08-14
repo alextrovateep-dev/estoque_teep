@@ -69,6 +69,44 @@ describe("assistente tools authz", () => {
     assert.match(String(r.error), /lançamento/i);
     assert.equal(r.actionLink, undefined);
   });
+
+  it("list_rma_processes recusa sem permissão rma (sem tocar no DB)", async () => {
+    const r = (await executeTool(
+      "list_rma_processes",
+      { status: "ABERTO" },
+      {
+        user: operador,
+        permissoes: {
+          dashboard: true,
+          assistente: true,
+          rma: false,
+          lancamentos: true,
+        },
+      }
+    )) as { ok: boolean; error?: string; processos?: unknown };
+
+    assert.equal(r.ok, false);
+    assert.match(String(r.error), /RMA/i);
+    assert.equal(r.processos, undefined);
+  });
+
+  it("get_rma_process recusa sem permissão rma (sem tocar no DB)", async () => {
+    const r = (await executeTool(
+      "get_rma_process",
+      { id: "00000000-0000-4000-8000-0000000000f1" },
+      {
+        user: operador,
+        permissoes: {
+          dashboard: true,
+          assistente: true,
+          rma: false,
+        },
+      }
+    )) as { ok: boolean; error?: string };
+
+    assert.equal(r.ok, false);
+    assert.match(String(r.error), /RMA/i);
+  });
 });
 
 describe("assistente actionLinks ACL", () => {
@@ -108,6 +146,22 @@ describe("assistente actionLinks ACL", () => {
       allowed
     );
     assert.equal(out.length, 1);
+  });
+
+  it("collectActionLink aceita /rma/:uuid quando /rma está na allowlist", () => {
+    const out: AssistenteActionLink[] = [];
+    const allowed = new Set(["/rma"]);
+    const href = "/rma/00000000-0000-4000-8000-0000000000f1";
+    collectActionLink(
+      {
+        ok: true,
+        actionLink: { href, label: "Abrir processo RMA" },
+      },
+      out,
+      allowed
+    );
+    assert.equal(out.length, 1);
+    assert.equal(out[0]!.href, href);
   });
 
   it("redactActionLinkForLlm remove botão quando ACL bloqueou", () => {
@@ -223,6 +277,36 @@ describe("assistente system prompt transferência", () => {
     assert.match(p, /PAPEL DO PARCEIRO/);
     assert.match(p, /Compra \/ ENTRADA/);
     assert.match(p, /PROIBIDO dizer “cliente” só porque/);
+  });
+
+  it("instrui consulta de processos RMA e distingue estoque RMA", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: {
+        lancamentos: true,
+        assistente: true,
+        dashboard: true,
+        rma: true,
+      },
+    });
+    assert.match(p, /list_rma_processes/);
+    assert.match(p, /get_rma_process/);
+    assert.match(p, /status=ABERTO/);
+    assert.match(p, /PROCESSOS RMA/);
+    assert.match(p, /PROIBIDO confundir com saldo no estoque RMA/);
+  });
+
+  it("fim do mês civil SP não coincide com YYYY-MM-DD de ateIso em UTC", () => {
+    const atual = janelaMesSaoPaulo(0, new Date("2026-08-10T18:00:00.000Z"));
+    const ateUtcDay = atual.ateIso.slice(0, 10);
+    const ateCivil = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Sao_Paulo",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(atual.ateIso));
+    assert.equal(ateCivil, "2026-08-31");
+    assert.equal(ateUtcDay, "2026-09-01");
   });
 
   it("janelaHojeSaoPaulo cobre o dia civil SP em ISO", () => {

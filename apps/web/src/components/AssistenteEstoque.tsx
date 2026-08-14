@@ -464,7 +464,7 @@ export function AssistenteEstoque({
           readOnly={busy || isRecording}
           rows={2}
           placeholder="Pergunte sobre o estoque… ou use o microfone"
-          className="min-h-[3.25rem] min-w-0 flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2.5 text-sm leading-snug outline-none focus:border-brand focus:ring-2 focus:ring-brand/25 read-only:bg-slate-50/80"
+          className="min-h-[3.25rem] min-w-0 flex-1 resize-none rounded-lg border-2 border-emerald-400 bg-emerald-50/30 px-3 py-2.5 text-sm leading-snug outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-400/30 read-only:bg-slate-50/80"
           aria-label="Mensagem para o assistente"
           aria-busy={busy}
         />
