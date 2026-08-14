@@ -16,7 +16,7 @@ type NavItem = {
   label: string;
   section?: "admin" | "ops";
   /** Subgrupo visual da operação (cadastros de domínio ficam em ops). */
-  group?: "visao" | "operacoes" | "controle" | "cadastros";
+  group?: "visao" | "operacoes" | "rma" | "controle" | "cadastros";
   /** Uma key ou qualquer uma da lista. */
   perm?: PermissaoKey | readonly PermissaoKey[];
 };
@@ -24,6 +24,7 @@ type NavItem = {
 const OPS_GROUP_LABELS: Record<NonNullable<NavItem["group"]>, string> = {
   visao: "Visão",
   operacoes: "Operações",
+  rma: "Processo RMA",
   controle: "Controle",
   cadastros: "Cadastros",
 };
@@ -31,6 +32,7 @@ const OPS_GROUP_LABELS: Record<NonNullable<NavItem["group"]>, string> = {
 const OPS_GROUP_ORDER: NonNullable<NavItem["group"]>[] = [
   "visao",
   "operacoes",
+  "rma",
   "controle",
   "cadastros",
 ];
@@ -45,6 +47,9 @@ function routeAllowed(pathname: string, user: User): boolean {
     return userHas(user, "dashboard") || userHas(user, "movimentacoes");
   }
 
+  if (pathname.startsWith("/cadastros/rma-checklists")) {
+    return userHas(user, "rma");
+  }
   if (pathname.startsWith("/cadastros/produtos")) {
     return userCanOpenCadastro(user, "produtos");
   }
@@ -56,6 +61,7 @@ function routeAllowed(pathname: string, user: User): boolean {
   }
   if (pathname.startsWith("/cadastros")) {
     return (
+      userHas(user, "rma") ||
       userCanOpenCadastro(user, "produtos") ||
       userCanOpenCadastro(user, "clientes") ||
       userCanOpenCadastro(user, "arvore")
@@ -244,11 +250,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         group: "operacoes",
         perm: "transferencias",
       },
+      // Processo RMA — fluxo de garantia / assistência
       {
         href: "/rma",
-        label: "RMA",
+        label: "Processos",
         section: "ops",
-        group: "operacoes",
+        group: "rma",
+        perm: "rma",
+      },
+      {
+        href: "/cadastros/rma-checklists",
+        label: "Checklists",
+        section: "ops",
+        group: "rma",
         perm: "rma",
       },
       // Controle — histórico, filas e ajustes

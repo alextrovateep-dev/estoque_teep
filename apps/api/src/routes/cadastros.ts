@@ -56,6 +56,31 @@ import { Prisma } from "@prisma/client";
 export const cadastrosRouter = Router();
 cadastrosRouter.use(authenticate, requireFilialOperador);
 
+function appErrorFromTipoP2002(e: unknown): AppError | null {
+  if ((e as { code?: string }).code !== "P2002") return null;
+  const target = (e as { meta?: { target?: string | string[] } }).meta?.target;
+  const alvo = Array.isArray(target) ? target.join(",") : String(target || "");
+  if (
+    alvo.includes("rma_entrada_estoque") ||
+    alvo.includes("rmaEntradaEstoque")
+  ) {
+    return new AppError(
+      409,
+      "Já existe um tipo com «RMA: entrada automática» — atualize a tela"
+    );
+  }
+  if (
+    alvo.includes("rma_saida_cliente") ||
+    alvo.includes("rmaSaidaCliente")
+  ) {
+    return new AppError(
+      409,
+      "Já existe um tipo com «RMA: saída ao devolver/trocar» — atualize a tela"
+    );
+  }
+  return new AppError(409, "Tipo já existe");
+}
+
 type BomItemInput = {
   produtoFilhoId: string;
   quantidade: number;
@@ -1252,9 +1277,14 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
       const all = await prisma.tipoMovimentacao.findMany({
         orderBy: { nome: "asc" },
       });
-      // Cadastro: só tipos de negócio. Tipos sistema ficam ocultos (internos).
+      // Cadastro: tipos de negócio + tipos sistema usados pelo RMA (flags).
       return res.json(
-        incluirSistema ? all : all.filter((t) => !t.sistema)
+        incluirSistema
+          ? all
+          : all.filter(
+              (t) =>
+                !t.sistema || t.rmaEntradaEstoque || t.rmaSaidaCliente
+            )
       );
     }
 
@@ -1264,14 +1294,19 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
     });
 
     if (!paraLancamento) {
-      return res.json(all.filter((t) => !t.sistema));
+      return res.json(
+        all.filter(
+          (t) => !t.sistema || t.rmaEntradaEstoque || t.rmaSaidaCliente
+        )
+      );
     }
 
     // Lançamento: filtra por flags de perfil (cadastro), não por lista fixa de nomes.
-    // Tipos sistema ficam ocultos, exceto Transferência entre estoques (fluxo A→B).
+    // Tipos sistema e tipos exclusivos do RMA ficam ocultos (exceto Transferência entre estoques).
     const perfil = req.user!.perfil;
     res.json(
       all.filter((t) => {
+        if (t.rmaEntradaEstoque || t.rmaSaidaCliente) return false;
         const permitido =
           perfil === "OPERADOR"
             ? t.permitidoOperador
@@ -1310,8 +1345,24 @@ cadastrosRouter.post(
   validateBody(tipoMovimentacaoSchema),
   async (req, res, next) => {
     try {
-      res.status(201).json(
-        await prisma.tipoMovimentacao.create({
+      const rmaEntrada =
+        req.body.operacao === "ENTRADA" && req.body.rmaEntradaEstoque === true;
+      const rmaSaida =
+        req.body.operacao === "SAIDA" && req.body.rmaSaidaCliente === true;
+      const row = await prisma.$transaction(async (tx) => {
+        if (rmaEntrada) {
+          await tx.tipoMovimentacao.updateMany({
+            where: { rmaEntradaEstoque: true },
+            data: { rmaEntradaEstoque: false },
+          });
+        }
+        if (rmaSaida) {
+          await tx.tipoMovimentacao.updateMany({
+            where: { rmaSaidaCliente: true },
+            data: { rmaSaidaCliente: false },
+          });
+        }
+        return tx.tipoMovimentacao.create({
           data: {
             nome: req.body.nome,
             operacao: req.body.operacao,
@@ -1326,20 +1377,24 @@ cadastrosRouter.post(
               (req.body.operacao === "SAIDA" ||
                 req.body.operacao === "TRANSFERENCIA") &&
               req.body.baixaPorArvore === true,
+            rmaEntradaEstoque: rmaEntrada,
+            rmaSaidaCliente: rmaSaida,
             requerCliente:
               req.body.requerCliente === true ||
               req.body.geraAlertaRetorno === true ||
               Boolean(req.body.ehRetornoDeId) ||
-              req.body.requerTermoComodato === true,
+              req.body.requerTermoComodato === true ||
+              rmaEntrada ||
+              rmaSaida,
             descricao: req.body.descricao ?? null,
             sistema: false,
           },
-        })
-      );
+        });
+      });
+      res.status(201).json(row);
     } catch (e: unknown) {
-      if ((e as { code?: string }).code === "P2002") {
-        return next(new AppError(409, "Tipo já existe"));
-      }
+      const mapped = appErrorFromTipoP2002(e);
+      if (mapped) return next(mapped);
       next(e);
     }
   }
@@ -1360,34 +1415,58 @@ cadastrosRouter.patch(
         where: { tipoId: existing.id },
       });
 
-      const data = { ...req.body };
-      // Tipos de sistema: não mudam natureza nem flag sistema
+      const data = { ...req.body } as Record<string, unknown>;
+      // Tipos de sistema: só flags RMA / ativo / descrição
       if (existing.sistema) {
-        delete data.operacao;
-        delete data.sistema;
-        delete data.nome;
+        const allowed = new Set([
+          "rmaEntradaEstoque",
+          "rmaSaidaCliente",
+          "ativo",
+          "descricao",
+          "requerCliente",
+        ]);
+        for (const k of Object.keys(data)) {
+          if (!allowed.has(k)) delete data[k];
+        }
       } else {
-        delete data.sistema; // nunca promover/remover sistema pela API de cadastro
+        delete data.sistema;
       }
-      // Natureza travada após primeiro uso (histórico)
       if (usado > 0) {
         delete data.operacao;
       }
 
+      const operacaoFinal =
+        (data.operacao as string | undefined) ?? existing.operacao;
+
       const geraAlerta =
-        data.geraAlertaRetorno ?? existing.geraAlertaRetorno;
+        (data.geraAlertaRetorno as boolean | undefined) ??
+        existing.geraAlertaRetorno;
       const ehRetorno =
         data.ehRetornoDeId !== undefined
           ? data.ehRetornoDeId
           : existing.ehRetornoDeId;
       const termo =
-        data.requerTermoComodato ?? existing.requerTermoComodato;
-      if (geraAlerta || ehRetorno || termo) {
+        (data.requerTermoComodato as boolean | undefined) ??
+        existing.requerTermoComodato;
+
+      let rmaEntrada =
+        data.rmaEntradaEstoque !== undefined
+          ? data.rmaEntradaEstoque === true
+          : existing.rmaEntradaEstoque;
+      let rmaSaida =
+        data.rmaSaidaCliente !== undefined
+          ? data.rmaSaidaCliente === true
+          : existing.rmaSaidaCliente;
+
+      if (operacaoFinal !== "ENTRADA") rmaEntrada = false;
+      if (operacaoFinal !== "SAIDA") rmaSaida = false;
+      data.rmaEntradaEstoque = rmaEntrada;
+      data.rmaSaidaCliente = rmaSaida;
+
+      if (geraAlerta || ehRetorno || termo || rmaEntrada || rmaSaida) {
         data.requerCliente = true;
       }
 
-      const operacaoFinal =
-        (data.operacao as string | undefined) ?? existing.operacao;
       if (
         data.baixaPorArvore === true &&
         operacaoFinal !== "SAIDA" &&
@@ -1416,13 +1495,28 @@ cadastrosRouter.patch(
         );
       }
 
-      res.json(
-        await prisma.tipoMovimentacao.update({
-          where: { id: req.params.id },
+      const row = await prisma.$transaction(async (tx) => {
+        if (rmaEntrada) {
+          await tx.tipoMovimentacao.updateMany({
+            where: { rmaEntradaEstoque: true, id: { not: existing.id } },
+            data: { rmaEntradaEstoque: false },
+          });
+        }
+        if (rmaSaida) {
+          await tx.tipoMovimentacao.updateMany({
+            where: { rmaSaidaCliente: true, id: { not: existing.id } },
+            data: { rmaSaidaCliente: false },
+          });
+        }
+        return tx.tipoMovimentacao.update({
+          where: { id: existing.id },
           data,
-        })
-      );
+        });
+      });
+      res.json(row);
     } catch (e) {
+      const mapped = appErrorFromTipoP2002(e);
+      if (mapped) return next(mapped);
       next(e);
     }
   }

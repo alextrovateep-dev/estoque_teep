@@ -20,6 +20,8 @@ type Tipo = {
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
   baixaPorArvore?: boolean;
+  rmaEntradaEstoque?: boolean;
+  rmaSaidaCliente?: boolean;
   descricao?: string | null;
 };
 
@@ -117,8 +119,9 @@ function TiposPageInner() {
             Tipos de Movimentação
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Cadastre Compra, Venda e demais operações de negócio. Tipos internos
-            (inventário, estorno, RMA) não aparecem aqui.
+            Cadastre Compra, Venda e demais operações. Tipos com flag RMA
+            (entrada/saída automática) aparecem aqui para associação à tela de
+            RMA.
           </p>
         </div>
         <Link
@@ -211,6 +214,12 @@ function TiposPageInner() {
                         {t.baixaPorArvore && (
                           <FlagChip tone="amber">Baixa árvore</FlagChip>
                         )}
+                        {t.rmaEntradaEstoque && (
+                          <FlagChip tone="brand">RMA entrada</FlagChip>
+                        )}
+                        {t.rmaSaidaCliente && (
+                          <FlagChip tone="brand">RMA saída</FlagChip>
+                        )}
                         {origemNome && (
                           <FlagChip tone="emerald">
                             Retorno de: {origemNome}
@@ -221,6 +230,8 @@ function TiposPageInner() {
                           !t.geraAlertaRetorno &&
                           !t.requerTermoComodato &&
                           !t.baixaPorArvore &&
+                          !t.rmaEntradaEstoque &&
+                          !t.rmaSaidaCliente &&
                           !origemNome &&
                           !t.requerCliente && (
                             <span className="text-xs text-slate-400">—</span>
@@ -234,7 +245,9 @@ function TiposPageInner() {
                     </td>
                     <td className="px-3 py-3 align-top whitespace-nowrap">
                       <div className="flex gap-3">
-                        {!t.sistema && (
+                        {(!t.sistema ||
+                          t.rmaEntradaEstoque ||
+                          t.rmaSaidaCliente) && (
                           <Link
                             href={`/admin/tipos/${t.id}`}
                             className="text-sm font-medium text-brand hover:underline"
@@ -242,13 +255,15 @@ function TiposPageInner() {
                             Editar
                           </Link>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => toggle(t)}
-                          className="text-sm text-slate-600 hover:underline"
-                        >
-                          {t.ativo ? "Desativar" : "Ativar"}
-                        </button>
+                        {!t.sistema && (
+                          <button
+                            type="button"
+                            onClick={() => toggle(t)}
+                            className="text-sm text-slate-600 hover:underline"
+                          >
+                            {t.ativo ? "Desativar" : "Ativar"}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -124,6 +124,18 @@ const getProductStockArgs = z.object({
   filialId: z.string().uuid().optional().nullable(),
 });
 
+const listProductSeriesArgs = z.object({
+  codigoOuNome: z.string().min(1).max(120),
+  filialId: z.string().uuid().optional().nullable(),
+  filialSigla: z.string().min(1).max(80).optional().nullable(),
+  /** EM_ESTOQUE = disponíveis (padrão); TODOS = qualquer status */
+  status: z
+    .enum(["EM_ESTOQUE", "EM_TRANSITO", "SAIDO", "TODOS"])
+    .optional()
+    .default("EM_ESTOQUE"),
+  limit: z.coerce.number().int().min(1).max(200).optional().default(100),
+});
+
 const listMovementsArgs = z.object({
   codigoOuNome: z.string().min(1).max(120).optional().nullable(),
   filialId: z.string().uuid().optional().nullable(),
@@ -351,7 +363,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_product_stock",
     description:
-      "Saldos e valor (saldo×preço) de um produto por filial. Se o produto existe mas não tem posição, retorna saldo 0.",
+      "Saldos e valor (saldo×preço) de um produto por filial. Se o produto existe mas não tem posição, retorna saldo 0. NÃO lista números de série — para N/S use list_product_series.",
     parameters: {
       type: "object",
       properties: {
@@ -359,6 +371,40 @@ export const TOOL_DEFINITIONS = [
         filialId: {
           type: "string",
           description: "UUID da filial; omitir para consolidado (Admin/Gerente)",
+        },
+      },
+      required: ["codigoOuNome"],
+    },
+  },
+  {
+    name: "list_product_series",
+    description:
+      "Lista números de série (N/S) de um produto. USE para 'quais séries', 'números de série', 'N/S em estoque', follow-up 'quais são os números?' após um saldo. Padrão: só EM_ESTOQUE. Agrupa por filial. Filial citada → filialSigla.",
+    parameters: {
+      type: "object",
+      properties: {
+        codigoOuNome: {
+          type: "string",
+          description: "Código ou nome/descrição do produto (ex.: LG4S4, GSL64S4)",
+        },
+        filialId: {
+          type: "string",
+          description: "UUID da filial (opcional)",
+        },
+        filialSigla: {
+          type: "string",
+          description: "Sigla/nome da filial (ex.: PLN, RMA). Preferir em vez de UUID.",
+        },
+        status: {
+          type: "string",
+          enum: ["EM_ESTOQUE", "EM_TRANSITO", "SAIDO", "TODOS"],
+          description: "Padrão EM_ESTOQUE (disponíveis no estoque)",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 200,
+          description: "Máx. de séries retornadas (padrão 100)",
         },
       },
       required: ["codigoOuNome"],
@@ -627,6 +673,8 @@ export async function executeTool(
       return searchProducts(searchProductsArgs.parse(rawArgs));
     case "get_product_stock":
       return getProductStock(getProductStockArgs.parse(rawArgs), ctx);
+    case "list_product_series":
+      return listProductSeries(listProductSeriesArgs.parse(rawArgs), ctx);
     case "list_stock_movements":
       return listStockMovements(listMovementsArgs.parse(rawArgs), ctx);
     case "rank_product_movements":
@@ -1397,6 +1445,7 @@ async function findProdutoByCodigoOuNome(codigoOuNome: string) {
     descricao: true,
     unidade: true,
     precoUnitario: true,
+    controlaSerie: true,
   } as const;
   const exact = await prisma.produto.findFirst({
     where: { ativo: true, codigo: { equals: q, mode: "insensitive" } },
@@ -1484,6 +1533,7 @@ async function getProductStock(
       descricao: produto.descricao,
       unidade: produto.unidade,
       precoUnitario: preco,
+      controlaSerie: produto.controlaSerie === true,
     },
     saldos,
     qtyTotal,
@@ -1491,7 +1541,163 @@ async function getProductStock(
     mensagem:
       saldos.length === 0 || qtyTotal === 0
         ? "Produto cadastrado, mas sem saldo em estoque (qty 0)."
-        : undefined,
+        : produto.controlaSerie
+          ? "Para listar os números de série, use list_product_series."
+          : undefined,
+  };
+}
+
+async function listProductSeries(
+  args: z.infer<typeof listProductSeriesArgs>,
+  ctx: ToolContext
+) {
+  let filialId = resolveFilialId(ctx.user, args.filialId, ctx.filialHint);
+  let filialResolvida: { id: string; sigla: string; nome: string } | null =
+    null;
+
+  if (args.filialSigla?.trim()) {
+    const f = await findFilialBySiglaOuNome(args.filialSigla);
+    if (!f) {
+      return {
+        encontrado: false,
+        mensagem: `Filial não encontrada: “${args.filialSigla.trim()}”`,
+      };
+    }
+    if (ctx.user.perfil === "OPERADOR") {
+      const ids =
+        ctx.user.filialIds?.length > 0
+          ? ctx.user.filialIds
+          : ctx.user.filialId
+            ? [ctx.user.filialId]
+            : [];
+      if (!ids.includes(f.id)) {
+        return {
+          encontrado: false,
+          mensagem: "Sem acesso a esta filial",
+        };
+      }
+    }
+    filialId = f.id;
+    filialResolvida = f;
+  }
+
+  if (filialId) await assertFilialAtiva(filialId);
+
+  const produto = await findProdutoByCodigoOuNome(args.codigoOuNome);
+  if (!produto) {
+    return { encontrado: false, mensagem: "Produto não encontrado no cadastro" };
+  }
+
+  if (!produto.controlaSerie) {
+    return {
+      encontrado: true,
+      produto: {
+        codigo: produto.codigo,
+        descricao: produto.descricao,
+        controlaSerie: false,
+      },
+      total: 0,
+      porFilial: [],
+      mensagem:
+        "Este produto não controla número de série — só há saldo quantitativo.",
+    };
+  }
+
+  const statusFilter =
+    args.status === "TODOS"
+      ? undefined
+      : (args.status as "EM_ESTOQUE" | "EM_TRANSITO" | "SAIDO");
+
+  const whereFilial =
+    filialId
+      ? { filialId }
+      : ctx.user.perfil === "OPERADOR"
+        ? {
+            filialId: {
+              in:
+                ctx.user.filialIds?.length > 0
+                  ? ctx.user.filialIds
+                  : ctx.user.filialId
+                    ? [ctx.user.filialId]
+                    : [],
+            },
+          }
+        : {};
+
+  const rows = await prisma.unidadeSerie.findMany({
+    where: {
+      produtoId: produto.id,
+      ...(statusFilter ? { status: statusFilter } : {}),
+      ...whereFilial,
+    },
+    select: {
+      numeroSerie: true,
+      status: true,
+      filial: { select: { sigla: true, nome: true } },
+    },
+    orderBy: [{ filial: { sigla: "asc" } }, { numeroSerie: "asc" }],
+    take: args.limit + 1,
+  });
+
+  const truncated = rows.length > args.limit;
+  const slice = truncated ? rows.slice(0, args.limit) : rows;
+
+  const bySigla = new Map<
+    string,
+    {
+      filialSigla: string;
+      filialNome: string;
+      qty: number;
+      series: string[];
+      statusCounts: Record<string, number>;
+    }
+  >();
+
+  for (const r of slice) {
+    const sigla = r.filial?.sigla || "—";
+    let bucket = bySigla.get(sigla);
+    if (!bucket) {
+      bucket = {
+        filialSigla: sigla,
+        filialNome: r.filial?.nome || sigla,
+        qty: 0,
+        series: [],
+        statusCounts: {},
+      };
+      bySigla.set(sigla, bucket);
+    }
+    bucket.qty += 1;
+    bucket.series.push(r.numeroSerie);
+    bucket.statusCounts[r.status] = (bucket.statusCounts[r.status] || 0) + 1;
+  }
+
+  const porFilial = [...bySigla.values()];
+  const total = slice.length;
+
+  return {
+    encontrado: true,
+    asOf: new Date().toISOString(),
+    produto: {
+      codigo: produto.codigo,
+      descricao: produto.descricao,
+      controlaSerie: true,
+    },
+    filtro: {
+      status: args.status,
+      filialSigla: filialResolvida?.sigla || null,
+      filialId: filialId || null,
+    },
+    total,
+    truncated,
+    porFilial,
+    mensagem:
+      total === 0
+        ? args.status === "EM_ESTOQUE"
+          ? "Nenhuma série EM_ESTOQUE para este produto nos estoques consultados."
+          : "Nenhuma série encontrada com os filtros."
+        : truncated
+          ? `Mostrando as primeiras ${total} séries (há mais). Peça uma filial (ex.: PLN) ou aumente o limit.`
+          : undefined,
   };
 }
 

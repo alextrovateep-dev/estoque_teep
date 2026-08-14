@@ -169,6 +169,10 @@ export async function ensureSystemTipos(): Promise<number> {
     where: { nome: "Saída RMA" },
   });
   if (saidaRma) {
+    const jaTemSaida = await prisma.tipoMovimentacao.findFirst({
+      where: { rmaSaidaCliente: true, id: { not: saidaRma.id } },
+      select: { id: true },
+    });
     await prisma.tipoMovimentacao.update({
       where: { id: saidaRma.id },
       data: {
@@ -176,10 +180,17 @@ export async function ensureSystemTipos(): Promise<number> {
         ehRetornoDeId: null,
         requerCliente: true,
         sistema: true,
+        // Só marca se ninguém mais já configurou a flag
+        ...(jaTemSaida ? {} : { rmaSaidaCliente: true }),
+        rmaEntradaEstoque: false,
       },
     });
   }
   if (entradaRma) {
+    const jaTemEntrada = await prisma.tipoMovimentacao.findFirst({
+      where: { rmaEntradaEstoque: true, id: { not: entradaRma.id } },
+      select: { id: true },
+    });
     await prisma.tipoMovimentacao.update({
       where: { id: entradaRma.id },
       data: {
@@ -187,6 +198,8 @@ export async function ensureSystemTipos(): Promise<number> {
         ehRetornoDeId: null,
         requerCliente: true,
         sistema: true,
+        ...(jaTemEntrada ? {} : { rmaEntradaEstoque: true }),
+        rmaSaidaCliente: false,
       },
     });
   }

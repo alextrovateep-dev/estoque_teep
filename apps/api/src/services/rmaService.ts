@@ -2,8 +2,6 @@ import {
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPAS_SAIDA,
   SIGLA_ESTOQUE_RMA,
-  TIPO_ENTRADA_RMA,
-  TIPO_SAIDA_RMA,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { AuthUser } from "../middleware/auth";
@@ -96,6 +94,51 @@ const processoInclude = {
       movEntrada: { select: movVinculoSelect },
       movSaida: { select: movVinculoSelect },
       movDescarte: { select: movVinculoSelect },
+      checklistExecucoes: {
+        include: {
+          template: {
+            include: { itens: { orderBy: { ordem: "asc" as const } } },
+          },
+          respostas: true,
+          preenchidoPor: { select: { id: true, nome: true } },
+        },
+      },
+      diagnostico: true,
+      manutencaoPlano: {
+        include: {
+          servicos: { orderBy: { ordem: "asc" as const } },
+          pecas: {
+            include: {
+              produto: {
+                select: {
+                  id: true,
+                  codigo: true,
+                  descricao: true,
+                  precoUnitario: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      orcamento: {
+        include: {
+          linhas: {
+            include: {
+              produto: {
+                select: {
+                  id: true,
+                  codigo: true,
+                  descricao: true,
+                  precoUnitario: true,
+                },
+              },
+            },
+            orderBy: { id: "asc" as const },
+          },
+          aprovadoPor: { select: { id: true, nome: true } },
+        },
+      },
     },
     orderBy: { id: "asc" as const },
   },
@@ -131,11 +174,39 @@ async function resolveFilialPorSigla(sigla: string) {
   return f;
 }
 
-async function tipoPorNome(nome: string) {
+/** Tipo ENTRADA marcado para entrada automática do RMA (flag no cadastro). */
+async function tipoEntradaRma() {
   const t = await prisma.tipoMovimentacao.findFirst({
-    where: { nome, ativo: true },
+    where: {
+      rmaEntradaEstoque: true,
+      operacao: "ENTRADA",
+      ativo: true,
+    },
   });
-  if (!t) throw new AppError(400, `Tipo "${nome}" não encontrado — rode o seed`);
+  if (!t) {
+    throw new AppError(
+      400,
+      "Nenhum tipo de entrada marcado para RMA. Em Admin → Tipos, ative «RMA: entrada automática no estoque» em um tipo ENTRADA."
+    );
+  }
+  return t;
+}
+
+/** Tipo SAIDA marcado para devolver/trocar no RMA. */
+async function tipoSaidaRma() {
+  const t = await prisma.tipoMovimentacao.findFirst({
+    where: {
+      rmaSaidaCliente: true,
+      operacao: "SAIDA",
+      ativo: true,
+    },
+  });
+  if (!t) {
+    throw new AppError(
+      400,
+      "Nenhum tipo de saída marcado para RMA. Em Admin → Tipos, ative «RMA: saída ao devolver/trocar» em um tipo SAÍDA."
+    );
+  }
   return t;
 }
 
@@ -184,7 +255,7 @@ function assertEtapaPermiteSaida(etapa: string | null | undefined) {
   ) {
     throw new AppError(
       400,
-      "Item ainda não está liberado para envio (aguarde aprovação e, se aprovado, a manutenção)"
+      "Item ainda não está liberado para envio (conclua orçamento/aprovação, manutenção e checklist de liberação)"
     );
   }
 }
@@ -208,12 +279,19 @@ async function assertUsuarioComercialAtivo(usuarioId: string) {
   return u;
 }
 
-function podeDecidirAprovacao(
+export function podeDecidirAprovacaoRma(
   user: AuthUser,
   responsavelComercialId: string | null | undefined
 ) {
   if (user.perfil === "ADMIN" || user.perfil === "GERENTE") return true;
   return Boolean(responsavelComercialId && user.id === responsavelComercialId);
+}
+
+function podeDecidirAprovacao(
+  user: AuthUser,
+  responsavelComercialId: string | null | undefined
+) {
+  return podeDecidirAprovacaoRma(user, responsavelComercialId);
 }
 
 
@@ -478,7 +556,7 @@ export async function criarRmaProcesso(
     }
   }
 
-  const tipoEntrada = await tipoPorNome(TIPO_ENTRADA_RMA);
+  const tipoEntrada = await tipoEntradaRma();
 
   type Linha = {
     produtoId: string;
@@ -611,7 +689,7 @@ export async function criarRmaProcesso(
           unidadeSerieId,
           quantidade: linha.quantidade,
           status: "EM_ESTOQUE",
-          etapa: "AGUARDANDO_LAUDO",
+          etapa: "AGUARDANDO_RECEBIMENTO",
           movEntradaId: mov.id,
           observacao: linha.observacao?.trim() || null,
         },
@@ -802,7 +880,7 @@ export async function atualizarRmaComercial(
     throw new AppError(400, "Só é possível alterar o comercial em RMA aberto");
   }
   const aindaPendentes = proc.itens.some((i) =>
-    ["AGUARDANDO_LAUDO", "AGUARDANDO_APROVACAO"].includes(i.etapa || "")
+    ["AGUARDANDO_RECEBIMENTO","AGUARDANDO_ORCAMENTO","AGUARDANDO_APROVACAO","AGUARDANDO_LAUDO"].includes(i.etapa || "")
   );
   if (!aindaPendentes) {
     throw new AppError(
@@ -881,6 +959,12 @@ export async function registrarAprovacaoManutencaoRmaItem(
       "Só itens em aguardando aprovação podem ser decididos"
     );
   }
+  if ((item as { orcamento?: { id: string } | null }).orcamento) {
+    throw new AppError(
+      400,
+      "Este item tem orçamento — use aprovar/recusar orçamento"
+    );
+  }
   await aplicarAprovacaoItem(user, processoId, itemId, input);
   return obterRma(user, processoId);
 }
@@ -902,13 +986,17 @@ export async function marcarManutencaoRealizadaRmaItem(
       "Só itens aprovados (aguardando manutenção) podem ser marcados"
     );
   }
+  const orc = (item as { orcamento?: { status: string } | null }).orcamento;
+  if (orc && orc.status !== "APROVADO") {
+    throw new AppError(400, "Orçamento precisa estar aprovado");
+  }
   const claim = await prisma.rmaItem.updateMany({
     where: {
       id: itemId,
       processoId,
       etapa: "AGUARDANDO_MANUTENCAO",
     },
-    data: { etapa: "AGUARDANDO_ENVIO" },
+    data: { etapa: "AGUARDANDO_LIBERACAO" },
   });
   if (claim.count === 0) {
     throw new AppError(409, "Item já foi atualizado — atualize a tela");
@@ -1044,7 +1132,7 @@ export async function adicionarRmaItens(
     vistas.add(key);
   }
 
-  const tipoEntrada = await tipoPorNome(TIPO_ENTRADA_RMA);
+  const tipoEntrada = await tipoEntradaRma();
   const nfEntradaArquivo = await arquivoAnexoAtivo(id, "NF_ENTRADA");
   const feitos: Array<{ movEntradaId: string; itemId?: string }> = [];
 
@@ -1106,7 +1194,7 @@ export async function adicionarRmaItens(
           unidadeSerieId,
           quantidade: 1,
           status: "EM_ESTOQUE",
-          etapa: "AGUARDANDO_LAUDO",
+          etapa: "AGUARDANDO_RECEBIMENTO",
           movEntradaId: mov.id,
           observacao: input.observacao?.trim() || null,
         },
@@ -1179,12 +1267,12 @@ export async function removerRmaItem(
     throw new AppError(400, "Informe o motivo da remoção");
   }
 
-  // Escopo: só estorna a entrada vinculada a este item (bypass não abre estorno genérico)
+  // Escopo: entrada vinculada a este item (histórico), não a flag RMA atual do tipo
   const movEntrada = await prisma.movimentacao.findFirst({
     where: {
       id: item.movEntradaId,
       status: "CONCLUIDO",
-      tipo: { nome: TIPO_ENTRADA_RMA },
+      tipo: { operacao: "ENTRADA" },
     },
     select: { id: true },
   });
@@ -1237,7 +1325,7 @@ export async function removerRmaItem(
       data: {
         status:
           item.status === "SEM_MANUTENCAO" ? "SEM_MANUTENCAO" : "EM_ESTOQUE",
-        etapa: item.etapa || "AGUARDANDO_LAUDO",
+        etapa: item.etapa || "AGUARDANDO_RECEBIMENTO",
         observacao: item.observacao,
       },
     });
@@ -1490,7 +1578,7 @@ export async function devolverRmaItens(
     throw new AppError(400, "Processo fechado — não é possível devolver");
   }
 
-  const tipoSaida = await tipoPorNome(TIPO_SAIDA_RMA);
+  const tipoSaida = await tipoSaidaRma();
 
   let itens = proc.itens.filter(
     (i) =>
@@ -1795,7 +1883,7 @@ export async function trocarRmaItem(
     throw new AppError(400, "Estoque de descarte deve ser diferente do RMA");
   }
 
-  const tipoSaida = await tipoPorNome(TIPO_SAIDA_RMA);
+  const tipoSaida = await tipoSaidaRma();
   const statusAnterior = item.status;
   const etapaAnterior = item.etapa || "AGUARDANDO_ENVIO";
 
@@ -2039,7 +2127,7 @@ export async function cancelarRma(
           data: {
             status:
               item.status === "SEM_MANUTENCAO" ? "SEM_MANUTENCAO" : "EM_ESTOQUE",
-            etapa: item.etapa || "AGUARDANDO_LAUDO",
+            etapa: item.etapa || "AGUARDANDO_RECEBIMENTO",
           },
         });
         throw inner;
@@ -2171,25 +2259,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
     laudosResumo,
   });
 
-  // Avança itens com laudo ativo ainda em AGUARDANDO_LAUDO
-  const itemIdsComLaudo = new Set(
-    unicos
-      .map(({ item, anexo }) => item?.id || anexo.itemId)
-      .filter((x): x is string => Boolean(x))
-  );
-  // Laudos sem itemId no anexo de processo não avançam itens
-  for (const it of proc.itens) {
-    if (it.etapa !== "AGUARDANDO_LAUDO") continue;
-    if (!itemTemLaudoAtivo(it) && !itemIdsComLaudo.has(it.id)) continue;
-    await prisma.rmaItem.updateMany({
-      where: {
-        id: it.id,
-        processoId: id,
-        etapa: "AGUARDANDO_LAUDO",
-      },
-      data: { etapa: "AGUARDANDO_APROVACAO" },
-    });
-  }
+  // Etapas avançam pelo checklist/diagnóstico/orçamento — notificar só alerta.
 
   return { ok: true, qtdLaudos: unicos.length, qtdDestinatarios: destIds.length };
 }

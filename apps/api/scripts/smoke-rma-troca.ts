@@ -210,54 +210,161 @@ async function main() {
       processo.itens[0]
     );
   }
-  if ((processo.itens[0].etapa || "") !== "AGUARDANDO_LAUDO") {
+  if ((processo.itens[0].etapa || "") !== "AGUARDANDO_RECEBIMENTO") {
     fail(
-      `etapa esperada AGUARDANDO_LAUDO, veio ${processo.itens[0].etapa}`,
+      `etapa esperada AGUARDANDO_RECEBIMENTO, veio ${processo.itens[0].etapa}`,
       processo.itens[0]
     );
   }
-  ok(`RMA aberto ${processo.id.slice(0, 8)} — ${snRuim} AGUARDANDO_LAUDO`);
+  ok(`RMA aberto ${processo.id.slice(0, 8)} — ${snRuim} AGUARDANDO_RECEBIMENTO`);
 
-  const laudoUrl = await uploadLaudo(token);
-  await req(`/rma/${processo.id}/anexos`, {
-    method: "POST",
+  const produtoId = prod.id;
+  await req(`/rma/checklists`, {
+    method: "PUT",
     token,
     body: {
-      tipo: "LAUDO",
-      arquivo: laudoUrl,
-      label: "smoke-laudo.pdf",
-      itemId,
+      produtoId,
+      tipo: "RECEBIMENTO",
+      nome: "Smoke recebimento",
+      itens: [
+        {
+          codigo: "1",
+          titulo: "Inspeção visual OK?",
+          tipoCampo: "SIM_NAO",
+          obrigatorio: true,
+          ordem: 0,
+        },
+      ],
     },
   });
-  ok("laudo anexado");
+  await req(`/rma/checklists`, {
+    method: "PUT",
+    token,
+    body: {
+      produtoId,
+      tipo: "LIBERACAO",
+      nome: "Smoke liberação",
+      itens: [
+        {
+          codigo: "1",
+          titulo: "Pronto para envio?",
+          tipoCampo: "SIM_NAO",
+          obrigatorio: true,
+          ordem: 0,
+        },
+      ],
+    },
+  });
+  ok("templates checklist");
 
-  await req(`/rma/${processo.id}/notificar-laudos`, {
+  await req(`/rma/${processo.id}/itens/${itemId}/checklist/RECEBIMENTO/iniciar`, {
     method: "POST",
     token,
   });
-  ok("laudos notificados");
-
-  const aposNotify = await req<{
-    itens: Array<{ id: string; etapa?: string }>;
+  const comCheck = await req<{
+    itens: Array<{
+      id: string;
+      checklistExecucoes?: Array<{
+        tipo: string;
+        template: { itens: Array<{ id: string }> };
+      }>;
+    }>;
   }>(`/rma/${processo.id}`, { token });
-  const etNotify = aposNotify.itens.find((i) => i.id === itemId)?.etapa;
-  if (etNotify !== "AGUARDANDO_APROVACAO") {
-    fail(`esperado AGUARDANDO_APROVACAO, veio ${etNotify}`, aposNotify.itens);
-  }
-  ok("etapa AGUARDANDO_APROVACAO");
+  const recv = comCheck.itens
+    .find((i) => i.id === itemId)
+    ?.checklistExecucoes?.find((e) => e.tipo === "RECEBIMENTO");
+  const tiId = recv?.template.itens[0]?.id;
+  if (!tiId) fail("checklist recebimento sem item", recv);
 
-  await req(`/rma/${processo.id}/itens/${itemId}/aprovacao`, {
+  await req(
+    `/rma/${processo.id}/itens/${itemId}/checklist/RECEBIMENTO/concluir`,
+    {
+      method: "POST",
+      token,
+      body: {
+        respostas: [{ templateItemId: tiId, valorBool: true, fotos: [] }],
+      },
+    }
+  );
+  ok("checklist recebimento");
+
+  await req(
+    `/rma/${processo.id}/itens/${itemId}/diagnostico-plano/concluir`,
+    {
+      method: "POST",
+      token,
+      body: {
+        resumoProblema: "Smoke: defeito simulado",
+        servicos: [{ descricao: "Revisão geral", ordem: 0 }],
+        pecas: [],
+      },
+    }
+  );
+  ok("plano → AGUARDANDO_ORCAMENTO");
+
+  await req(`/rma/${processo.id}/itens/${itemId}/orcamento`, {
+    method: "PUT",
+    token,
+    body: {
+      maoDeObra: 10,
+      desconto: 0,
+      linhas: [
+        {
+          descricao: "Revisão geral",
+          quantidade: 1,
+          valorUnitario: 50,
+          origem: "SERVICO",
+        },
+      ],
+    },
+  });
+  await req(`/rma/${processo.id}/itens/${itemId}/orcamento/enviar`, {
     method: "POST",
     token,
-    body: { decisao: "APROVADA", observacao: "Smoke: aprovação item" },
   });
-  ok("item APROVADO → AGUARDANDO_MANUTENCAO");
+  await req(`/rma/${processo.id}/itens/${itemId}/orcamento/aprovar`, {
+    method: "POST",
+    token,
+    body: { observacao: "Smoke: cliente aprovou" },
+  });
+  ok("orçamento aprovado → AGUARDANDO_MANUTENCAO");
 
   await req(`/rma/${processo.id}/itens/${itemId}/manutencao-realizada`, {
     method: "POST",
     token,
   });
-  ok("manutenção realizada → AGUARDANDO_ENVIO");
+  ok("manutenção realizada → AGUARDANDO_LIBERACAO");
+
+  await req(`/rma/${processo.id}/itens/${itemId}/checklist/LIBERACAO/iniciar`, {
+    method: "POST",
+    token,
+  });
+  const comLib = await req<{
+    itens: Array<{
+      id: string;
+      checklistExecucoes?: Array<{
+        tipo: string;
+        template: { itens: Array<{ id: string }> };
+      }>;
+    }>;
+  }>(`/rma/${processo.id}`, { token });
+  const lib = comLib.itens
+    .find((i) => i.id === itemId)
+    ?.checklistExecucoes?.find((e) => e.tipo === "LIBERACAO");
+  const libTi = lib?.template.itens[0]?.id;
+  if (!libTi) fail("checklist liberação sem item", lib);
+
+  await req(
+    `/rma/${processo.id}/itens/${itemId}/checklist/LIBERACAO/concluir`,
+    {
+      method: "POST",
+      token,
+      body: {
+        respostas: [{ templateItemId: libTi, valorBool: true, fotos: [] }],
+      },
+    }
+  );
+  ok("liberação → AGUARDANDO_ENVIO");
 
   const aposTroca = await req<{
     status: string;

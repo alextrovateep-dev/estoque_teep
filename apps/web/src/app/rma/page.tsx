@@ -48,7 +48,7 @@ function resumoEtapasItens(
   if (!itens?.length) return "";
   const counts = new Map<string, number>();
   for (const i of itens) {
-    const e = i.etapa || "AGUARDANDO_LAUDO";
+    const e = i.etapa || "AGUARDANDO_RECEBIMENTO";
     counts.set(e, (counts.get(e) || 0) + 1);
   }
   return [...counts.entries()]

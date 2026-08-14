@@ -35,8 +35,9 @@ export const TIPO_TRANSF_RECEBIDA = "Transferência Recebida";
 /** Tipo de lançamento unificado (F15) — pode ter requerAprovacao */
 export const TIPO_TRANSF_ENTRE_ESTOQUES = "Transferência entre estoques";
 export const TIPO_ESTORNO = "Estorno";
+/** @deprecated Preferir flag `rmaEntradaEstoque` no tipo — mantido p/ seed/legado */
 export const TIPO_ENTRADA_RMA = "Entrada RMA";
-/** Nome do tipo no banco; UI: “Devolução ao cliente” */
+/** @deprecated Preferir flag `rmaSaidaCliente` no tipo — mantido p/ seed/legado */
 export const TIPO_SAIDA_RMA = "Saída RMA";
 /**
  * Tipo sistema: saída automática de cada componente na baixa pela árvore.
@@ -72,22 +73,29 @@ export type RmaAnexoTipo = (typeof RMA_ANEXO_TIPOS)[number];
 
 /** Workflow comercial/operacional por item (nota = processo; manutenção = item) */
 export const RMA_ITEM_ETAPA = [
-  "AGUARDANDO_LAUDO",
+  "AGUARDANDO_RECEBIMENTO",
+  "AGUARDANDO_ORCAMENTO",
   "AGUARDANDO_APROVACAO",
   "AGUARDANDO_MANUTENCAO",
+  "AGUARDANDO_LIBERACAO",
   "NAO_APROVADO",
   "AGUARDANDO_ENVIO",
   "FINALIZADO",
+  /** @deprecated legado — migrado para AGUARDANDO_RECEBIMENTO */
+  "AGUARDANDO_LAUDO",
 ] as const;
 export type RmaItemEtapa = (typeof RMA_ITEM_ETAPA)[number];
 
 export const RMA_ITEM_ETAPA_LABELS: Record<RmaItemEtapa, string> = {
-  AGUARDANDO_LAUDO: "Aguardando laudo",
+  AGUARDANDO_RECEBIMENTO: "Aguardando recebimento",
+  AGUARDANDO_ORCAMENTO: "Aguardando orçamento",
   AGUARDANDO_APROVACAO: "Aguardando aprovação",
   AGUARDANDO_MANUTENCAO: "Aguardando manutenção",
+  AGUARDANDO_LIBERACAO: "Aguardando liberação",
   NAO_APROVADO: "Não aprovado",
   AGUARDANDO_ENVIO: "Aguardando envio",
   FINALIZADO: "Finalizado",
+  AGUARDANDO_LAUDO: "Aguardando laudo",
 };
 
 /** Etapas em que Devolver/Trocar são permitidos */
@@ -95,6 +103,31 @@ export const RMA_ITEM_ETAPAS_SAIDA = [
   "AGUARDANDO_ENVIO",
   "NAO_APROVADO",
 ] as const;
+
+export const RMA_CHECKLIST_TIPOS = ["RECEBIMENTO", "LIBERACAO"] as const;
+export type RmaChecklistTipo = (typeof RMA_CHECKLIST_TIPOS)[number];
+
+export const RMA_CHECKLIST_CAMPO_TIPOS = [
+  "SIM_NAO",
+  "TEXTO",
+  "OPCAO",
+  "FOTO",
+] as const;
+export type RmaChecklistCampoTipo = (typeof RMA_CHECKLIST_CAMPO_TIPOS)[number];
+
+export const RMA_CHECKLIST_EXEC_STATUS = [
+  "EM_PREENCHIMENTO",
+  "CONCLUIDO",
+] as const;
+export type RmaChecklistExecStatus = (typeof RMA_CHECKLIST_EXEC_STATUS)[number];
+
+export const RMA_ORCAMENTO_STATUS = [
+  "RASCUNHO",
+  "ENVIADO",
+  "APROVADO",
+  "RECUSADO",
+] as const;
+export type RmaOrcamentoStatus = (typeof RMA_ORCAMENTO_STATUS)[number];
 
 export const BRAND_COLOR = "#5B8B83";
 

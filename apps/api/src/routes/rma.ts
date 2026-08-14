@@ -7,13 +7,19 @@ import {
   atualizarRmaComercialSchema,
   atualizarRmaDestinatariosSchema,
   cancelarRmaSchema,
+  clonarRmaChecklistTemplateSchema,
   createRmaProcessoSchema,
+  decidirRmaOrcamentoSchema,
   devolverRmaSchema,
   removerRmaItemSchema,
+  salvarRmaChecklistRespostasSchema,
+  salvarRmaDiagnosticoPlanoSchema,
+  salvarRmaOrcamentoSchema,
   semManutencaoRmaSchema,
   trocarRmaItemSchema,
   updateRmaFinanceiroSchema,
   updateRmaItemFinanceiroSchema,
+  upsertRmaChecklistTemplateSchema,
 } from "@teep/shared";
 import {
   authenticate,
@@ -44,8 +50,22 @@ import {
   removerRmaItem,
   trocarRmaItem,
 } from "../services/rmaService";
+import {
+  clonarRmaChecklistTemplate,
+  decidirOrcamentoRmaItem,
+  enviarOrcamentoRmaItem,
+  iniciarOuObterChecklist,
+  listarRmaChecklistTemplates,
+  obterRmaChecklistTemplate,
+  salvarChecklistRespostas,
+  salvarDiagnosticoEPlano,
+  salvarOrcamentoRmaItem,
+  sugerirLinhasOrcamentoDoPlano,
+  upsertRmaChecklistTemplate,
+} from "../services/rmaWorkflowService";
 import { resolveRmaDefaults } from "../lib/rmaDefaults";
 import { requireEstoqueParaOperar } from "../lib/estoqueGate";
+import type { RmaChecklistTipo } from "@teep/shared";
 
 export const rmaRouter = Router();
 rmaRouter.use(authenticate, requireFilialOperador, requireEstoqueParaOperar);
@@ -102,6 +122,63 @@ rmaRouter.get(
   async (_req, res, next) => {
     try {
       res.json(await listarUsuariosParaDestinatarioRma());
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.get(
+  "/checklists",
+  requirePermissao("rma"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await listarRmaChecklistTemplates({
+          produtoId: String(req.query.produtoId || "").trim() || undefined,
+          tipo: String(req.query.tipo || "").trim() || undefined,
+          somenteAtivos: String(req.query.todos || "") !== "1",
+        })
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.get(
+  "/checklists/:templateId",
+  requirePermissao("rma"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await obterRmaChecklistTemplate(req.params.templateId));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.put(
+  "/checklists",
+  requirePermissao("rma"),
+  validateBody(upsertRmaChecklistTemplateSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await upsertRmaChecklistTemplate(req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/checklists/clonar",
+  requirePermissao("rma"),
+  validateBody(clonarRmaChecklistTemplateSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const row = await clonarRmaChecklistTemplate(req.body);
+      res.status(201).json(row);
     } catch (e) {
       next(e);
     }
@@ -218,6 +295,224 @@ rmaRouter.post(
           req.user!,
           req.params.id,
           req.params.itemId
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/checklist/:tipo/iniciar",
+  requirePermissao("rma"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const tipo = String(req.params.tipo || "").toUpperCase() as RmaChecklistTipo;
+      if (tipo !== "RECEBIMENTO" && tipo !== "LIBERACAO") {
+        res.status(400).json({ error: "tipo inválido" });
+        return;
+      }
+      res.json(
+        await iniciarOuObterChecklist(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          tipo
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.put(
+  "/:id/itens/:itemId/checklist/:tipo",
+  requirePermissao("rma"),
+  validateBody(salvarRmaChecklistRespostasSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const tipo = String(req.params.tipo || "").toUpperCase() as RmaChecklistTipo;
+      if (tipo !== "RECEBIMENTO" && tipo !== "LIBERACAO") {
+        res.status(400).json({ error: "tipo inválido" });
+        return;
+      }
+      res.json(
+        await salvarChecklistRespostas(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          tipo,
+          req.body,
+          false
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/checklist/:tipo/concluir",
+  requirePermissao("rma"),
+  validateBody(salvarRmaChecklistRespostasSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const tipo = String(req.params.tipo || "").toUpperCase() as RmaChecklistTipo;
+      if (tipo !== "RECEBIMENTO" && tipo !== "LIBERACAO") {
+        res.status(400).json({ error: "tipo inválido" });
+        return;
+      }
+      res.json(
+        await salvarChecklistRespostas(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          tipo,
+          req.body,
+          true
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.put(
+  "/:id/itens/:itemId/diagnostico-plano",
+  requirePermissao("rma"),
+  validateBody(salvarRmaDiagnosticoPlanoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await salvarDiagnosticoEPlano(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          req.body,
+          false
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/diagnostico-plano/concluir",
+  requirePermissao("rma"),
+  validateBody(salvarRmaDiagnosticoPlanoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await salvarDiagnosticoEPlano(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          req.body,
+          true
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.get(
+  "/:id/itens/:itemId/orcamento/sugestao",
+  requirePermissao("rma"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await sugerirLinhasOrcamentoDoPlano(
+          req.user!,
+          req.params.id,
+          req.params.itemId
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.put(
+  "/:id/itens/:itemId/orcamento",
+  requirePermissao("rma", "rma_cobranca"),
+  validateBody(salvarRmaOrcamentoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await salvarOrcamentoRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          req.body
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/orcamento/enviar",
+  requirePermissao("rma", "rma_cobranca"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await enviarOrcamentoRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/orcamento/aprovar",
+  requirePermissao("rma"),
+  validateBody(decidirRmaOrcamentoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await decidirOrcamentoRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          "APROVADO",
+          req.body.observacao
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/orcamento/recusar",
+  requirePermissao("rma"),
+  validateBody(decidirRmaOrcamentoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await decidirOrcamentoRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId,
+          "RECUSADO",
+          req.body.observacao
         )
       );
     } catch (e) {

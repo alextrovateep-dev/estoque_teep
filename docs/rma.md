@@ -1,88 +1,42 @@
 ﻿# RMA — processo e estoque
 
-**Status:** implementado (abertura com destinatários e comercial; **etapas, aprovação e cobrança por item**; laudos; devolução; troca; cancelamento).  
-**Telas:** `/rma` · `/rma/novo` · `/rma/[id]`  
-**Permissões:** `rma` · `rma_cobranca` (cobrança por item + NFs do processo)
+**Status:** ampliado (checklist por produto, diagnóstico/plano com peças, orçamento, liberação).  
+**Telas:** `/rma` · `/rma/novo` · `/rma/[id]` · `/cadastros/rma-checklists`  
+**Permissões:** `rma` · `rma_cobranca`
 
 ---
 
 ## Princípios
 
-1. **Estoque = motor padrão** — transferência/lançamento entre filiais (`Filial`). Sem “descarte paralelo”.
-2. **Processo = nota** — cliente, NFs entrada/saída, estoque RMA, destinatários, comercial, status `ABERTO/FECHADO/CANCELADO`.
-3. **Item = manutenção** — laudo, etapa, aprovação comercial, cobrança, manutenção realizada, devolução/troca. No mesmo RMA um item pode ser aprovado e outro não.
-4. **Corrigir ≠ cancelar** — cliente errado → alterar cliente; série errada → remover item e incluir o certo. Cancelar é emergência (Gerente/Admin).
-5. **Notificações por processo** — lista de destinatários (padrão = tick `RMA_ABERTO`).
-6. **Estoques configuráveis** — `RMA`, `DESC`, operacionais etc.
+1. **Estoque = motor padrão** — transferência/lançamento entre filiais (`Filial`).
+2. **Processo = nota** — cliente, NFs, estoque RMA, destinatários, comercial.
+3. **Item = manutenção** — checklist, diagnóstico, plano+peças, orçamento, liberação, devolução/troca.
+4. **Checklist por produto (SKU)** — templates RECEBIMENTO e LIBERACAO; clonar entre produtos.
+5. **Peças previstas no plano** — assistência define serviços/peças; comercial precifica o orçamento.
+6. **Tipos de movimentação por flag** — Admin → Tipos: `rmaEntradaEstoque` (abrir RMA / entrada automática) e `rmaSaidaCliente` (devolver/trocar). Não depende mais do nome fixo “Entrada RMA” / “Saída RMA”.
 
 ---
 
-## Status e etapas
+## Etapas do item
 
-| Entidade | Valores |
-|----------|---------|
-| **Processo** | `ABERTO` · `FECHADO` · `CANCELADO` |
-| **Item (estoque)** | `EM_ESTOQUE` · `SEM_MANUTENCAO` · `DEVOLVIDO` · `DESCARTADO` · `CANCELADO` |
-| **Item (etapa)** | `AGUARDANDO_LAUDO` → `AGUARDANDO_APROVACAO` → `AGUARDANDO_MANUTENCAO` \| `NAO_APROVADO` → `AGUARDANDO_ENVIO` → `FINALIZADO` |
+`AGUARDANDO_RECEBIMENTO` → checklist + diagnóstico/plano/peças → `AGUARDANDO_ORCAMENTO` → enviar orçamento → `AGUARDANDO_APROVACAO` → aprovar → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar → `FINALIZADO`
 
-Devolver/Trocar só com etapa `AGUARDANDO_ENVIO` ou `NAO_APROVADO`. Fechamento automático quando não restam itens em `ABERTO` / `EM_ESTOQUE` / `SEM_MANUTENCAO`.
+Recusa do orçamento → `NAO_APROVADO` (devolver/trocar sem manutenção).
+
+Devolver/Trocar só com etapa `AGUARDANDO_ENVIO` ou `NAO_APROVADO`.
 
 ---
 
-## Fluxo por item
+## API workflow (além do RMA base)
 
-```text
-Abrir RMA (nota) → itens EM_ESTOQUE + AGUARDANDO_LAUDO + RMA_ABERTO
-        │
-        ▼
- Anexar laudo(s) → Notificar laudos → AGUARDANDO_APROVACAO + RMA_LAUDO
-        │
-        ├── APROVADA  → AGUARDANDO_MANUTENCAO → (Manutenção realizada) → AGUARDANDO_ENVIO → Devolver / Trocar
-        └── RECUSADA  → NAO_APROVADO (+ SEM_MANUTENCAO) → Devolver / Trocar (sem manutenção)
-```
+| Método | Path |
+|--------|------|
+| PUT | `/rma/checklists` |
+| POST | `/rma/checklists/clonar` |
+| POST | `/rma/:id/itens/:itemId/checklist/:tipo/iniciar` |
+| PUT/POST | `…/checklist/:tipo` · `…/concluir` |
+| PUT/POST | `…/diagnostico-plano` · `…/concluir` |
+| GET | `…/orcamento/sugestao` |
+| PUT/POST | `…/orcamento` · `…/enviar` · `…/aprovar` · `…/recusar` |
 
-Cobrança (`cobrou` / valor / NF cobrança) é **por item** (`PATCH /rma/:id/itens/:itemId/financeiro`). Editável com permissão `rma_cobranca` enquanto o processo estiver `ABERTO` ou `FECHADO` (não em `CANCELADO`), inclusive após a etapa `FINALIZADO`.
-
-Anexos de NF do processo:
-- **NF entrada** e **NF retorno** (`NF_SAIDA`): incluir **antes de fechar**; depois só visualização.
-- **NF cobrança** (`NF_COBRANCA`): financeiro (`rma_cobranca`) pode anexar/trocar **também após `FECHADO`**.
-
-Notificar laudos: só com processo `ABERTO` (desativado para todos se `FECHADO`/`CANCELADO`).
-
-API item: `POST /rma/:id/itens/:itemId/aprovacao` · `POST /rma/:id/itens/:itemId/manutencao-realizada` · `PATCH /rma/:id/itens/:itemId/financeiro`.
-
-Aprovação **não** existe no processo — só na etapa do item.
-
----
-
-## Responsável comercial
-
-- Cadastro do Cliente: comercial opcional; na abertura do RMA é **obrigatório**.
-- Quem decide por item: comercial do processo ou Admin/Gerente.
-- Enquanto houver itens em laudo/aprovação, dá para alterar o comercial.
-
----
-
-## Destinatários e alertas
-
-| Momento | Canal |
-|---------|--------|
-| Criar RMA | `RMA_ABERTO` |
-| Notificar laudos | `RMA_LAUDO` (+ avança etapa dos itens com laudo) |
-| Cobrança do item / encerrar | `RMA_FINANCEIRO` · `RMA_ENCERRADO` |
-
----
-
-## O que o sistema faz hoje
-
-| Ação | Efeito |
-|------|--------|
-| Abrir processo | Entrada RMA + comercial + destinatários |
-| Notificar laudos | E-mail/sino; itens com laudo → aguardando aprovação |
-| Aprovar / recusar (item) | Etapa manutenção ou não aprovado |
-| Manutenção realizada | Libera envio |
-| Cobrança (item) | Valor/NF por item |
-| Devolver / Trocar | Só se etapa liberada; item → FINALIZADO |
-| Cancelar | Só Gerente/Admin |
-
-Alertas: ver [alertas-email](./alertas-email.md).
+Laudo PDF (`RmaAnexo`) continua como evidência complementar; o gate de avanço é o checklist + plano.

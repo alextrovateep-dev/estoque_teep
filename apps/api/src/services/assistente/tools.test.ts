@@ -173,6 +173,7 @@ describe("assistente system prompt transferência", () => {
     assert.match(p, /SEM permissão de Novo Lançamento/);
     assert.match(p, /SEM prepare_transfer/);
     assert.doesNotMatch(p, /prepare_transfer \(origem, destino/);
+    assert.match(p, /list_product_series/);
   });
 
   it("consulta de transferência aponta fluxo=transferencia e separa de criar", () => {

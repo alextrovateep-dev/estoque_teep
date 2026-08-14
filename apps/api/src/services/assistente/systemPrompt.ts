@@ -29,7 +29,7 @@ export function navAllowlist(
       label: "Transferências",
       perm: "transferencias",
     },
-    { href: "/rma", label: "RMA", perm: "rma" },
+    { href: "/rma", label: "Processos RMA", perm: "rma" },
     // Controle
     { href: "/movimentacoes", label: "Movimentações", perm: "movimentacoes" },
     { href: "/aprovacoes", label: "Aprovações", perm: "aprovacoes" },
@@ -222,6 +222,7 @@ Mapa de dados TEEP (PostgreSQL — só leitura via tools; sem SQL):
   · Sem permissão relatorios: explique o erro da tool e oriente pedir acesso — não invente arquivo
   · Com permissão: NUNCA diga que não consegue gerar relatório — chame a tool
 - Estoque (saldoAtual por produto×filial; mín/máx do produto) → get_product_stock | get_inventory_balance | list_stock_by_value
+- Números de série / N/S em estoque → list_product_series
 - Movimentacao (lista detalhada) → list_stock_movements; ranking por qty no período → rank_product_movements
 - Demo / Comodato / Retorno de cliente (tipos com alerta ou termo — NÃO é transferência entre estoques):
   · “temos itens em comodato?” / “o que está em demo?” → list_stock_movements com fluxo=comodato|demo|alerta_retorno e somenteAbertos=true
@@ -265,6 +266,7 @@ Escolha de tools:
 - componentes / árvore de um produto específico → get_product_tree
 - SKU ou nome parcial → search_products
 - saldo de um produto → get_product_stock
+- números de série / N/S / “quais séries” / follow-up “quais são os números?” → list_product_series
 - movimentações gerais / o que moveu hoje (sem falar em transferência) → list_stock_movements (de/ate de hoje; sem fluxo=retorno)
 - CONSULTAR transferência entre estoques → list_stock_movements (fluxo=transferencia + filialSigla + papelFilial)
 - comodato / demo / retorno de cliente / itens ainda fora / datas de alerta → list_stock_movements (fluxo comodato|demo|alerta_retorno|retorno)
@@ -304,6 +306,8 @@ Regras:
 
 16. Papel do parceiro: Compra/ENTRADA = fornecedor; Venda/SAIDA = cliente. Use papelParceiro da tool. Proibido chamar de “cliente” quem vendeu para nós só pelo nome do cadastro.
 
+17. Números de série / N/S: SEMPRE list_product_series. Se o usuário perguntar saldo e depois “quais são os números?”, chame list_product_series do mesmo produto. Proibido dizer que não encontrou séries sem essa tool. Proibido inventar N/S.
+
 Telas permitidas para este usuário:
 ${links || "- (nenhuma)"}`;
 }
@@ -319,6 +323,7 @@ export function suggestedLinksFor(
     get_inventory_balance: ["/dashboard"],
     list_stock_by_value: ["/dashboard"],
     get_product_stock: ["/dashboard", "/lancamentos/novo"],
+    list_product_series: ["/dashboard"],
     list_products: ["/cadastros/produtos", "/lancamentos/novo"],
     search_products: ["/cadastros/produtos", "/lancamentos/novo"],
     list_product_trees: ["/cadastros/arvore", "/cadastros/produtos", "/relatorios"],

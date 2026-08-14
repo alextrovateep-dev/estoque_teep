@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { api, apiDownload, getStoredUser } from "@/lib/api";
+import { api, apiDownload, displayName, getStoredUser } from "@/lib/api";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import {
   MIC_MESSAGES,
@@ -61,6 +61,19 @@ function composeInput(base: string, interim: string, recording: boolean) {
   return appendTranscript(base, interim);
 }
 
+/** Saudação por horário local (calendário do browser). */
+function saudacaoPorHora(date = new Date()): "Bom dia" | "Boa tarde" | "Boa noite" {
+  const h = date.getHours();
+  if (h >= 5 && h < 12) return "Bom dia";
+  if (h >= 12 && h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
+function primeiroNome(nomeCompleto: string): string {
+  const p = nomeCompleto.trim().split(/\s+/)[0];
+  return p || "olá";
+}
+
 function historyForApi(turns: ChatTurn[]) {
   return turns.map(({ role, content }) => ({ role, content }));
 }
@@ -71,6 +84,10 @@ export function AssistenteEstoque({
   filialId?: string;
 }) {
   const user = useMemo(() => getStoredUser(), []);
+  const nomeSaudacao = user ? primeiroNome(displayName(user)) : "";
+  const saudacao = nomeSaudacao
+    ? `${saudacaoPorHora()} ${nomeSaudacao},`
+    : `${saudacaoPorHora()},`;
   const [status, setStatus] = useState<Status | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -327,9 +344,16 @@ export function AssistenteEstoque({
         </p>
       )}
 
+      <div className="border-b border-slate-50 px-4 py-2.5">
+        <p className="text-sm text-slate-700">
+          <span className="font-semibold text-slate-800">{saudacao}</span>{" "}
+          Como posso ajudar você hoje?
+        </p>
+      </div>
+
       <div
         ref={chatListRef}
-        className="mt-3 max-h-72 space-y-2 overflow-y-auto overscroll-contain px-4"
+        className="max-h-72 space-y-2 overflow-y-auto overscroll-contain px-4 pt-3"
       >
         {turns.map((t, i) => (
           <div key={`${t.role}-${i}`}>

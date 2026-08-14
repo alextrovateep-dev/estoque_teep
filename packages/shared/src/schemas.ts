@@ -319,6 +319,10 @@ export const tipoMovimentacaoObjectSchema = z.object({
   requerTermoComodato: z.boolean().optional(),
   /** SAIDA/TRANSFERENCIA: na saída, baixa componentes não-fantasma da árvore */
   baixaPorArvore: z.boolean().optional(),
+  /** ENTRADA: usada pelo RMA ao abrir/incluir item (entrada automática no estoque RMA) */
+  rmaEntradaEstoque: z.boolean().optional(),
+  /** SAIDA: usada pelo RMA em devolver/trocar */
+  rmaSaidaCliente: z.boolean().optional(),
   descricao: z.string().optional().nullable(),
   ativo: z.boolean().optional(),
 });
@@ -329,11 +333,16 @@ export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
     const retorno = Boolean(data.ehRetornoDeId);
     const termo = data.requerTermoComodato === true;
     const arvore = data.baixaPorArvore === true;
-    if ((alerta || retorno || termo) && data.requerCliente === false) {
+    const rmaEnt = data.rmaEntradaEstoque === true;
+    const rmaSai = data.rmaSaidaCliente === true;
+    if (
+      (alerta || retorno || termo || rmaEnt || rmaSai) &&
+      data.requerCliente === false
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "Tipos com alerta de retorno, vínculo de retorno ou termo de comodato devem exigir cliente",
+          "Tipos com alerta de retorno, vínculo de retorno, termo de comodato ou flag RMA devem exigir cliente",
         path: ["requerCliente"],
       });
     }
@@ -349,6 +358,27 @@ export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
         code: z.ZodIssueCode.custom,
         message: "Vínculo ehRetornoDe só se aplica a tipos ENTRADA",
         path: ["ehRetornoDeId"],
+      });
+    }
+    if (rmaEnt && data.operacao && data.operacao !== "ENTRADA") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Flag RMA de entrada só se aplica a tipos ENTRADA",
+        path: ["rmaEntradaEstoque"],
+      });
+    }
+    if (rmaSai && data.operacao && data.operacao !== "SAIDA") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Flag RMA de saída só se aplica a tipos SAIDA",
+        path: ["rmaSaidaCliente"],
+      });
+    }
+    if (rmaEnt && rmaSai) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Um tipo não pode ser entrada e saída RMA ao mesmo tempo",
+        path: ["rmaEntradaEstoque"],
       });
     }
     if (
@@ -846,5 +876,97 @@ export const trocarRmaItemSchema = z.object({
   /** Destino da série ruim (default: estoque sigla DESC, se existir) */
   destinoDescarteFilialId: z.string().uuid().optional(),
   nfSaidaNumero: z.string().max(60).optional().nullable(),
+  observacao: z.string().max(500).optional().nullable(),
+});
+
+const rmaChecklistCampoTipo = z.enum([
+  "SIM_NAO",
+  "TEXTO",
+  "OPCAO",
+  "FOTO",
+]);
+
+export const rmaChecklistTemplateItemSchema = z.object({
+  codigo: z.string().trim().min(1).max(40),
+  titulo: z.string().trim().min(1).max(200),
+  ajuda: z.string().max(500).optional().nullable(),
+  tipoCampo: rmaChecklistCampoTipo,
+  obrigatorio: z.boolean().default(true),
+  ordem: z.number().int().min(0).max(999).default(0),
+  opcoes: z.array(z.string().trim().min(1).max(80)).max(30).optional(),
+  exigeFotoSe: z.string().max(40).optional().nullable(),
+});
+
+export const upsertRmaChecklistTemplateSchema = z.object({
+  produtoId: z.string().uuid(),
+  tipo: z.enum(["RECEBIMENTO", "LIBERACAO"]),
+  nome: z.string().trim().min(1).max(120),
+  ativo: z.boolean().optional().default(true),
+  itens: z.array(rmaChecklistTemplateItemSchema).min(1).max(80),
+});
+
+export const clonarRmaChecklistTemplateSchema = z.object({
+  produtoOrigemId: z.string().uuid(),
+  produtoDestinoId: z.string().uuid(),
+  tipo: z.enum(["RECEBIMENTO", "LIBERACAO"]),
+  nome: z.string().trim().min(1).max(120).optional(),
+});
+
+export const salvarRmaChecklistRespostasSchema = z.object({
+  respostas: z
+    .array(
+      z.object({
+        templateItemId: z.string().uuid(),
+        valorTexto: z.string().max(2000).optional().nullable(),
+        valorBool: z.boolean().optional().nullable(),
+        fotos: z.array(z.string().max(255)).max(10).optional(),
+      })
+    )
+    .max(80),
+});
+
+export const salvarRmaDiagnosticoPlanoSchema = z.object({
+  resumoProblema: z.string().trim().min(1).max(2000),
+  observacaoTecnica: z.string().max(4000).optional().nullable(),
+  servicos: z
+    .array(
+      z.object({
+        descricao: z.string().trim().min(1).max(300),
+        ordem: z.number().int().min(0).max(999).optional(),
+      })
+    )
+    .max(40)
+    .default([]),
+  pecas: z
+    .array(
+      z.object({
+        produtoId: z.string().uuid(),
+        quantidade: z.number().positive().max(9999),
+        motivo: z.string().max(300).optional().nullable(),
+      })
+    )
+    .max(40)
+    .default([]),
+});
+
+export const salvarRmaOrcamentoSchema = z.object({
+  maoDeObra: z.number().min(0).max(1_000_000).default(0),
+  desconto: z.number().min(0).max(1_000_000).default(0),
+  observacaoComercial: z.string().max(2000).optional().nullable(),
+  linhas: z
+    .array(
+      z.object({
+        descricao: z.string().trim().min(1).max(300),
+        produtoId: z.string().uuid().optional().nullable(),
+        quantidade: z.number().positive().max(9999),
+        valorUnitario: z.number().min(0).max(1_000_000),
+        origem: z.enum(["SERVICO", "PECA", "EXTRA"]).default("EXTRA"),
+      })
+    )
+    .min(1)
+    .max(60),
+});
+
+export const decidirRmaOrcamentoSchema = z.object({
   observacao: z.string().max(500).optional().nullable(),
 });

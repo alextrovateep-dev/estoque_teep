@@ -1,6 +1,10 @@
 "use client";
 
 import { ConfirmMotivoPanel } from "@/components/ConfirmMotivoPanel";
+import {
+  RmaItemWorkflowPanel,
+  type RmaItemWorkflowData,
+} from "@/components/rma/RmaItemWorkflowPanel";
 import { api, apiUpload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
@@ -57,6 +61,10 @@ type RmaItem = {
   movEntrada?: MovVinculo | null;
   movSaida?: MovVinculo | null;
   movDescarte?: MovVinculo | null;
+  checklistExecucoes?: RmaItemWorkflowData["checklistExecucoes"];
+  diagnostico?: RmaItemWorkflowData["diagnostico"];
+  manutencaoPlano?: RmaItemWorkflowData["manutencaoPlano"];
+  orcamento?: RmaItemWorkflowData["orcamento"];
 };
 
 type Rma = {
@@ -106,10 +114,17 @@ const ETAPAS_SAIDA = new Set(["AGUARDANDO_ENVIO", "NAO_APROVADO"]);
 
 function etapaBadgeClass(etapa: string) {
   switch (etapa) {
+    case "AGUARDANDO_RECEBIMENTO":
+    case "AGUARDANDO_LAUDO":
+      return "bg-violet-100 text-violet-900";
+    case "AGUARDANDO_ORCAMENTO":
+      return "bg-orange-100 text-orange-900";
     case "AGUARDANDO_APROVACAO":
       return "bg-amber-100 text-amber-900";
     case "AGUARDANDO_MANUTENCAO":
       return "bg-sky-100 text-sky-900";
+    case "AGUARDANDO_LIBERACAO":
+      return "bg-indigo-100 text-indigo-900";
     case "AGUARDANDO_ENVIO":
       return "bg-emerald-100 text-emerald-800";
     case "NAO_APROVADO":
@@ -745,7 +760,7 @@ export default function RmaDetalhePage() {
       await api(`/rma/${id}/itens/${itemId}/manutencao-realizada`, {
         method: "POST",
       });
-      setMsg("Manutenção marcada — item liberado para envio");
+      setMsg("Manutenção marcada — item aguarda checklist de liberação");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -890,7 +905,12 @@ export default function RmaDetalhePage() {
   const podeEditarComercial =
     processoAberto &&
     itensAtivos.some((i) =>
-      ["AGUARDANDO_LAUDO", "AGUARDANDO_APROVACAO"].includes(i.etapa || "")
+      [
+        "AGUARDANDO_RECEBIMENTO",
+        "AGUARDANDO_ORCAMENTO",
+        "AGUARDANDO_APROVACAO",
+        "AGUARDANDO_LAUDO",
+      ].includes(i.etapa || "")
     );
   /** NFs do processo só com RMA aberto; cobrança por item também após FECHADO. */
   const canEditFin = canFin && processoAberto;
@@ -898,7 +918,7 @@ export default function RmaDetalhePage() {
   const resumoEtapas = (() => {
     const counts = new Map<string, number>();
     for (const i of itensAtivos) {
-      const e = i.etapa || "AGUARDANDO_LAUDO";
+      const e = i.etapa || "AGUARDANDO_RECEBIMENTO";
       counts.set(e, (counts.get(e) || 0) + 1);
     }
     return [...counts.entries()]
@@ -1144,7 +1164,8 @@ export default function RmaDetalhePage() {
               Notificações
             </h2>
             <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              Quem recebe sino e e-mail. Laudos: anexe e use Notificar laudos
+              Quem recebe sino e e-mail. “Notificar laudos” só alerta — o avanço
+              de etapa é pelo checklist/plano/orçamento.
               (avança itens com laudo para aguardando aprovação).
             </p>
           </div>
@@ -1741,12 +1762,12 @@ export default function RmaDetalhePage() {
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${etapaBadgeClass(
-                        i.etapa || "AGUARDANDO_LAUDO"
+                        i.etapa || "AGUARDANDO_RECEBIMENTO"
                       )}`}
                     >
                       {ETAPA_LABEL[i.etapa || ""] ||
                         i.etapa ||
-                        "Aguardando laudo"}
+                        "Aguardando recebimento"}
                     </span>
                     <span className="rounded bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
                       {ITEM_STATUS[i.status] || i.status}
@@ -1803,6 +1824,21 @@ export default function RmaDetalhePage() {
                       </dd>
                     </div>
                   </dl>
+                  <RmaItemWorkflowPanel
+                    processoId={row.id}
+                    item={i}
+                    processoAberto={processoAberto}
+                    canOrcamento={Boolean(
+                      canFin ||
+                        podeDecidirAprovacao ||
+                        (user && userHas(user, "rma"))
+                    )}
+                    canDecidirOrcamento={Boolean(podeDecidirAprovacao)}
+                    onUpdated={async () => {
+                      await load();
+                    }}
+                    onError={(msg) => setError(msg)}
+                  />
                   {canEditCobrancaItem && i.status !== "CANCELADO" && (
                     <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                       <button
@@ -1831,7 +1867,8 @@ export default function RmaDetalhePage() {
                       i.status === "SEM_MANUTENCAO") && (
                       <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
                         {podeDecidirAprovacao &&
-                          i.etapa === "AGUARDANDO_APROVACAO" && (
+                          i.etapa === "AGUARDANDO_APROVACAO" &&
+                          !i.orcamento && (
                             <>
                               <button
                                 type="button"

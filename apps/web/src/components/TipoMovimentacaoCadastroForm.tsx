@@ -20,6 +20,8 @@ type Tipo = {
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
   baixaPorArvore?: boolean;
+  rmaEntradaEstoque?: boolean;
+  rmaSaidaCliente?: boolean;
   descricao?: string | null;
 };
 
@@ -42,6 +44,8 @@ function createEmptyForm() {
     ehRetornoDeId: "" as string,
     requerTermoComodato: false,
     baixaPorArvore: false,
+    rmaEntradaEstoque: false,
+    rmaSaidaCliente: false,
     descricao: "",
   };
 }
@@ -192,6 +196,7 @@ export function TipoMovimentacaoCadastroForm({
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(Boolean(editId));
   const [loadFailed, setLoadFailed] = useState(false);
+  const [sistemaLocked, setSistemaLocked] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -220,11 +225,7 @@ export function TipoMovimentacaoCadastroForm({
     api<Tipo>(`/tipos-movimentacao/${editId}`)
       .then((t) => {
         if (cancelled) return;
-        if (t.sistema) {
-          setLoadFailed(true);
-          setError("Tipo de sistema não pode ser editado");
-          return;
-        }
+        setSistemaLocked(Boolean(t.sistema));
         setForm({
           nome: t.nome,
           operacao: t.operacao,
@@ -237,6 +238,8 @@ export function TipoMovimentacaoCadastroForm({
           ehRetornoDeId: t.ehRetornoDeId || "",
           requerTermoComodato: Boolean(t.requerTermoComodato),
           baixaPorArvore: Boolean(t.baixaPorArvore),
+          rmaEntradaEstoque: Boolean(t.rmaEntradaEstoque),
+          rmaSaidaCliente: Boolean(t.rmaSaidaCliente),
           descricao: t.descricao || "",
         });
       })
@@ -266,26 +269,39 @@ export function TipoMovimentacaoCadastroForm({
         form.requerCliente ||
         form.geraAlertaRetorno ||
         Boolean(form.ehRetornoDeId) ||
-        form.requerTermoComodato;
-      const body: Record<string, unknown> = {
-        nome: form.nome.trim(),
-        requerCliente: precisaCliente,
-        requerAprovacao: form.requerAprovacao,
-        permitidoOperador: form.permitidoOperador,
-        permitidoGerente: form.permitidoGerente,
-        geraAlertaRetorno: form.geraAlertaRetorno,
-        ehRetornoDeId: form.ehRetornoDeId || null,
-        requerTermoComodato: form.requerTermoComodato,
-        baixaPorArvore:
-          form.operacao === "SAIDA" || form.operacao === "TRANSFERENCIA"
-            ? form.baixaPorArvore
-            : false,
-        descricao: form.descricao.trim() || null,
-      };
+        form.requerTermoComodato ||
+        form.rmaEntradaEstoque ||
+        form.rmaSaidaCliente;
+      const body: Record<string, unknown> = sistemaLocked
+        ? {
+            rmaEntradaEstoque:
+              form.operacao === "ENTRADA" && form.rmaEntradaEstoque,
+            rmaSaidaCliente: form.operacao === "SAIDA" && form.rmaSaidaCliente,
+            requerCliente: precisaCliente,
+            descricao: form.descricao.trim() || null,
+          }
+        : {
+            nome: form.nome.trim(),
+            requerCliente: precisaCliente,
+            requerAprovacao: form.requerAprovacao,
+            permitidoOperador: form.permitidoOperador,
+            permitidoGerente: form.permitidoGerente,
+            geraAlertaRetorno: form.geraAlertaRetorno,
+            ehRetornoDeId: form.ehRetornoDeId || null,
+            requerTermoComodato: form.requerTermoComodato,
+            baixaPorArvore:
+              form.operacao === "SAIDA" || form.operacao === "TRANSFERENCIA"
+                ? form.baixaPorArvore
+                : false,
+            rmaEntradaEstoque:
+              form.operacao === "ENTRADA" && form.rmaEntradaEstoque,
+            rmaSaidaCliente: form.operacao === "SAIDA" && form.rmaSaidaCliente,
+            descricao: form.descricao.trim() || null,
+          };
       if (!editId) {
         body.operacao = form.operacao;
       }
-      if (form.geraAlertaRetorno) {
+      if (!sistemaLocked && form.geraAlertaRetorno) {
         body.diasAlerta = sanitizeDiasAlerta(form.diasAlerta);
       }
       if (editId) {
@@ -320,6 +336,9 @@ export function TipoMovimentacaoCadastroForm({
         operacao === "SAIDA" || operacao === "TRANSFERENCIA"
           ? prev.baixaPorArvore
           : false,
+      rmaEntradaEstoque:
+        operacao === "ENTRADA" ? prev.rmaEntradaEstoque : false,
+      rmaSaidaCliente: operacao === "SAIDA" ? prev.rmaSaidaCliente : false,
     }));
   }
 
@@ -334,6 +353,7 @@ export function TipoMovimentacaoCadastroForm({
   const isSaida = form.operacao === "SAIDA";
   const isEntrada = form.operacao === "ENTRADA";
   const emEdicao = Boolean(editId);
+  const soRmaFlags = sistemaLocked;
 
   if (loading) {
     return <p className="mt-4 text-sm text-slate-500">Carregando…</p>;
@@ -370,9 +390,11 @@ export function TipoMovimentacaoCadastroForm({
               : "Novo tipo de movimentação"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {emEdicao
-              ? `Alterando: ${form.nome || "tipo selecionado"}`
-              : "Preencha os dados para criar um novo tipo de movimentação."}
+            {soRmaFlags
+              ? "Tipo de sistema: só a associação ao RMA pode ser alterada."
+              : emEdicao
+                ? `Alterando: ${form.nome || "tipo selecionado"}`
+                : "Preencha os dados para criar um novo tipo de movimentação."}
           </p>
         </div>
         <Link
@@ -402,7 +424,8 @@ export function TipoMovimentacaoCadastroForm({
                 <span className="mb-1 block text-sm font-medium">Nome</span>
                 <input
                   required
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                  disabled={soRmaFlags}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 disabled:bg-slate-50"
                   value={form.nome}
                   onChange={(e) => setForm({ ...form, nome: e.target.value })}
                   placeholder="Ex: Saída Demonstração"
@@ -475,13 +498,14 @@ export function TipoMovimentacaoCadastroForm({
           <div className="grid gap-2 sm:grid-cols-2">
             <ToggleRow
               checked={form.requerCliente}
+              disabled={soRmaFlags}
               onChange={(v) => setForm({ ...form, requerCliente: v })}
               title="Requer cliente / fornecedor"
               hint="Mostra seletor de cliente e campos de NF."
             />
             <ToggleRow
               checked={form.requerAprovacao}
-              disabled={form.baixaPorArvore}
+              disabled={soRmaFlags || form.baixaPorArvore}
               onChange={(v) => setForm({ ...form, requerAprovacao: v })}
               title="Requer aprovação"
               hint={
@@ -496,6 +520,51 @@ export function TipoMovimentacaoCadastroForm({
         </SectionCard>
 
         <SectionCard
+          title="RMA"
+          subtitle="Associa este tipo aos botões da tela de RMA (abrir / devolver)."
+          className={emEdicao ? "border-amber-200/80 bg-white/90" : ""}
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
+            <ToggleRow
+              checked={form.rmaEntradaEstoque}
+              disabled={!isEntrada}
+              onChange={(v) =>
+                setForm({
+                  ...form,
+                  rmaEntradaEstoque: v,
+                  rmaSaidaCliente: false,
+                  requerCliente: v ? true : form.requerCliente,
+                })
+              }
+              title="RMA: entrada automática no estoque"
+              hint={
+                isEntrada
+                  ? "Usada ao abrir RMA / incluir item (gera estoque no depósito RMA). Só um tipo pode ter esta opção."
+                  : "Disponível apenas para natureza Entrada."
+              }
+            />
+            <ToggleRow
+              checked={form.rmaSaidaCliente}
+              disabled={!isSaida}
+              onChange={(v) =>
+                setForm({
+                  ...form,
+                  rmaSaidaCliente: v,
+                  rmaEntradaEstoque: false,
+                  requerCliente: v ? true : form.requerCliente,
+                })
+              }
+              title="RMA: saída ao devolver / trocar"
+              hint={
+                isSaida
+                  ? "Usada nos botões de devolver e trocar na tela do RMA. Só um tipo pode ter esta opção."
+                  : "Disponível apenas para natureza Saída."
+              }
+            />
+          </div>
+        </SectionCard>
+
+        <SectionCard
           title="Quem pode lançar"
           subtitle="Visibilidade no seletor de tipo por perfil."
           className={emEdicao ? "border-amber-200/80 bg-white/90" : ""}
@@ -503,12 +572,14 @@ export function TipoMovimentacaoCadastroForm({
           <div className="grid gap-2 sm:grid-cols-2">
             <ToggleRow
               checked={form.permitidoOperador}
+              disabled={soRmaFlags}
               onChange={(v) => setForm({ ...form, permitidoOperador: v })}
               title="Operador"
               hint="Aparece para perfil Operador."
             />
             <ToggleRow
               checked={form.permitidoGerente}
+              disabled={soRmaFlags}
               onChange={(v) => setForm({ ...form, permitidoGerente: v })}
               title="Gerente / Admin"
               hint="Aparece para Gerente e Admin."

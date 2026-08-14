@@ -65,6 +65,8 @@ model Usuario {
   rmaComoComercial    RmaProcesso[] @relation("RmaResponsavelComercial")
   rmaItemAprovacoes   RmaItem[]     @relation("RmaItemAprovacaoPor")
   rmaDestinatarios     RmaDestinatario[]
+  rmaChecklistExecucoes RmaChecklistExecucao[] @relation("RmaChecklistPreenchidoPor")
+  rmaOrcamentosAprovados RmaOrcamento[] @relation("RmaOrcamentoAprovadoPor")
   clientesComoComercial Cliente[]
   serieAlocacoes      SerieAlocacao[]
 
@@ -131,6 +133,9 @@ model Produto {
   rmaItens        RmaItem[]
   componentesComoPai   ProdutoComponente[] @relation("BomPai")
   componentesComoFilho ProdutoComponente[] @relation("BomFilho")
+  rmaChecklistTemplates RmaChecklistTemplate[]
+  rmaManutencaoPecas    RmaManutencaoPeca[]
+  rmaOrcamentoLinhas    RmaOrcamentoLinha[]
 
   @@map("produtos")
 }
@@ -184,6 +189,10 @@ model TipoMovimentacao {
   requerTermoComodato Boolean            @default(false) @map("requer_termo_comodato")
   /// SAIDA/TRANSFERENCIA: na saída baixa componentes não-fantasma da BOM
   baixaPorArvore     Boolean             @default(false) @map("baixa_por_arvore")
+  /// ENTRADA usada pelo RMA ao abrir processo / incluir item (gera estoque automático)
+  rmaEntradaEstoque  Boolean             @default(false) @map("rma_entrada_estoque")
+  /// SAIDA usada pelo RMA em devolver/trocar
+  rmaSaidaCliente    Boolean             @default(false) @map("rma_saida_cliente")
   descricao          String?             @db.Text
   ativo              Boolean             @default(true)
   movimentacoes      Movimentacao[]
@@ -192,6 +201,7 @@ model TipoMovimentacao {
   retornosComoOrigem TipoMovimentacao[]  @relation("TipoRetorno")
 
   @@index([ehRetornoDeId])
+  /// No máximo um tipo ativo com cada flag RMA (índice parcial no SQL)
   @@map("tipos_movimentacao")
 }
 
@@ -593,8 +603,8 @@ model RmaItem {
   quantidade      Decimal       @db.Decimal(12, 4)
   /// ABERTO | EM_ESTOQUE | SEM_MANUTENCAO | DEVOLVIDO | DESCARTADO | CANCELADO
   status          String        @default("ABERTO") @db.VarChar(20)
-  /// AGUARDANDO_LAUDO | AGUARDANDO_APROVACAO | AGUARDANDO_MANUTENCAO | NAO_APROVADO | AGUARDANDO_ENVIO | FINALIZADO
-  etapa           String        @default("AGUARDANDO_LAUDO") @db.VarChar(30)
+  /// AGUARDANDO_RECEBIMENTO | AGUARDANDO_ORCAMENTO | AGUARDANDO_APROVACAO | AGUARDANDO_MANUTENCAO | AGUARDANDO_LIBERACAO | NAO_APROVADO | AGUARDANDO_ENVIO | FINALIZADO
+  etapa           String        @default("AGUARDANDO_RECEBIMENTO") @db.VarChar(30)
   aprovacaoEm     DateTime?     @map("aprovacao_em") @db.Timestamptz
   aprovacaoPorId  String?       @map("aprovacao_por_id") @db.Uuid
   aprovacaoObs    String?       @map("aprovacao_obs") @db.Text
@@ -617,6 +627,10 @@ model RmaItem {
   movSaida        Movimentacao? @relation("RmaItemSaida", fields: [movSaidaId], references: [id], onDelete: SetNull)
   movDescarte     Movimentacao? @relation("RmaItemDescarte", fields: [movDescarteId], references: [id], onDelete: SetNull)
   anexos          RmaAnexo[]
+  checklistExecucoes RmaChecklistExecucao[]
+  diagnostico     RmaDiagnostico?
+  manutencaoPlano RmaManutencaoPlano?
+  orcamento       RmaOrcamento?
 
   @@index([processoId])
   @@index([produtoId])
@@ -647,4 +661,170 @@ model RmaAnexo {
   @@index([itemId])
   @@index([processoId, tipo, ativo])
   @@map("rma_anexos")
+}
+
+/// Template de checklist RMA por produto (SKU) — RECEBIMENTO ou LIBERACAO
+model RmaChecklistTemplate {
+  id        String   @id @default(uuid()) @db.Uuid
+  produtoId String   @map("produto_id") @db.Uuid
+  /// RECEBIMENTO | LIBERACAO
+  tipo      String   @db.VarChar(20)
+  nome      String   @db.VarChar(120)
+  ativo     Boolean  @default(true)
+  versao    Int      @default(1)
+  criadoEm  DateTime @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
+  produto   Produto  @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  itens     RmaChecklistTemplateItem[]
+  execucoes RmaChecklistExecucao[]
+
+  /// Unique parcial no DB: (produto_id, tipo) WHERE ativo = true
+  /// (ver migration 20260814120000 — Prisma não modela partial unique)
+  @@index([produtoId, tipo])
+  @@index([tipo, ativo])
+  @@map("rma_checklist_templates")
+}
+
+model RmaChecklistTemplateItem {
+  id           String @id @default(uuid()) @db.Uuid
+  templateId   String @map("template_id") @db.Uuid
+  ordem        Int    @default(0)
+  codigo       String @db.VarChar(40)
+  titulo       String @db.VarChar(200)
+  ajuda        String? @db.Text
+  /// SIM_NAO | TEXTO | OPCAO | FOTO
+  tipoCampo    String @map("tipo_campo") @db.VarChar(20)
+  obrigatorio  Boolean @default(true)
+  opcoesJson   Json?  @map("opcoes_json")
+  /// Se resposta igual a este valor, exige ao menos 1 foto
+  exigeFotoSe  String? @map("exige_foto_se") @db.VarChar(40)
+  template     RmaChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  respostas    RmaChecklistResposta[]
+
+  @@index([templateId, ordem])
+  @@map("rma_checklist_template_itens")
+}
+
+model RmaChecklistExecucao {
+  id              String   @id @default(uuid()) @db.Uuid
+  rmaItemId       String   @map("rma_item_id") @db.Uuid
+  templateId      String   @map("template_id") @db.Uuid
+  /// RECEBIMENTO | LIBERACAO
+  tipo            String   @db.VarChar(20)
+  /// EM_PREENCHIMENTO | CONCLUIDO
+  status          String   @default("EM_PREENCHIMENTO") @db.VarChar(20)
+  preenchidoPorId String?  @map("preenchido_por_id") @db.Uuid
+  concluidoEm     DateTime? @map("concluido_em") @db.Timestamptz
+  criadoEm        DateTime @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm    DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
+  rmaItem         RmaItem  @relation(fields: [rmaItemId], references: [id], onDelete: Cascade)
+  template        RmaChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  preenchidoPor   Usuario? @relation("RmaChecklistPreenchidoPor", fields: [preenchidoPorId], references: [id], onDelete: SetNull)
+  respostas       RmaChecklistResposta[]
+
+  @@unique([rmaItemId, tipo])
+  @@index([templateId])
+  @@index([status])
+  @@map("rma_checklist_execucoes")
+}
+
+model RmaChecklistResposta {
+  id             String @id @default(uuid()) @db.Uuid
+  execucaoId     String @map("execucao_id") @db.Uuid
+  templateItemId String @map("template_item_id") @db.Uuid
+  valorTexto     String? @map("valor_texto") @db.Text
+  valorBool      Boolean? @map("valor_bool")
+  fotos          Json   @default("[]")
+  execucao       RmaChecklistExecucao @relation(fields: [execucaoId], references: [id], onDelete: Cascade)
+  templateItem   RmaChecklistTemplateItem @relation(fields: [templateItemId], references: [id], onDelete: Restrict)
+
+  @@unique([execucaoId, templateItemId])
+  @@map("rma_checklist_respostas")
+}
+
+model RmaDiagnostico {
+  id                 String   @id @default(uuid()) @db.Uuid
+  rmaItemId          String   @unique @map("rma_item_id") @db.Uuid
+  resumoProblema     String   @map("resumo_problema") @db.Text
+  observacaoTecnica  String?  @map("observacao_tecnica") @db.Text
+  criadoEm           DateTime @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm       DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
+  rmaItem            RmaItem  @relation(fields: [rmaItemId], references: [id], onDelete: Cascade)
+
+  @@map("rma_diagnosticos")
+}
+
+model RmaManutencaoPlano {
+  id           String   @id @default(uuid()) @db.Uuid
+  rmaItemId    String   @unique @map("rma_item_id") @db.Uuid
+  criadoEm     DateTime @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
+  rmaItem      RmaItem  @relation(fields: [rmaItemId], references: [id], onDelete: Cascade)
+  servicos     RmaManutencaoServico[]
+  pecas        RmaManutencaoPeca[]
+
+  @@map("rma_manutencao_planos")
+}
+
+model RmaManutencaoServico {
+  id          String @id @default(uuid()) @db.Uuid
+  planoId     String @map("plano_id") @db.Uuid
+  ordem       Int    @default(0)
+  descricao   String @db.VarChar(300)
+  plano       RmaManutencaoPlano @relation(fields: [planoId], references: [id], onDelete: Cascade)
+
+  @@index([planoId, ordem])
+  @@map("rma_manutencao_servicos")
+}
+
+model RmaManutencaoPeca {
+  id          String  @id @default(uuid()) @db.Uuid
+  planoId     String  @map("plano_id") @db.Uuid
+  produtoId   String  @map("produto_id") @db.Uuid
+  quantidade  Decimal @db.Decimal(12, 4)
+  motivo      String? @db.VarChar(300)
+  plano       RmaManutencaoPlano @relation(fields: [planoId], references: [id], onDelete: Cascade)
+  produto     Produto @relation(fields: [produtoId], references: [id], onDelete: Restrict)
+
+  @@index([planoId])
+  @@index([produtoId])
+  @@map("rma_manutencao_pecas")
+}
+
+model RmaOrcamento {
+  id                   String   @id @default(uuid()) @db.Uuid
+  rmaItemId            String   @unique @map("rma_item_id") @db.Uuid
+  /// RASCUNHO | ENVIADO | APROVADO | RECUSADO
+  status               String   @default("RASCUNHO") @db.VarChar(20)
+  maoDeObra            Decimal  @default(0) @map("mao_de_obra") @db.Decimal(12, 2)
+  desconto             Decimal  @default(0) @db.Decimal(12, 2)
+  observacaoComercial  String?  @map("observacao_comercial") @db.Text
+  enviadoEm            DateTime? @map("enviado_em") @db.Timestamptz
+  aprovadoEm           DateTime? @map("aprovado_em") @db.Timestamptz
+  aprovadoPorId        String?  @map("aprovado_por_id") @db.Uuid
+  criadoEm             DateTime @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm         DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
+  rmaItem              RmaItem  @relation(fields: [rmaItemId], references: [id], onDelete: Cascade)
+  aprovadoPor          Usuario? @relation("RmaOrcamentoAprovadoPor", fields: [aprovadoPorId], references: [id], onDelete: SetNull)
+  linhas               RmaOrcamentoLinha[]
+
+  @@index([status])
+  @@map("rma_orcamentos")
+}
+
+model RmaOrcamentoLinha {
+  id            String  @id @default(uuid()) @db.Uuid
+  orcamentoId   String  @map("orcamento_id") @db.Uuid
+  descricao     String  @db.VarChar(300)
+  produtoId     String? @map("produto_id") @db.Uuid
+  quantidade    Decimal @db.Decimal(12, 4)
+  valorUnitario Decimal @map("valor_unitario") @db.Decimal(12, 2)
+  /// SERVICO | PECA | EXTRA
+  origem        String  @default("EXTRA") @db.VarChar(20)
+  orcamento     RmaOrcamento @relation(fields: [orcamentoId], references: [id], onDelete: Cascade)
+  produto       Produto? @relation(fields: [produtoId], references: [id], onDelete: Restrict)
+
+  @@index([orcamentoId])
+  @@index([produtoId])
+  @@map("rma_orcamento_linhas")
 }
