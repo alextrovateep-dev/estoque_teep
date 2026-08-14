@@ -296,34 +296,40 @@ export function AssistenteEstoque({
   const displayValue = composeInput(input, interimText, isRecording);
   const canSend =
     !busy && enabled && composeInput(input, interimText, isRecording).trim().length > 0;
+  const empty = turns.length === 0 && !busy;
 
   return (
-    <section className="mt-6 rounded-xl border border-slate-200 bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-        <h2 className="flex items-center gap-2 text-base font-semibold text-slate-800">
-          <span
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-brand"
-            aria-hidden
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="h-4 w-4 animate-teep-spark"
+    <section className="mt-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-brand/15 bg-gradient-to-r from-brand/[0.07] to-white px-4 py-3">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-base font-semibold text-slate-800">
+            <span
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-brand shadow-sm ring-1 ring-brand/20"
+              aria-hidden
             >
-              <path d="M12 2.5c.25 0 .46.16.54.4l1.2 3.55c.38 1.13 1.27 2.02 2.4 2.4l3.55 1.2a.56.56 0 0 1 0 1.07l-3.55 1.2c-1.13.38-2.02 1.27-2.4 2.4l-1.2 3.55a.56.56 0 0 1-1.07 0l-1.2-3.55a3.84 3.84 0 0 0-2.4-2.4l-3.55-1.2a.56.56 0 0 1 0-1.07l3.55-1.2a3.84 3.84 0 0 0 2.4-2.4l1.2-3.55A.56.56 0 0 1 12 2.5Z" />
-              <path
-                d="M18.5 3.2c.12 0 .22.07.26.18l.45 1.25c.14.4.45.71.85.85l1.25.45a.27.27 0 0 1 0 .52l-1.25.45c-.4.14-.71.45-.85.85l-.45 1.25a.27.27 0 0 1-.52 0l-.45-1.25a1.6 1.6 0 0 0-.85-.85l-1.25-.45a.27.27 0 0 1 0-.52l1.25-.45c.4-.14.71-.45.85-.85l.45-1.25a.27.27 0 0 1 .26-.18Z"
-                opacity="0.85"
-              />
-            </svg>
-          </span>
-          Assistente de estoque
-        </h2>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className="h-4 w-4 animate-teep-spark"
+              >
+                <path d="M12 2.5c.25 0 .46.16.54.4l1.2 3.55c.38 1.13 1.27 2.02 2.4 2.4l3.55 1.2a.56.56 0 0 1 0 1.07l-3.55 1.2c-1.13.38-2.02 1.27-2.4 2.4l-1.2 3.55a.56.56 0 0 1-1.07 0l-1.2-3.55a3.84 3.84 0 0 0-2.4-2.4l-3.55-1.2a.56.56 0 0 1 0-1.07l3.55-1.2a3.84 3.84 0 0 0 2.4-2.4l1.2-3.55A.56.56 0 0 1 12 2.5Z" />
+                <path
+                  d="M18.5 3.2c.12 0 .22.07.26.18l.45 1.25c.14.4.45.71.85.85l1.25.45a.27.27 0 0 1 0 .52l-1.25.45c-.4.14-.71.45-.85.85l-.45 1.25a.27.27 0 0 1-.52 0l-.45-1.25a1.6 1.6 0 0 0-.85-.85l-1.25-.45a.27.27 0 0 1 0-.52l1.25-.45c.4-.14.71-.45.85-.85l.45-1.25a.27.27 0 0 1 .26-.18Z"
+                  opacity="0.85"
+                />
+              </svg>
+            </span>
+            Assistente de estoque
+          </h2>
+          <p className="mt-0.5 pl-10 text-[11px] text-slate-500">
+            Estoque, movimentações e processos RMA
+          </p>
+        </div>
         {turns.length > 0 && (
           <button
             type="button"
-            className="text-xs text-slate-500 hover:text-slate-800"
+            className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-white hover:text-slate-800"
             onClick={() => {
               if (isRecording) stopSpeech();
               setTurns([]);
@@ -344,67 +350,69 @@ export function AssistenteEstoque({
         </p>
       )}
 
-      <div className="border-b border-slate-50 px-4 py-2.5">
-        <p className="text-sm text-slate-700">
-          <span className="font-semibold text-slate-800">{saudacao}</span>{" "}
-          Como posso ajudar você hoje?
-        </p>
-      </div>
-
-      <div
-        ref={chatListRef}
-        className="max-h-72 space-y-2 overflow-y-auto overscroll-contain px-4 pt-3"
-      >
-        {turns.map((t, i) => (
-          <div key={`${t.role}-${i}`}>
-            <div
-              className={
-                t.role === "user"
-                  ? "ml-8 rounded-lg bg-brand/10 px-3 py-2 text-sm text-slate-800"
-                  : "mr-8 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap"
-              }
-            >
-              {t.content}
-            </div>
-            {t.role === "assistant" && t.downloads && t.downloads.length > 0 && (
-              <div className="mr-8 mt-1.5 flex flex-wrap gap-2">
-                {t.downloads.map((d) => (
-                  <button
-                    key={d.token}
-                    type="button"
-                    disabled={downloadingToken === d.token}
-                    onClick={() => void downloadExport(d)}
-                    className="rounded-lg border border-brand/30 bg-white px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand-light disabled:opacity-50"
-                  >
-                    {downloadingToken === d.token ? "Baixando…" : d.label}
-                  </button>
-                ))}
+      {empty ? (
+        <div className="px-4 pt-2 pb-0">
+          <p className="text-sm leading-snug text-slate-700">
+            <span className="font-semibold text-slate-800">{saudacao}</span>{" "}
+            Como posso ajudar você hoje?
+          </p>
+        </div>
+      ) : (
+        <div
+          ref={chatListRef}
+          className="max-h-72 space-y-2 overflow-y-auto overscroll-contain px-4 py-3"
+        >
+          {turns.map((t, i) => (
+            <div key={`${t.role}-${i}`}>
+              <div
+                className={
+                  t.role === "user"
+                    ? "ml-6 rounded-2xl rounded-br-md bg-brand/10 px-3 py-2 text-sm text-slate-800 sm:ml-12"
+                    : "mr-6 rounded-2xl rounded-bl-md bg-slate-50 px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap sm:mr-12"
+                }
+              >
+                {t.content}
               </div>
-            )}
-            {t.role === "assistant" &&
-              t.actionLinks &&
-              t.actionLinks.length > 0 && (
-                <div className="mr-8 mt-1.5 flex flex-wrap gap-2">
-                  {t.actionLinks.map((a) => (
-                    <Link
-                      key={a.href}
-                      href={a.href}
-                      className="rounded-lg border border-amber-300/80 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100"
+              {t.role === "assistant" && t.downloads && t.downloads.length > 0 && (
+                <div className="mr-6 mt-1.5 flex flex-wrap gap-2 sm:mr-12">
+                  {t.downloads.map((d) => (
+                    <button
+                      key={d.token}
+                      type="button"
+                      disabled={downloadingToken === d.token}
+                      onClick={() => void downloadExport(d)}
+                      className="rounded-lg border border-brand/30 bg-white px-2.5 py-1 text-xs font-medium text-brand hover:bg-brand-light disabled:opacity-50"
                     >
-                      {a.label}
-                    </Link>
+                      {downloadingToken === d.token ? "Baixando…" : d.label}
+                    </button>
                   ))}
                 </div>
               )}
-          </div>
-        ))}
-        {busy && (
-          <p className="text-xs text-slate-400">Consultando estoque…</p>
-        )}
-      </div>
+              {t.role === "assistant" &&
+                t.actionLinks &&
+                t.actionLinks.length > 0 && (
+                  <div className="mr-6 mt-1.5 flex flex-wrap gap-2 sm:mr-12">
+                    {t.actionLinks.map((a) => (
+                      <Link
+                        key={a.href}
+                        href={a.href}
+                        className="rounded-lg border border-amber-300/80 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-950 hover:bg-amber-100"
+                      >
+                        {a.label}
+                      </Link>
+                    ))}
+                  </div>
+                )}
+            </div>
+          ))}
+          {busy && (
+            <p className="text-xs text-slate-400">Consultando…</p>
+          )}
+        </div>
+      )}
 
       {links.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-4 pt-2">
+        <div className="flex flex-wrap gap-2 px-4 pb-1">
           {links.map((l) => (
             <Link
               key={l.href}
@@ -418,7 +426,7 @@ export function AssistenteEstoque({
       )}
 
       {error && (
-        <div className="flex flex-wrap items-center gap-2 px-4 pt-2">
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-1">
           <p className="text-xs text-red-600">{error}</p>
           {(error === MIC_MESSAGES.needsReload ||
             error === MIC_MESSAGES.denied) && (
@@ -434,84 +442,91 @@ export function AssistenteEstoque({
       )}
 
       {isRecording && (
-        <p className="px-4 pt-2 text-xs font-medium text-red-600" aria-live="polite">
+        <p className="px-4 pb-1 text-xs font-medium text-red-600" aria-live="polite">
           Ouvindo… fale e toque em Parar quando terminar
         </p>
       )}
 
       <form
         onSubmit={onSubmit}
-        className="mt-3 flex items-end gap-2 border-t border-slate-100 p-4"
+        className={`bg-slate-50/70 px-3 pb-3 ${
+          empty ? "pt-2" : "mt-1 border-t border-slate-100 pt-2"
+        }`}
       >
-        <textarea
-          ref={inputRef}
-          value={displayValue}
-          onChange={(e) => {
-            if (isRecording || busy) return;
-            setInput(e.target.value);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              if (canSend) {
-                void send(
-                  composeInput(input, interimText, isRecording)
-                );
-              }
-            }
-          }}
-          disabled={!enabled}
-          readOnly={busy || isRecording}
-          rows={2}
-          placeholder="Pergunte sobre o estoque… ou use o microfone"
-          className="min-h-[3.25rem] min-w-0 flex-1 resize-none rounded-lg border-2 border-emerald-400 bg-emerald-50/30 px-3 py-2.5 text-sm leading-snug outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-400/30 read-only:bg-slate-50/80"
-          aria-label="Mensagem para o assistente"
-          aria-busy={busy}
-        />
-        <button
-          type="button"
-          onClick={() => void onMicClick()}
-          disabled={busy || !enabled}
-          title={
-            !supportsSpeech
-              ? "Ditado indisponível neste navegador"
-              : isRecording
-                ? "Parar ditado"
-                : "Ditado por voz (pt-BR)"
-          }
-          aria-label={isRecording ? "Parar ditado" : "Ditado por voz"}
-          aria-pressed={isRecording}
-          className={
+        <div
+          className={`flex items-end gap-2 rounded-xl border-2 bg-white p-1.5 shadow-sm transition ${
             isRecording
-              ? "inline-flex h-[3.25rem] shrink-0 items-center justify-center rounded-lg border border-red-200 bg-red-50 px-3 text-red-600 hover:bg-red-100 disabled:opacity-40"
-              : "inline-flex h-[3.25rem] shrink-0 items-center justify-center rounded-lg border border-slate-200 px-3 text-slate-600 hover:bg-slate-50 disabled:opacity-40"
-          }
+              ? "border-red-300 ring-2 ring-red-200/60"
+              : "border-emerald-400 focus-within:border-emerald-500 focus-within:ring-2 focus-within:ring-emerald-400/25"
+          }`}
         >
-          {isRecording ? (
-            <span className="flex items-center gap-1.5 text-xs font-medium">
+          <textarea
+            ref={inputRef}
+            value={displayValue}
+            onChange={(e) => {
+              if (isRecording || busy) return;
+              setInput(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (canSend) {
+                  void send(
+                    composeInput(input, interimText, isRecording)
+                  );
+                }
+              }
+            }}
+            disabled={!enabled}
+            readOnly={busy || isRecording}
+            rows={1}
+            placeholder="Digite aqui o que você quer saber, ou fale."
+            className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-2.5 py-2 text-sm leading-snug outline-none read-only:text-slate-600"
+            aria-label="Mensagem para o assistente"
+            aria-busy={busy}
+          />
+          <button
+            type="button"
+            onClick={() => void onMicClick()}
+            disabled={busy || !enabled}
+            title={
+              !supportsSpeech
+                ? "Ditado indisponível neste navegador"
+                : isRecording
+                  ? "Parar ditado"
+                  : "Ditado por voz (pt-BR)"
+            }
+            aria-label={isRecording ? "Parar ditado" : "Ditado por voz"}
+            aria-pressed={isRecording}
+            className={
+              isRecording
+                ? "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600 hover:bg-red-100 disabled:opacity-40"
+                : "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:opacity-40"
+            }
+          >
+            {isRecording ? (
               <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-sm bg-red-500" />
-              Parar
-            </span>
-          ) : (
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="h-5 w-5"
-              aria-hidden
-            >
-              <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Z" />
-              <path d="M17 11a1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V20h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.07A7 7 0 0 1 5 11a1 1 0 1 1 2 0 5 5 0 0 0 10 0Z" />
-            </svg>
-          )}
-        </button>
-        <button
-          type="submit"
-          disabled={!canSend}
-          className="h-[3.25rem] shrink-0 rounded-lg bg-brand px-4 text-sm font-medium text-white disabled:opacity-40"
-        >
-          Enviar
-        </button>
+            ) : (
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                className="h-5 w-5"
+                aria-hidden
+              >
+                <path d="M12 14a3 3 0 0 0 3-3V7a3 3 0 1 0-6 0v4a3 3 0 0 0 3 3Z" />
+                <path d="M17 11a1 1 0 1 1 2 0 7 7 0 0 1-6 6.93V20h2a1 1 0 1 1 0 2H9a1 1 0 1 1 0-2h2v-2.07A7 7 0 0 1 5 11a1 1 0 1 1 2 0 5 5 0 0 0 10 0Z" />
+              </svg>
+            )}
+          </button>
+          <button
+            type="submit"
+            disabled={!canSend}
+            className="h-10 shrink-0 rounded-lg bg-brand px-3.5 text-sm font-medium text-white hover:opacity-95 disabled:opacity-40"
+          >
+            Enviar
+          </button>
+        </div>
       </form>
     </section>
   );
