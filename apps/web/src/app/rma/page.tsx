@@ -130,7 +130,7 @@ function RmaListPageInner() {
       setFlash("RMA aberto com sucesso.");
       router.replace("/rma", { scroll: false });
     } else if (ok === "laudos") {
-      setFlash("Laudos notificados.");
+      setFlash("Diagnóstico avisado à equipe.");
       router.replace("/rma", { scroll: false });
     }
   }, [searchParams, router]);
@@ -199,7 +199,7 @@ function RmaListPageInner() {
         <div>
           <h1 className="text-2xl font-semibold">RMA</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Entrada no Estoque RMA, laudo, cobrança e devolução ao cliente.
+            Entrada no Estoque RMA, checklist/diagnóstico, cobrança e devolução.
           </p>
         </div>
         <Link

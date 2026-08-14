@@ -11,9 +11,11 @@ import {
   createRmaProcessoSchema,
   decidirRmaOrcamentoSchema,
   devolverRmaSchema,
+  enviarRmaOrcamentoLoteSchema,
   removerRmaItemSchema,
   salvarRmaChecklistRespostasSchema,
   salvarRmaDiagnosticoPlanoSchema,
+  salvarRmaOrcamentoLoteSchema,
   salvarRmaOrcamentoSchema,
   semManutencaoRmaSchema,
   trocarRmaItemSchema,
@@ -53,12 +55,16 @@ import {
 import {
   clonarRmaChecklistTemplate,
   decidirOrcamentoRmaItem,
+  enviarOrcamentoAgregadoRma,
   enviarOrcamentoRmaItem,
+  exportarOrcamentoRmaPdf,
   iniciarOuObterChecklist,
   listarRmaChecklistTemplates,
+  obterOrcamentoAgregadoRma,
   obterRmaChecklistTemplate,
   salvarChecklistRespostas,
   salvarDiagnosticoEPlano,
+  salvarOrcamentoAgregadoRma,
   salvarOrcamentoRmaItem,
   sugerirLinhasOrcamentoDoPlano,
   upsertRmaChecklistTemplate,
@@ -515,6 +521,74 @@ rmaRouter.post(
           req.body.observacao
         )
       );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** Orçamento agregado do processo (comercial). */
+rmaRouter.get(
+  "/:id/orcamento",
+  requirePermissao("rma", "rma_cobranca"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await obterOrcamentoAgregadoRma(req.user!, req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.put(
+  "/:id/orcamento",
+  requirePermissao("rma", "rma_cobranca"),
+  validateBody(salvarRmaOrcamentoLoteSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await salvarOrcamentoAgregadoRma(req.user!, req.params.id, req.body)
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/orcamento/enviar",
+  requirePermissao("rma", "rma_cobranca"),
+  validateBody(enviarRmaOrcamentoLoteSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await enviarOrcamentoAgregadoRma(
+          req.user!,
+          req.params.id,
+          req.body.itemIds
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.get(
+  "/:id/orcamento.pdf",
+  requirePermissao("rma", "rma_cobranca"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const { buffer, filename } = await exportarOrcamentoRmaPdf(
+        req.user!,
+        req.params.id
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
     } catch (e) {
       next(e);
     }

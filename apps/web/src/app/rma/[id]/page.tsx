@@ -208,7 +208,6 @@ export default function RmaDetalhePage() {
   const [itemCobrou, setItemCobrou] = useState<"" | "true" | "false">("");
   const [itemValor, setItemValor] = useState("");
   const [itemNfCob, setItemNfCob] = useState("");
-  const [aprovacaoItemId, setAprovacaoItemId] = useState<string | null>(null);
 
   /** Item com painel de troca aberto */
   const [trocaItemId, setTrocaItemId] = useState<string | null>(null);
@@ -239,7 +238,6 @@ export default function RmaDetalhePage() {
   const [destIdsEdit, setDestIdsEdit] = useState<string[]>([]);
   const [destQuery, setDestQuery] = useState("");
   const [notifyingLaudos, setNotifyingLaudos] = useState(false);
-  const [aprovacaoObs, setAprovacaoObs] = useState("");
   const [editComercial, setEditComercial] = useState(false);
   const [comercialIdEdit, setComercialIdEdit] = useState("");
   const [usuariosComercial, setUsuariosComercial] = useState<
@@ -650,7 +648,7 @@ export default function RmaDetalhePage() {
   async function notificarLaudos() {
     if (actingRef.current || notifyingLaudos) return;
     if (row?.status !== "ABERTO") {
-      setError("RMA fechado ou cancelado — notificar laudos indisponível");
+      setError("RMA fechado ou cancelado — aviso indisponível");
       return;
     }
     actingRef.current = true;
@@ -664,7 +662,7 @@ export default function RmaDetalhePage() {
         { method: "POST" }
       );
       setMsg(
-        `Laudos notificados (${r.qtdLaudos}) para ${r.qtdDestinatarios} usuário(s).`
+        `Diagnóstico avisado (${r.qtdLaudos}) para ${r.qtdDestinatarios} usuário(s).`
       );
       router.push("/rma?ok=laudos");
     } catch (err) {
@@ -708,39 +706,6 @@ export default function RmaDetalhePage() {
       });
       setMsg("Responsável comercial atualizado");
       setEditComercial(false);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
-    } finally {
-      actingRef.current = false;
-      setActing(false);
-    }
-  }
-
-  async function registrarAprovacaoItem(
-    itemId: string,
-    decisao: "APROVADA" | "RECUSADA"
-  ) {
-    if (actingRef.current) return;
-    actingRef.current = true;
-    setActing(true);
-    setError("");
-    setMsg("");
-    try {
-      await api(`/rma/${id}/itens/${itemId}/aprovacao`, {
-        method: "POST",
-        body: JSON.stringify({
-          decisao,
-          observacao: aprovacaoObs.trim() || null,
-        }),
-      });
-      setMsg(
-        decisao === "APROVADA"
-          ? "Item aprovado — aguarde manutenção"
-          : "Item não aprovado — pode devolver sem manutenção"
-      );
-      setAprovacaoObs("");
-      setAprovacaoItemId(null);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -1152,7 +1117,11 @@ export default function RmaDetalhePage() {
         {podeDecidirAprovacao && itensAguardandoAprovacao.length > 0 && (
           <p className="mt-2 text-xs text-amber-800">
             {itensAguardandoAprovacao.length} item(ns) aguardando aprovação —
-            decida em cada card abaixo.
+            decida em{" "}
+            <Link href={`/rma/${id}/orcamento`} className="underline">
+              Orçamento
+            </Link>
+            .
           </p>
         )}
       </section>
@@ -1164,9 +1133,8 @@ export default function RmaDetalhePage() {
               Notificações
             </h2>
             <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              Quem recebe sino e e-mail. “Notificar laudos” só alerta — o avanço
-              de etapa é pelo checklist/plano/orçamento.
-              (avança itens com laudo para aguardando aprovação).
+              Quem recebe sino e e-mail. “Avisar diagnóstico” só notifica a
+              equipe — o orçamento fica na página Gerar orçamento.
             </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
@@ -1185,13 +1153,13 @@ export default function RmaDetalhePage() {
               disabled={acting || notifyingLaudos || !processoAberto}
               title={
                 !processoAberto
-                  ? "RMA fechado ou cancelado — notificar laudos indisponível"
+                  ? "RMA fechado ou cancelado — aviso indisponível"
                   : undefined
               }
               onClick={() => void notificarLaudos()}
               className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
             >
-              {notifyingLaudos ? "Enviando…" : "Notificar laudos"}
+              {notifyingLaudos ? "Enviando…" : "Avisar diagnóstico"}
             </button>
           </div>
         </div>
@@ -1458,7 +1426,8 @@ export default function RmaDetalhePage() {
               Itens / Estoque
             </h2>
             <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              Laudo por item · devolução ou troca após aprovação comercial.
+              Checklist e diagnóstico no sistema · devolução ou troca após
+              aprovação comercial.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
@@ -1605,14 +1574,14 @@ export default function RmaDetalhePage() {
 
         {itemRemovendo && (
           <ConfirmMotivoPanel
-            title={`Remover ${itemRemovendo.produto.codigo}${
+            title={`Excluir ${itemRemovendo.produto.codigo}${
               itemRemovendo.unidadeSerie
                 ? ` · S/N ${itemRemovendo.unidadeSerie.numeroSerie}`
                 : ""
             }?`}
-            confirmLabel="Remover item"
+            confirmLabel="Excluir item"
             cancelLabel="Voltar"
-            motivoLabel="Motivo da remoção"
+            motivoLabel="Motivo da exclusão"
             motivoRequired
             motivoPlaceholder="Obrigatório — ex.: série digitada errada"
             motivo={motivoAcao}
@@ -1707,29 +1676,33 @@ export default function RmaDetalhePage() {
         )}
       </section>
 
-      <section className="mt-3 rounded-xl border bg-white p-4">
-        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Itens em manutenção
-          <span className="ml-1.5 font-normal normal-case text-slate-400">
-            ({itensAtivos.length})
-          </span>
-        </h3>
+      <section className="mt-3 rounded-xl border bg-white p-3 sm:p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Itens em manutenção
+            <span className="ml-1.5 font-normal normal-case text-slate-400">
+              ({itensAtivos.length})
+            </span>
+          </h3>
+          {processoAberto &&
+            itensAtivos.some(
+              (i) =>
+                i.etapa === "AGUARDANDO_ORCAMENTO" ||
+                i.etapa === "AGUARDANDO_APROVACAO" ||
+                Boolean(i.orcamento) ||
+                Boolean(i.diagnostico)
+            ) && (
+              <Link
+                href={`/rma/${id}/orcamento`}
+                className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800"
+              >
+                Gerar orçamento
+              </Link>
+            )}
+        </div>
 
-        <ul className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
+        <ul className="grid gap-3 text-sm [grid-template-columns:repeat(auto-fill,minmax(min(100%,17.5rem),1fr))]">
           {itensAtivos.map((i) => {
-            const laudosById = new Map<string, RmaAnexo>();
-            for (const a of i.anexos || []) {
-              if (a.tipo === "LAUDO") laudosById.set(a.id, a);
-            }
-            for (const a of row.anexos) {
-              if (a.tipo === "LAUDO" && a.itemId === i.id) {
-                laudosById.set(a.id, a);
-              }
-            }
-            const laudosItem = [...laudosById.values()];
-            const laudo =
-              laudosItem.find((a) => a.ativo !== false) || null;
-            const laudosHist = laudosItem.filter((a) => a.ativo === false);
             const origemIds = new Set(rmaDefaults?.filiaisOrigemTrocaIds || []);
             const descarteId = rmaDefaults?.filialDescarteId;
             const filiaisOrigem = filiais.filter((f) => {
@@ -1751,17 +1724,22 @@ export default function RmaDetalhePage() {
             );
             /** Só troca precisa de largura extra; cobrança/aprovação ficam no card */
             const expandido = trocaItemId === i.id;
+            const podeExcluir =
+              processoAberto &&
+              (i.status === "EM_ESTOQUE" || i.status === "SEM_MANUTENCAO");
+            const podeAcoesSecundarias =
+              (canEditCobrancaItem && i.status !== "CANCELADO") || podeExcluir;
             return (
               <li
                 key={i.id}
-                className={`flex flex-col rounded-lg border border-slate-200 bg-slate-50/50 p-3 ${
-                  expandido ? "sm:col-span-2 xl:col-span-3" : ""
+                className={`flex min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-50/50 p-2.5 sm:p-3 ${
+                  expandido ? "[grid-column:1/-1]" : ""
                 }`}
               >
-                <div className="flex min-h-0 flex-1 flex-col gap-2">
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${etapaBadgeClass(
+                      className={`max-w-full truncate rounded px-1.5 py-0.5 text-[10px] font-semibold ${etapaBadgeClass(
                         i.etapa || "AGUARDANDO_RECEBIMENTO"
                       )}`}
                     >
@@ -1773,7 +1751,7 @@ export default function RmaDetalhePage() {
                       {ITEM_STATUS[i.status] || i.status}
                     </span>
                     {i.cobrou === true && (
-                      <span className="text-[10px] text-slate-600">
+                      <span className="min-w-0 truncate text-[10px] text-slate-600">
                         Cobrou R${" "}
                         {Number(i.valorCobrado || 0).toLocaleString("pt-BR", {
                           minimumFractionDigits: 2,
@@ -1790,15 +1768,38 @@ export default function RmaDetalhePage() {
                     )}
                   </div>
                   <dl className="min-w-0 space-y-1 text-xs leading-snug">
-                    <div className="flex gap-1.5">
-                      <dt className="w-9 shrink-0 font-medium text-slate-500">
-                        Cód.
-                      </dt>
-                      <dd className="min-w-0 break-all font-mono text-slate-900">
-                        {i.produto.codigo}
-                      </dd>
+                    <div className="grid grid-cols-1 gap-1 min-[360px]:grid-cols-2">
+                      <div className="flex min-w-0 gap-1.5">
+                        <dt className="w-9 shrink-0 font-medium text-slate-500">
+                          Cód.
+                        </dt>
+                        <dd className="min-w-0 truncate font-mono text-slate-900" title={i.produto.codigo}>
+                          {i.produto.codigo}
+                        </dd>
+                      </div>
+                      <div className="flex min-w-0 gap-1.5">
+                        <dt className="w-9 shrink-0 font-medium text-slate-500">
+                          N/S
+                        </dt>
+                        <dd
+                          className="min-w-0 truncate font-mono text-slate-900"
+                          title={
+                            i.unidadeSerieSubstituicao?.numeroSerie
+                              ? `${i.unidadeSerie?.numeroSerie || "—"} → ${i.unidadeSerieSubstituicao.numeroSerie}`
+                              : i.unidadeSerie?.numeroSerie || "—"
+                          }
+                        >
+                          {i.unidadeSerie?.numeroSerie || "—"}
+                          {i.unidadeSerieSubstituicao?.numeroSerie ? (
+                            <span className="text-emerald-700">
+                              {" "}
+                              → {i.unidadeSerieSubstituicao.numeroSerie}
+                            </span>
+                          ) : null}
+                        </dd>
+                      </div>
                     </div>
-                    <div className="flex gap-1.5">
+                    <div className="flex min-w-0 gap-1.5">
                       <dt className="w-9 shrink-0 font-medium text-slate-500">
                         Desc.
                       </dt>
@@ -1809,95 +1810,58 @@ export default function RmaDetalhePage() {
                         {descLimpa || i.produto.descricao || "—"}
                       </dd>
                     </div>
-                    <div className="flex gap-1.5">
-                      <dt className="w-9 shrink-0 font-medium text-slate-500">
-                        N/S
-                      </dt>
-                      <dd className="min-w-0 break-all font-mono text-slate-900">
-                        {i.unidadeSerie?.numeroSerie || "—"}
-                        {i.unidadeSerieSubstituicao?.numeroSerie ? (
-                          <span className="text-emerald-700">
-                            {" "}
-                            → {i.unidadeSerieSubstituicao.numeroSerie}
-                          </span>
-                        ) : null}
-                      </dd>
-                    </div>
                   </dl>
                   <RmaItemWorkflowPanel
                     processoId={row.id}
                     item={i}
                     processoAberto={processoAberto}
-                    canOrcamento={Boolean(
-                      canFin ||
-                        podeDecidirAprovacao ||
-                        (user && userHas(user, "rma"))
-                    )}
-                    canDecidirOrcamento={Boolean(podeDecidirAprovacao)}
+                    produtoCodigo={i.produto.codigo}
+                    produtoDescricao={descLimpa || i.produto.descricao}
+                    numeroSerie={i.unidadeSerie?.numeroSerie || null}
                     onUpdated={async () => {
                       await load();
                     }}
                     onError={(msg) => setError(msg)}
                   />
-                  {canEditCobrancaItem && i.status !== "CANCELADO" && (
-                    <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                      <button
-                        type="button"
-                        disabled={acting}
-                        className="font-medium text-brand underline disabled:opacity-50"
-                        onClick={() => {
-                          setItemFinEditId(i.id);
-                          setItemCobrou(
-                            i.cobrou === true ? "true" : "false"
-                          );
-                          setItemValor(
-                            i.valorCobrado != null
-                              ? String(i.valorCobrado)
-                              : ""
-                          );
-                          setItemNfCob(i.nfCobrancaNumero || "");
-                        }}
-                      >
-                        Cobrança
-                      </button>
-                    </span>
-                  )}
-                  {processoAberto &&
-                    (i.status === "EM_ESTOQUE" ||
-                      i.status === "SEM_MANUTENCAO") && (
-                      <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
-                        {podeDecidirAprovacao &&
+                  {podeAcoesSecundarias && (
+                    <div className="mt-auto flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-slate-200/80 pt-2 text-xs">
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+                        {canEditCobrancaItem && i.status !== "CANCELADO" && (
+                          <button
+                            type="button"
+                            disabled={acting}
+                            className="min-h-8 font-medium text-brand underline disabled:opacity-50"
+                            onClick={() => {
+                              setItemFinEditId(i.id);
+                              setItemCobrou(
+                                i.cobrou === true ? "true" : "false"
+                              );
+                              setItemValor(
+                                i.valorCobrado != null
+                                  ? String(i.valorCobrado)
+                                  : ""
+                              );
+                              setItemNfCob(i.nfCobrancaNumero || "");
+                            }}
+                          >
+                            Cobrança
+                          </button>
+                        )}
+                        {podeExcluir &&
                           i.etapa === "AGUARDANDO_APROVACAO" &&
-                          !i.orcamento && (
-                            <>
-                              <button
-                                type="button"
-                                disabled={acting || removerItemId !== null}
-                                className="font-medium text-emerald-700 underline disabled:opacity-50"
-                                onClick={() => {
-                                  setAprovacaoItemId(i.id);
-                                  setAprovacaoObs("");
-                                }}
-                              >
-                                Aprovar
-                              </button>
-                              <button
-                                type="button"
-                                disabled={acting || removerItemId !== null}
-                                className="text-slate-700 underline disabled:opacity-50"
-                                onClick={() =>
-                                  void registrarAprovacaoItem(i.id, "RECUSADA")
-                                }
-                              >
-                                Não aprovar
-                              </button>
-                            </>
+                          i.orcamento && (
+                            <Link
+                              href={`/rma/${id}/orcamento`}
+                              className="min-h-8 font-medium text-amber-800 underline"
+                            >
+                              Orçamento / aprovação
+                            </Link>
                           )}
-                        {i.etapa === "AGUARDANDO_MANUTENCAO" && (
+                        {podeExcluir && i.etapa === "AGUARDANDO_MANUTENCAO" && (
                           <button
                             type="button"
                             disabled={acting || removerItemId !== null}
-                            className="font-medium text-sky-800 underline disabled:opacity-50"
+                            className="min-h-8 font-medium text-sky-800 underline disabled:opacity-50"
                             onClick={() =>
                               void marcarManutencaoRealizada(i.id)
                             }
@@ -1905,12 +1869,12 @@ export default function RmaDetalhePage() {
                             Manutenção realizada
                           </button>
                         )}
-                        {ETAPAS_SAIDA.has(i.etapa || "") && (
+                        {podeExcluir && ETAPAS_SAIDA.has(i.etapa || "") && (
                           <>
                             <button
                               type="button"
                               disabled={acting || removerItemId !== null}
-                              className="text-brand underline disabled:opacity-50"
+                              className="min-h-8 text-brand underline disabled:opacity-50"
                               onClick={() => void devolver([i.id])}
                             >
                               Devolver
@@ -1918,13 +1882,15 @@ export default function RmaDetalhePage() {
                             <button
                               type="button"
                               disabled={acting || removerItemId !== null}
-                              className="text-amber-800 underline disabled:opacity-50"
+                              className="min-h-8 text-amber-800 underline disabled:opacity-50"
                               onClick={() => void abrirTroca(i)}
                             >
                               Trocar
                             </button>
                           </>
                         )}
+                      </div>
+                      {podeExcluir && (
                         <button
                           type="button"
                           disabled={
@@ -1932,7 +1898,7 @@ export default function RmaDetalhePage() {
                             painelAcao !== null ||
                             removerItemId !== null
                           }
-                          className="text-red-700 underline disabled:opacity-50"
+                          className="min-h-8 shrink-0 font-medium text-red-700 underline disabled:opacity-50"
                           onClick={() => {
                             setPainelAcao(null);
                             setShowAddItem(false);
@@ -1941,39 +1907,9 @@ export default function RmaDetalhePage() {
                             setRemoverItemId(i.id);
                           }}
                         >
-                          Remover
+                          Excluir
                         </button>
-                      </span>
-                    )}
-                  {aprovacaoItemId === i.id && (
-                    <div className="space-y-1.5 rounded-md border border-amber-200 bg-amber-50/60 p-2 text-[11px]">
-                      <input
-                        className="w-full rounded border border-amber-200/80 px-2 py-1 text-[11px]"
-                        value={aprovacaoObs}
-                        onChange={(e) => setAprovacaoObs(e.target.value)}
-                        placeholder="Obs. opcional"
-                        disabled={acting}
-                      />
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={acting}
-                          className="rounded bg-emerald-700 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
-                          onClick={() =>
-                            void registrarAprovacaoItem(i.id, "APROVADA")
-                          }
-                        >
-                          Confirmar
-                        </button>
-                        <button
-                          type="button"
-                          disabled={acting}
-                          className="rounded border px-2 py-1 text-[11px] disabled:opacity-50"
-                          onClick={() => setAprovacaoItemId(null)}
-                        >
-                          Cancelar
-                        </button>
-                      </div>
+                      )}
                     </div>
                   )}
                   {itemFinEditId === i.id && (
@@ -2014,13 +1950,13 @@ export default function RmaDetalhePage() {
                         </div>
                       </div>
                       {itemCobrou === "true" && (
-                        <div className="grid grid-cols-2 gap-1.5">
+                        <div className="grid grid-cols-1 gap-1.5 min-[360px]:grid-cols-2">
                           <label className="block min-w-0">
                             <span className="font-medium text-slate-500">
                               Valor *
                             </span>
                             <input
-                              className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-[11px]"
+                              className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1.5 text-[11px]"
                               value={itemValor}
                               onChange={(e) => setItemValor(e.target.value)}
                               disabled={acting}
@@ -2032,7 +1968,7 @@ export default function RmaDetalhePage() {
                               NF *
                             </span>
                             <input
-                              className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1 text-[11px]"
+                              className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1.5 text-[11px]"
                               value={itemNfCob}
                               onChange={(e) => setItemNfCob(e.target.value)}
                               disabled={acting}
@@ -2045,7 +1981,7 @@ export default function RmaDetalhePage() {
                         <button
                           type="button"
                           disabled={acting}
-                          className="rounded bg-brand px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                          className="rounded bg-brand px-2.5 py-1.5 text-[11px] font-medium text-white disabled:opacity-50"
                           onClick={() => void salvarItemFinanceiro(i.id)}
                         >
                           Salvar
@@ -2053,7 +1989,7 @@ export default function RmaDetalhePage() {
                         <button
                           type="button"
                           disabled={acting}
-                          className="rounded border px-2 py-1 text-[11px] disabled:opacity-50"
+                          className="rounded border px-2.5 py-1.5 text-[11px] disabled:opacity-50"
                           onClick={() => setItemFinEditId(null)}
                         >
                           Cancelar
@@ -2177,62 +2113,6 @@ export default function RmaDetalhePage() {
                 {i.observacao && i.status === "DESCARTADO" && (
                   <p className="mt-1 text-[11px] text-slate-500">{i.observacao}</p>
                 )}
-                <div className="relative mt-auto flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-100 pt-2 text-xs">
-                  <span className="shrink-0 font-medium text-slate-600">
-                    Laudo
-                  </span>
-                  {laudo ? (
-                    <a
-                      href={resolveAssetUrl(laudo.arquivo) || "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      title={laudo.label || "Laudo"}
-                      className="min-w-0 truncate text-brand underline underline-offset-2"
-                    >
-                      {nomeAnexoCurto(laudo.label, "Ver laudo")}
-                    </a>
-                  ) : (
-                    <span className="text-slate-400">Sem laudo</span>
-                  )}
-                  {row.status === "ABERTO" && (
-                    <label className="shrink-0 cursor-pointer font-medium text-brand underline underline-offset-2">
-                      {laudo ? "Trocar arquivo" : "Anexar"}
-                      <input
-                        type="file"
-                        className="hidden"
-                        disabled={acting}
-                        accept=".doc,.docx,.pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) void uploadAnexo("LAUDO", f, i.id);
-                          e.target.value = "";
-                        }}
-                      />
-                    </label>
-                  )}
-                  {laudosHist.length > 0 && (
-                    <details className="relative shrink-0 text-slate-500">
-                      <summary className="cursor-pointer">
-                        Ant. ({laudosHist.length})
-                      </summary>
-                      <ul className="absolute left-0 z-10 mt-1 w-56 space-y-0.5 rounded border bg-white p-2 shadow">
-                        {laudosHist.map((a) => (
-                          <li key={a.id}>
-                            <a
-                              href={resolveAssetUrl(a.arquivo) || "#"}
-                              target="_blank"
-                              rel="noreferrer"
-                              title={a.label || "Laudo"}
-                              className="block truncate text-brand underline"
-                            >
-                              {nomeAnexoCurto(a.label, "Laudo")}
-                            </a>
-                          </li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </div>
               </li>
             );
           })}

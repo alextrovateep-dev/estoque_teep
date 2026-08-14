@@ -292,11 +292,11 @@ export function notificarRmaLaudos(opts: {
     process.env.CORS_ORIGIN ||
     "http://localhost:3000";
   const linhas = [
-    `RMA ${short} (${opts.clienteNome}): laudo(s) disponiveis.`,
+    `RMA ${short} (${opts.clienteNome}): diagnóstico(s) / laudo(s) disponíveis.`,
     ...(opts.laudosResumo.length > 0
       ? opts.laudosResumo.map((l) => `  - ${l}`)
       : ["  (sem detalhe de itens)"]),
-    `Abrir no sistema (anexos): ${appUrl}/rma/${opts.processoId}`,
+    `Abrir no sistema: ${appUrl}/rma/${opts.processoId}`,
   ];
   notifyUsuarios(opts.destinatarioIds, {
     tipo: "RMA_LAUDO",

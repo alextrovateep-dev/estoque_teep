@@ -349,8 +349,8 @@ export default function RmaNovoPage() {
       </div>
       <h1 className="text-2xl font-semibold">Novo RMA</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Um RMA = uma NF de entrada. Cada produto/série entra no Estoque RMA; o
-        laudo é anexado depois, um por item.
+        Um RMA = uma NF de entrada. Cada produto/série entra no Estoque RMA;
+        checklist e diagnóstico ficam no sistema, item a item.
       </p>
 
       <form

@@ -123,21 +123,21 @@ describe("updateRmaItemFinanceiroSchema", () => {
 });
 
 describe("anexarRmaSchema", () => {
-  it("LAUDO exige itemId", () => {
-    const r = anexarRmaSchema.safeParse({
-      tipo: "LAUDO",
-      arquivo: `/uploads/rma/_tmp/${UUID_A}-abcdef012345.pdf`,
-    });
-    assert.equal(r.success, false);
-  });
-
-  it("LAUDO com itemId passa", () => {
+  it("LAUDO ainda valida no schema (API rejeita novos uploads)", () => {
     const r = anexarRmaSchema.safeParse({
       tipo: "LAUDO",
       arquivo: `/uploads/rma/_tmp/${UUID_A}-abcdef012345.pdf`,
       itemId: UUID_ITEM,
     });
     assert.equal(r.success, true);
+  });
+
+  it("LAUDO sem itemId falha no schema", () => {
+    const r = anexarRmaSchema.safeParse({
+      tipo: "LAUDO",
+      arquivo: `/uploads/rma/_tmp/${UUID_A}-abcdef012345.pdf`,
+    });
+    assert.equal(r.success, false);
   });
 
   it("NF_ENTRADA não exige itemId", () => {

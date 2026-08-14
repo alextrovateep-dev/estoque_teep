@@ -95,7 +95,7 @@ export const RMA_ITEM_ETAPA_LABELS: Record<RmaItemEtapa, string> = {
   NAO_APROVADO: "Não aprovado",
   AGUARDANDO_ENVIO: "Aguardando envio",
   FINALIZADO: "Finalizado",
-  AGUARDANDO_LAUDO: "Aguardando laudo",
+  AGUARDANDO_LAUDO: "Aguardando recebimento",
 };
 
 /** Etapas em que Devolver/Trocar são permitidos */
@@ -103,6 +103,13 @@ export const RMA_ITEM_ETAPAS_SAIDA = [
   "AGUARDANDO_ENVIO",
   "NAO_APROVADO",
 ] as const;
+
+/** Recebimento ativo (inclui legado AGUARDANDO_LAUDO). */
+export function rmaEtapaEmRecebimento(etapa: string | null | undefined): boolean {
+  return (
+    etapa === "AGUARDANDO_RECEBIMENTO" || etapa === "AGUARDANDO_LAUDO"
+  );
+}
 
 export const RMA_CHECKLIST_TIPOS = ["RECEBIMENTO", "LIBERACAO"] as const;
 export type RmaChecklistTipo = (typeof RMA_CHECKLIST_TIPOS)[number];

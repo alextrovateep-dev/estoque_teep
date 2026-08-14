@@ -1,7 +1,7 @@
 ﻿# RMA — processo e estoque
 
-**Status:** ampliado (checklist por produto, diagnóstico/plano com peças, orçamento, liberação).  
-**Telas:** `/rma` · `/rma/novo` · `/rma/[id]` · `/cadastros/rma-checklists`  
+**Status:** ampliado (checklist por produto, diagnóstico com tempo, orçamento agregado do processo, liberação).  
+**Telas:** `/rma` · `/rma/novo` · `/rma/[id]` · `/rma/[id]/orcamento` · `/cadastros/rma-checklists`  
 **Permissões:** `rma` · `rma_cobranca`
 
 ---
@@ -10,20 +10,32 @@
 
 1. **Estoque = motor padrão** — transferência/lançamento entre filiais (`Filial`).
 2. **Processo = nota** — cliente, NFs, estoque RMA, destinatários, comercial.
-3. **Item = manutenção** — checklist, diagnóstico, plano+peças, orçamento, liberação, devolução/troca.
-4. **Checklist por produto (SKU)** — templates RECEBIMENTO e LIBERACAO; clonar entre produtos.
-5. **Peças previstas no plano** — assistência define serviços/peças; comercial precifica o orçamento.
-6. **Tipos de movimentação por flag** — Admin → Tipos: `rmaEntradaEstoque` (abrir RMA / entrada automática) e `rmaSaidaCliente` (devolver/trocar). Não depende mais do nome fixo “Entrada RMA” / “Saída RMA”.
+3. **Item = manutenção** — checklist, diagnóstico/plano+peças (com tempo nos serviços), liberação, devolução/troca.
+4. **Laudo no sistema** — diagnóstico + checklist; anexo arquivo `LAUDO` não é mais aceito para novos uploads.
+5. **Orçamento do processo** — formulário/PDF em `/rma/[id]/orcamento` (agrega itens); persistência continua 1 `RmaOrcamento` por item; aprovação por item.
+6. **Checklist por produto (SKU)** — templates RECEBIMENTO e LIBERACAO.
+7. **Tipos de movimentação por flag** — Admin → Tipos: `rmaEntradaEstoque` e `rmaSaidaCliente`.
 
 ---
 
 ## Etapas do item
 
-`AGUARDANDO_RECEBIMENTO` → checklist + diagnóstico/plano/peças → `AGUARDANDO_ORCAMENTO` → enviar orçamento → `AGUARDANDO_APROVACAO` → aprovar → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar → `FINALIZADO`
+`AGUARDANDO_RECEBIMENTO` → checklist + diagnóstico/plano/peças → **Concluir diagnóstico** → `AGUARDANDO_ORCAMENTO` → (página Orçamento: valores + PDF + enviar) → `AGUARDANDO_APROVACAO` → aprovar por item → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar → `FINALIZADO`
 
-Recusa do orçamento → `NAO_APROVADO` (devolver/trocar sem manutenção).
+Recusa do orçamento → `NAO_APROVADO`.
 
-Devolver/Trocar só com etapa `AGUARDANDO_ENVIO` ou `NAO_APROVADO`.
+`AGUARDANDO_LAUDO` é legado (migrado para `AGUARDANDO_RECEBIMENTO`).
+
+---
+
+## Papéis no orçamento
+
+| Quem | Onde | Faz |
+|------|------|-----|
+| Técnico | Modal do item | Checklist; serviços com **tempo (minutos)**; Salvar / Concluir diagnóstico |
+| Comercial | `/rma/[id]/orcamento` | Preenche **valor** dos serviços; obs; PDF; envia; aprova/recusa por item |
+
+`RmaOrcamento.maoDeObra` permanece no schema (compat) e fica **0**; valores nas linhas `SERVICO`.
 
 ---
 
@@ -38,5 +50,9 @@ Devolver/Trocar só com etapa `AGUARDANDO_ENVIO` ou `NAO_APROVADO`.
 | PUT/POST | `…/diagnostico-plano` · `…/concluir` |
 | GET | `…/orcamento/sugestao` |
 | PUT/POST | `…/orcamento` · `…/enviar` · `…/aprovar` · `…/recusar` |
+| GET | `/rma/:id/orcamento` |
+| PUT | `/rma/:id/orcamento` (lote) |
+| POST | `/rma/:id/orcamento/enviar` `{ itemIds }` |
+| GET | `/rma/:id/orcamento.pdf` |
 
-Laudo PDF (`RmaAnexo`) continua como evidência complementar; o gate de avanço é o checklist + plano.
+Gate de avanço: checklist + plano/diagnóstico (não anexo de laudo).

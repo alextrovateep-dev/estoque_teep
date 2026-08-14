@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import {
   RMA_CHECKLIST_CAMPO_TIPOS,
+  rmaEtapaEmRecebimento,
   type RmaChecklistTipo,
 } from "@teep/shared";
 import { AppError } from "../middleware/error";
@@ -13,7 +14,13 @@ import {
   rollbackRmaPromote,
   type RmaPromoteResult,
 } from "../lib/rmaUploads";
+import { htmlToPdf } from "../lib/pdf";
 import { obterRma, podeDecidirAprovacaoRma } from "./rmaService";
+
+const ETAPAS_RECEBIMENTO = [
+  "AGUARDANDO_RECEBIMENTO",
+  "AGUARDANDO_LAUDO",
+] as const;
 
 const templateInclude = {
   produto: { select: { id: true, codigo: true, descricao: true } },
@@ -290,9 +297,7 @@ export async function iniciarOuObterChecklist(
   const item = await loadItemNoProcesso(processoId, itemId);
 
   if (tipo === "RECEBIMENTO") {
-    if (
-      !["AGUARDANDO_RECEBIMENTO", "AGUARDANDO_LAUDO"].includes(item.etapa)
-    ) {
+    if (!rmaEtapaEmRecebimento(item.etapa)) {
       throw new AppError(
         400,
         "Checklist de recebimento só na etapa de recebimento"
@@ -485,9 +490,7 @@ export async function salvarChecklistRespostas(
   const item = await loadItemNoProcesso(processoId, itemId);
 
   if (tipo === "RECEBIMENTO") {
-    if (
-      !["AGUARDANDO_RECEBIMENTO", "AGUARDANDO_LAUDO"].includes(item.etapa)
-    ) {
+    if (!rmaEtapaEmRecebimento(item.etapa)) {
       throw new AppError(400, "Checklist de recebimento só na etapa de recebimento");
     }
   } else if (tipo === "LIBERACAO") {
@@ -606,7 +609,11 @@ export async function salvarDiagnosticoEPlano(
   input: {
     resumoProblema: string;
     observacaoTecnica?: string | null;
-    servicos: Array<{ descricao: string; ordem?: number }>;
+    servicos: Array<{
+      descricao: string;
+      ordem?: number;
+      tempoMinutos?: number | null;
+    }>;
     pecas: Array<{
       produtoId: string;
       quantidade: number;
@@ -619,7 +626,7 @@ export async function salvarDiagnosticoEPlano(
   assertProcessoAberto(proc.status);
   const item = await loadItemNoProcesso(processoId, itemId);
 
-  if (!["AGUARDANDO_RECEBIMENTO", "AGUARDANDO_LAUDO"].includes(item.etapa)) {
+  if (!rmaEtapaEmRecebimento(item.etapa)) {
     throw new AppError(
       400,
       "Diagnóstico/plano só podem ser editados na etapa de recebimento"
@@ -631,7 +638,7 @@ export async function salvarDiagnosticoEPlano(
     if (!recv || recv.status !== "CONCLUIDO") {
       throw new AppError(
         400,
-        "Conclua o checklist de recebimento antes de enviar ao orçamento"
+        "Conclua o checklist de recebimento antes de concluir o diagnóstico"
       );
     }
     if (input.servicos.length === 0 && input.pecas.length === 0) {
@@ -658,7 +665,7 @@ export async function salvarDiagnosticoEPlano(
       where: {
         id: itemId,
         processoId,
-        etapa: { in: ["AGUARDANDO_RECEBIMENTO", "AGUARDANDO_LAUDO"] },
+        etapa: { in: [...ETAPAS_RECEBIMENTO] },
       },
       data: concluir
         ? { etapa: "AGUARDANDO_ORCAMENTO" }
@@ -699,6 +706,10 @@ export async function salvarDiagnosticoEPlano(
           planoId: plano.id,
           descricao: s.descricao.trim(),
           ordem: s.ordem ?? idx,
+          tempoMinutos:
+            s.tempoMinutos == null || Number.isNaN(Number(s.tempoMinutos))
+              ? null
+              : Math.max(0, Math.floor(Number(s.tempoMinutos))),
         })),
       });
     }
@@ -743,6 +754,7 @@ export async function salvarOrcamentoRmaItem(
       quantidade: number;
       valorUnitario: number;
       origem: "SERVICO" | "PECA" | "EXTRA";
+      tempoMinutos?: number | null;
     }>;
   }
 ) {
@@ -861,6 +873,10 @@ export async function salvarOrcamentoRmaItem(
           quantidade: l.quantidade,
           valorUnitario: l.valorUnitario,
           origem: l.origem,
+          tempoMinutos:
+            l.tempoMinutos == null || Number.isNaN(Number(l.tempoMinutos))
+              ? null
+              : Math.max(0, Math.floor(Number(l.tempoMinutos))),
         })),
       });
     });
@@ -1018,15 +1034,18 @@ export async function sugerirLinhasOrcamentoDoPlano(
     quantidade: number;
     valorUnitario: number;
     origem: "SERVICO" | "PECA";
+    tempoMinutos: number | null;
   }> = [];
 
   for (const s of item.manutencaoPlano.servicos) {
+    const tempo = (s as { tempoMinutos?: number | null }).tempoMinutos ?? null;
     linhas.push({
       descricao: s.descricao,
       produtoId: null,
       quantidade: 1,
       valorUnitario: 0,
       origem: "SERVICO",
+      tempoMinutos: tempo,
     });
   }
   for (const p of item.manutencaoPlano.pecas) {
@@ -1036,6 +1055,7 @@ export async function sugerirLinhasOrcamentoDoPlano(
       quantidade: Number(p.quantidade),
       valorUnitario: Number(p.produto.precoUnitario),
       origem: "PECA",
+      tempoMinutos: null,
     });
   }
   return {
@@ -1045,3 +1065,278 @@ export async function sugerirLinhasOrcamentoDoPlano(
     orcamento: item.orcamento,
   };
 }
+
+const ETAPAS_ORCAMENTO_PAGE = new Set([
+  "AGUARDANDO_ORCAMENTO",
+  "AGUARDANDO_APROVACAO",
+  "AGUARDANDO_MANUTENCAO",
+  "NAO_APROVADO",
+]);
+
+function moneyBr(n: number) {
+  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+function formatTempoMinutos(min: number | null | undefined) {
+  if (min == null || min < 0) return "—";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h <= 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
+function escHtml(s: string) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Visão agregada do orçamento do processo (comercial). */
+export async function obterOrcamentoAgregadoRma(
+  user: AuthUser,
+  processoId: string
+) {
+  const proc = await obterRma(user, processoId);
+  const itens = (proc.itens || [])
+    .filter(
+      (i) =>
+        ["EM_ESTOQUE", "SEM_MANUTENCAO"].includes(i.status) &&
+        (ETAPAS_ORCAMENTO_PAGE.has(i.etapa || "") || Boolean(i.orcamento))
+    )
+    .filter(
+      (i) =>
+        Boolean(i.diagnostico) ||
+        Boolean(i.manutencaoPlano) ||
+        Boolean(i.orcamento)
+    )
+    .map((i) => {
+      const sugeridas =
+        i.manutencaoPlano && (!i.orcamento || i.orcamento.linhas.length === 0)
+          ? [
+              ...(i.manutencaoPlano.servicos || []).map((s) => ({
+                descricao: s.descricao,
+                produtoId: null as string | null,
+                quantidade: 1,
+                valorUnitario: 0,
+                origem: "SERVICO" as const,
+                tempoMinutos:
+                  (s as { tempoMinutos?: number | null }).tempoMinutos ?? null,
+              })),
+              ...(i.manutencaoPlano.pecas || []).map((p) => ({
+                descricao: `${p.produto.codigo} — ${p.produto.descricao}`,
+                produtoId: p.produtoId as string | null,
+                quantidade: Number(p.quantidade),
+                valorUnitario: Number(p.produto.precoUnitario),
+                origem: "PECA" as const,
+                tempoMinutos: null as number | null,
+              })),
+            ]
+          : null;
+
+      const linhas =
+        i.orcamento?.linhas?.map((l) => ({
+          descricao: l.descricao,
+          produtoId: l.produtoId,
+          quantidade: Number(l.quantidade),
+          valorUnitario: Number(l.valorUnitario),
+          origem: l.origem as "SERVICO" | "PECA" | "EXTRA",
+          tempoMinutos:
+            (l as { tempoMinutos?: number | null }).tempoMinutos ?? null,
+        })) ||
+        sugeridas ||
+        [];
+
+      const total = totalOrcamento(
+        linhas,
+        Number(i.orcamento?.maoDeObra ?? 0),
+        Number(i.orcamento?.desconto ?? 0)
+      );
+
+      return {
+        id: i.id,
+        status: i.status,
+        etapa: i.etapa,
+        produto: i.produto,
+        unidadeSerie: i.unidadeSerie,
+        diagnostico: i.diagnostico,
+        manutencaoPlano: i.manutencaoPlano,
+        orcamento: i.orcamento
+          ? {
+              id: i.orcamento.id,
+              status: i.orcamento.status,
+              desconto: Number(i.orcamento.desconto),
+              observacaoComercial: i.orcamento.observacaoComercial,
+              enviadoEm: i.orcamento.enviadoEm,
+            }
+          : null,
+        linhas,
+        total,
+      };
+    });
+
+  return {
+    processo: {
+      id: proc.id,
+      status: proc.status,
+      nfEntradaNumero: proc.nfEntradaNumero,
+      nfSaidaNumero: proc.nfSaidaNumero,
+      criadoEm: proc.criadoEm,
+      cliente: proc.cliente,
+      filial: proc.filial,
+      responsavelComercial: proc.responsavelComercial,
+    },
+    itens,
+  };
+}
+
+export async function salvarOrcamentoAgregadoRma(
+  user: AuthUser,
+  processoId: string,
+  input: {
+    itens: Array<{
+      itemId: string;
+      desconto?: number;
+      observacaoComercial?: string | null;
+      linhas: Array<{
+        descricao: string;
+        produtoId?: string | null;
+        quantidade: number;
+        valorUnitario: number;
+        origem: "SERVICO" | "PECA" | "EXTRA";
+        tempoMinutos?: number | null;
+      }>;
+    }>;
+  }
+) {
+  for (const row of input.itens) {
+    await salvarOrcamentoRmaItem(user, processoId, row.itemId, {
+      maoDeObra: 0,
+      desconto: row.desconto ?? 0,
+      observacaoComercial: row.observacaoComercial,
+      linhas: row.linhas,
+    });
+  }
+  return obterOrcamentoAgregadoRma(user, processoId);
+}
+
+export async function enviarOrcamentoAgregadoRma(
+  user: AuthUser,
+  processoId: string,
+  itemIds: string[]
+) {
+  const uniq = [...new Set(itemIds)];
+  for (const itemId of uniq) {
+    await enviarOrcamentoRmaItem(user, processoId, itemId);
+  }
+  return obterOrcamentoAgregadoRma(user, processoId);
+}
+
+export async function exportarOrcamentoRmaPdf(
+  user: AuthUser,
+  processoId: string
+) {
+  const data = await obterOrcamentoAgregadoRma(user, processoId);
+  const p = data.processo;
+  const short = p.id.slice(0, 8);
+
+  const blocos = data.itens
+    .map((it) => {
+      const sn = it.unidadeSerie?.numeroSerie
+        ? ` · N/S ${escHtml(it.unidadeSerie.numeroSerie)}`
+        : "";
+      const linhasHtml = (it.linhas || [])
+        .map((l) => {
+          const sub = Number(l.quantidade) * Number(l.valorUnitario);
+          return `<tr>
+            <td>${escHtml(l.descricao)}${
+              l.origem === "SERVICO"
+                ? ` <span style="color:#64748b">(${formatTempoMinutos(
+                    l.tempoMinutos
+                  )})</span>`
+                : ""
+            }</td>
+            <td style="text-align:right">${l.quantidade}</td>
+            <td style="text-align:right">${moneyBr(Number(l.valorUnitario))}</td>
+            <td style="text-align:right">${moneyBr(sub)}</td>
+          </tr>`;
+        })
+        .join("");
+      return `
+        <section style="margin-top:18px;page-break-inside:avoid">
+          <h2 style="font-size:13px;margin:0 0 6px">
+            ${escHtml(it.produto.codigo)}${sn}
+          </h2>
+          <p style="margin:0 0 8px;color:#475569;font-size:11px">
+            ${escHtml(it.produto.descricao)}
+          </p>
+          ${
+            it.diagnostico
+              ? `<p style="margin:0 0 8px;font-size:11px"><strong>Diagnóstico:</strong> ${escHtml(
+                  it.diagnostico.resumoProblema
+                )}</p>`
+              : ""
+          }
+          ${
+            it.orcamento?.observacaoComercial
+              ? `<p style="margin:0 0 8px;font-size:11px"><strong>Obs. comercial:</strong> ${escHtml(
+                  it.orcamento.observacaoComercial
+                )}</p>`
+              : ""
+          }
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead>
+              <tr style="background:#f1f5f9">
+                <th style="text-align:left;padding:4px;border-bottom:1px solid #cbd5e1">Descrição</th>
+                <th style="text-align:right;padding:4px;border-bottom:1px solid #cbd5e1">Qtd</th>
+                <th style="text-align:right;padding:4px;border-bottom:1px solid #cbd5e1">Valor</th>
+                <th style="text-align:right;padding:4px;border-bottom:1px solid #cbd5e1">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>${linhasHtml || `<tr><td colspan="4">Sem linhas</td></tr>`}</tbody>
+          </table>
+          <p style="text-align:right;font-weight:600;margin:6px 0 0;font-size:12px">
+            Total item: ${moneyBr(it.total)}
+            ${
+              it.orcamento
+                ? ` · ${escHtml(it.orcamento.status)}`
+                : " · rascunho"
+            }
+          </p>
+        </section>`;
+    })
+    .join("");
+
+  const totalGeral = data.itens.reduce((a, i) => a + i.total, 0);
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="utf-8" />
+<title>Orçamento RMA ${escHtml(short)}</title>
+<style>
+  body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; font-size: 12px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+</style>
+</head>
+<body>
+  <h1>Orçamento RMA</h1>
+  <p style="margin:0 0 12px;color:#475569">
+    Processo ${escHtml(short)} · ${escHtml(p.cliente.nome)}
+    ${p.cliente.documento ? ` · ${escHtml(p.cliente.documento)}` : ""}
+    · Estoque ${escHtml(p.filial.sigla)}
+    ${p.nfEntradaNumero ? ` · NF entrada ${escHtml(p.nfEntradaNumero)}` : ""}
+  </p>
+  ${blocos || "<p>Nenhum item elegível.</p>"}
+  <p style="margin-top:20px;font-size:14px;font-weight:700;text-align:right">
+    Total geral: ${moneyBr(totalGeral)}
+  </p>
+</body>
+</html>`;
+
+  const buffer = await htmlToPdf(html);
+  const filename = `orcamento-rma-${short}.pdf`;
+  return { buffer, filename };
+}
+

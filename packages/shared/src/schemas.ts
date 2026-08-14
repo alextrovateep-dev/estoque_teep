@@ -933,6 +933,7 @@ export const salvarRmaDiagnosticoPlanoSchema = z.object({
       z.object({
         descricao: z.string().trim().min(1).max(300),
         ordem: z.number().int().min(0).max(999).optional(),
+        tempoMinutos: z.number().int().min(0).max(100_000).optional().nullable(),
       })
     )
     .max(40)
@@ -961,10 +962,47 @@ export const salvarRmaOrcamentoSchema = z.object({
         quantidade: z.number().positive().max(9999),
         valorUnitario: z.number().min(0).max(1_000_000),
         origem: z.enum(["SERVICO", "PECA", "EXTRA"]).default("EXTRA"),
+        tempoMinutos: z.number().int().min(0).max(100_000).optional().nullable(),
       })
     )
     .min(1)
     .max(60),
+});
+
+export const salvarRmaOrcamentoLoteSchema = z.object({
+  itens: z
+    .array(
+      z.object({
+        itemId: z.string().uuid(),
+        desconto: z.number().min(0).max(1_000_000).default(0),
+        observacaoComercial: z.string().max(2000).optional().nullable(),
+        linhas: z
+          .array(
+            z.object({
+              descricao: z.string().trim().min(1).max(300),
+              produtoId: z.string().uuid().optional().nullable(),
+              quantidade: z.number().positive().max(9999),
+              valorUnitario: z.number().min(0).max(1_000_000),
+              origem: z.enum(["SERVICO", "PECA", "EXTRA"]).default("EXTRA"),
+              tempoMinutos: z
+                .number()
+                .int()
+                .min(0)
+                .max(100_000)
+                .optional()
+                .nullable(),
+            })
+          )
+          .min(1)
+          .max(60),
+      })
+    )
+    .min(1)
+    .max(80),
+});
+
+export const enviarRmaOrcamentoLoteSchema = z.object({
+  itemIds: z.array(z.string().uuid()).min(1).max(80),
 });
 
 export const decidirRmaOrcamentoSchema = z.object({

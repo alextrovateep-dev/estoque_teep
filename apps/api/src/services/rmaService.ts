@@ -260,14 +260,6 @@ function assertEtapaPermiteSaida(etapa: string | null | undefined) {
   }
 }
 
-function itemTemLaudoAtivo(item: {
-  anexos?: Array<{ tipo: string; ativo?: boolean | null }>;
-}): boolean {
-  return (item.anexos || []).some(
-    (a) => a.tipo === "LAUDO" && a.ativo !== false
-  );
-}
-
 async function assertUsuarioComercialAtivo(usuarioId: string) {
   const u = await prisma.usuario.findFirst({
     where: { id: usuarioId, ativo: true },
@@ -1462,24 +1454,16 @@ export async function anexarRma(
 
   let itemId: string | null = input.itemId?.trim() || null;
   if (tipo === "LAUDO") {
-    if (!itemId) {
-      throw new AppError(
-        400,
-        "Informe o item (produto/série) para anexar o laudo"
-      );
-    }
-    const item = await prisma.rmaItem.findFirst({
-      where: { id: itemId, processoId: id },
-      select: { id: true },
-    });
-    if (!item) throw new AppError(400, "Item RMA inválido para este processo");
+    throw new AppError(
+      400,
+      "Laudo por arquivo não é mais usado — registre o diagnóstico no item (checklist/plano)"
+    );
   } else if (itemId) {
     itemId = null;
   }
 
   const label = input.label?.trim() || null;
   const substituivel =
-    tipo === "LAUDO" ||
     tipo === "NF_ENTRADA" ||
     tipo === "NF_SAIDA" ||
     tipo === "NF_COBRANCA";
@@ -1508,7 +1492,7 @@ export async function anexarRma(
             processoId: id,
             tipo,
             ativo: true,
-            ...(tipo === "LAUDO" ? { itemId } : { itemId: null }),
+            itemId: null,
           },
           select: { id: true, arquivo: true },
         });
@@ -2202,7 +2186,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
   if (proc.status === "CANCELADO" || proc.status === "FECHADO") {
     throw new AppError(
       400,
-      `Processo ${proc.status === "CANCELADO" ? "cancelado" : "fechado"} — não é possível notificar laudos`
+      `Processo ${proc.status === "CANCELADO" ? "cancelado" : "fechado"} — não é possível notificar`
     );
   }
   const destIds = [
@@ -2217,50 +2201,89 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
   if (destIds.length === 0) {
     throw new AppError(400, "Nenhum destinatário neste RMA");
   }
-  const laudos = (proc.anexos || []).filter(
-    (a) => a.tipo === "LAUDO" && a.ativo !== false
-  );
-  const laudosItens = (proc.itens || []).flatMap((i) =>
-    (i.anexos || [])
-      .filter((a) => a.tipo === "LAUDO" && a.ativo !== false)
-      .map((a) => ({ item: i, anexo: a }))
-  );
-  const todos = [
-    ...laudos.map((a) => ({ item: null as (typeof proc.itens)[0] | null, anexo: a })),
-    ...laudosItens,
-  ];
-  // dedupe by anexo id
-  const seen = new Set<string>();
-  const unicos = todos.filter(({ anexo }) => {
-    if (seen.has(anexo.id)) return false;
-    seen.add(anexo.id);
-    return true;
-  });
-  if (unicos.length === 0) {
-    throw new AppError(400, "Nenhum laudo ativo para notificar");
-  }
+
   const appUrl =
     process.env.FRONTEND_URL ||
     process.env.CORS_ORIGIN ||
     "http://localhost:3000";
-  const laudosResumo = unicos.map(({ item, anexo }) => {
+
+  type LinhaResumo = { key: string; texto: string };
+  const linhas: LinhaResumo[] = [];
+
+  // Laudo no sistema = diagnóstico (e, se houver, checklist de entrada concluído).
+  for (const item of proc.itens || []) {
+    if (item.status === "CANCELADO") continue;
+    const prod = `${item.produto.codigo}${
+      item.unidadeSerie ? ` S/N ${item.unidadeSerie.numeroSerie}` : ""
+    }`;
+    const diag = item.diagnostico;
+    if (diag?.resumoProblema) {
+      const resumo = diag.resumoProblema.trim().slice(0, 160);
+      linhas.push({
+        key: `diag:${item.id}`,
+        texto: `${prod} — diagnóstico: ${resumo}${
+          diag.resumoProblema.trim().length > 160 ? "…" : ""
+        } (ver em ${appUrl}/rma/${id})`,
+      });
+      continue;
+    }
+    const recv = (item.checklistExecucoes || []).find(
+      (e) => e.tipo === "RECEBIMENTO" && e.status === "CONCLUIDO"
+    );
+    if (recv) {
+      linhas.push({
+        key: `chk:${item.id}`,
+        texto: `${prod} — checklist de entrada concluído (ver em ${appUrl}/rma/${id})`,
+      });
+    }
+  }
+
+  // Anexos antigos (se ainda existirem) entram como complemento.
+  const laudosArquivo = [
+    ...(proc.anexos || [])
+      .filter((a) => a.tipo === "LAUDO" && a.ativo !== false)
+      .map((a) => ({ item: null as (typeof proc.itens)[0] | null, anexo: a })),
+    ...(proc.itens || []).flatMap((i) =>
+      (i.anexos || [])
+        .filter((a) => a.tipo === "LAUDO" && a.ativo !== false)
+        .map((a) => ({ item: i, anexo: a }))
+    ),
+  ];
+  const seenAnexo = new Set<string>();
+  for (const { item, anexo } of laudosArquivo) {
+    if (seenAnexo.has(anexo.id)) continue;
+    seenAnexo.add(anexo.id);
     const prod = item
       ? `${item.produto.codigo}${
           item.unidadeSerie ? ` S/N ${item.unidadeSerie.numeroSerie}` : ""
         }`
       : "processo";
-    const label = anexo.label || "Laudo";
-    return `${prod} — ${label} (ver em ${appUrl}/rma/${id})`;
-  });
+    linhas.push({
+      key: `arq:${anexo.id}`,
+      texto: `${prod} — arquivo: ${anexo.label || "Laudo"} (ver em ${appUrl}/rma/${id})`,
+    });
+  }
+
+  if (linhas.length === 0) {
+    throw new AppError(
+      400,
+      "Nenhum diagnóstico ou checklist de entrada concluído para notificar"
+    );
+  }
+
   notificarRmaLaudos({
     processoId: id,
     clienteNome: proc.cliente.nome,
     destinatarioIds: destIds,
-    laudosResumo,
+    laudosResumo: linhas.map((l) => l.texto),
   });
 
   // Etapas avançam pelo checklist/diagnóstico/orçamento — notificar só alerta.
 
-  return { ok: true, qtdLaudos: unicos.length, qtdDestinatarios: destIds.length };
+  return {
+    ok: true,
+    qtdLaudos: linhas.length,
+    qtdDestinatarios: destIds.length,
+  };
 }
 

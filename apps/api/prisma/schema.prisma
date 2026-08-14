@@ -604,6 +604,7 @@ model RmaItem {
   /// ABERTO | EM_ESTOQUE | SEM_MANUTENCAO | DEVOLVIDO | DESCARTADO | CANCELADO
   status          String        @default("ABERTO") @db.VarChar(20)
   /// AGUARDANDO_RECEBIMENTO | AGUARDANDO_ORCAMENTO | AGUARDANDO_APROVACAO | AGUARDANDO_MANUTENCAO | AGUARDANDO_LIBERACAO | NAO_APROVADO | AGUARDANDO_ENVIO | FINALIZADO
+  /// (AGUARDANDO_LAUDO é legado — migrado para AGUARDANDO_RECEBIMENTO)
   etapa           String        @default("AGUARDANDO_RECEBIMENTO") @db.VarChar(30)
   aprovacaoEm     DateTime?     @map("aprovacao_em") @db.Timestamptz
   aprovacaoPorId  String?       @map("aprovacao_por_id") @db.Uuid
@@ -767,11 +768,13 @@ model RmaManutencaoPlano {
 }
 
 model RmaManutencaoServico {
-  id          String @id @default(uuid()) @db.Uuid
-  planoId     String @map("plano_id") @db.Uuid
-  ordem       Int    @default(0)
-  descricao   String @db.VarChar(300)
-  plano       RmaManutencaoPlano @relation(fields: [planoId], references: [id], onDelete: Cascade)
+  id           String @id @default(uuid()) @db.Uuid
+  planoId      String @map("plano_id") @db.Uuid
+  ordem        Int    @default(0)
+  descricao    String @db.VarChar(300)
+  /// Tempo gasto pelo técnico (minutos)
+  tempoMinutos Int?   @map("tempo_minutos")
+  plano        RmaManutencaoPlano @relation(fields: [planoId], references: [id], onDelete: Cascade)
 
   @@index([planoId, ordem])
   @@map("rma_manutencao_servicos")
@@ -821,6 +824,8 @@ model RmaOrcamentoLinha {
   valorUnitario Decimal @map("valor_unitario") @db.Decimal(12, 2)
   /// SERVICO | PECA | EXTRA
   origem        String  @default("EXTRA") @db.VarChar(20)
+  /// Snapshot do tempo do plano (minutos), para PDF estável
+  tempoMinutos  Int?    @map("tempo_minutos")
   orcamento     RmaOrcamento @relation(fields: [orcamentoId], references: [id], onDelete: Cascade)
   produto       Produto? @relation(fields: [produtoId], references: [id], onDelete: Restrict)
 
