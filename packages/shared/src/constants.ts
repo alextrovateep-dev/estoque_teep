@@ -157,6 +157,58 @@ export const RMA_ORCAMENTO_STATUS = [
 ] as const;
 export type RmaOrcamentoStatus = (typeof RMA_ORCAMENTO_STATUS)[number];
 
+/** ENVIADO no banco = pronto para PDF e negociação com o cliente (valores ainda editáveis). */
+export const RMA_ORCAMENTO_STATUS_LABELS: Record<RmaOrcamentoStatus, string> = {
+  RASCUNHO: "Rascunho",
+  ENVIADO: "Em negociação",
+  APROVADO: "Aprovado",
+  RECUSADO: "Recusado",
+};
+
+export function rmaOrcamentoStatusLabel(
+  status: string | null | undefined
+): string {
+  if (!status) return "Sem orçamento";
+  return (
+    (RMA_ORCAMENTO_STATUS_LABELS as Record<string, string>)[status] || status
+  );
+}
+
+/** Rascunho ou em negociação (fechado, ainda sem aprovar/recusar). */
+export function rmaOrcamentoPodeEditar(opts: {
+  etapa: string;
+  orcamentoStatus?: string | null;
+}): boolean {
+  const st = opts.orcamentoStatus;
+  if (opts.etapa === "AGUARDANDO_ORCAMENTO" && (!st || st === "RASCUNHO")) {
+    return true;
+  }
+  return opts.etapa === "AGUARDANDO_APROVACAO" && st === "ENVIADO";
+}
+
+/**
+ * Reabrir só com orçamento fechado (ENVIADO) na etapa de aprovação.
+ * Depois de aprovado/recusado não volta a rascunho.
+ */
+export function mensagemBloqueioReabrirOrcamento(opts: {
+  orcamentoStatus?: string | null;
+  etapa: string;
+}): string | null {
+  if (opts.orcamentoStatus === "APROVADO") {
+    return "Orçamento já foi aprovado — não é possível reabrir";
+  }
+  if (opts.orcamentoStatus === "RECUSADO") {
+    return "Orçamento já foi recusado — não é possível reabrir";
+  }
+  if (
+    opts.orcamentoStatus !== "ENVIADO" ||
+    opts.etapa !== "AGUARDANDO_APROVACAO"
+  ) {
+    return "Só é possível reabrir orçamento fechado aguardando aprovação";
+  }
+  return null;
+}
+
 export const BRAND_COLOR = "#5B8B83";
 
 /** Eventos de alerta (preferências no cadastro: sino; e-mail via master + allowlist) */

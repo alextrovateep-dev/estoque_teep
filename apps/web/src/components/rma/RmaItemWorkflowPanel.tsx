@@ -2,7 +2,11 @@
 
 import { api, apiUpload } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
-import { mensagemBloqueioDiagnostico, rmaEtapaEmRecebimento } from "@teep/shared";
+import {
+  mensagemBloqueioDiagnostico,
+  rmaEtapaEmRecebimento,
+  rmaOrcamentoStatusLabel,
+} from "@teep/shared";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type TemplateItem = {
@@ -680,7 +684,13 @@ export function RmaItemWorkflowPanel({
     resumoCard.push("Diagnóstico: pendente");
   }
   if (item.orcamento) {
-    resumoCard.push(`Orçamento: ${item.orcamento.status}`);
+    resumoCard.push(
+      `Orçamento: ${rmaOrcamentoStatusLabel(item.orcamento.status)}${
+        item.orcamento.status === "ENVIADO"
+          ? " · negociar, PDF e gerar de novo"
+          : ""
+      }`
+    );
   }
   if (lib) {
     resumoCard.push(

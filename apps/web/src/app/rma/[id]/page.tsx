@@ -861,6 +861,11 @@ export default function RmaDetalhePage() {
   const itensAguardandoAprovacao = itensAtivos.filter(
     (i) => i.etapa === "AGUARDANDO_APROVACAO"
   );
+  const ctaOrcamento = itensAtivos.some((i) => i.etapa === "AGUARDANDO_ORCAMENTO")
+    ? "Gerar orçamento"
+    : itensAguardandoAprovacao.length > 0
+      ? "PDF e orçar com cliente"
+      : "Orçamento";
   const podeDecidirAprovacao =
     processoAberto &&
     (canCancelar ||
@@ -1696,7 +1701,7 @@ export default function RmaDetalhePage() {
                 href={`/rma/${id}/orcamento`}
                 className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800"
               >
-                Gerar orçamento
+                {ctaOrcamento}
               </Link>
             )}
         </div>
@@ -1854,7 +1859,7 @@ export default function RmaDetalhePage() {
                               href={`/rma/${id}/orcamento`}
                               className="min-h-8 font-medium text-amber-800 underline"
                             >
-                              Orçamento / aprovação
+                              PDF / orçar com cliente
                             </Link>
                           )}
                         {podeExcluir && i.etapa === "AGUARDANDO_MANUTENCAO" && (

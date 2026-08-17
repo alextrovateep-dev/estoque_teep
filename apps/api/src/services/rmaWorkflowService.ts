@@ -1,8 +1,11 @@
 import { Prisma } from "@prisma/client";
 import {
+  BRAND_COLOR,
   RMA_CHECKLIST_CAMPO_TIPOS,
   mensagemBloqueioDiagnostico,
+  mensagemBloqueioReabrirOrcamento,
   rmaEtapaEmRecebimento,
+  rmaOrcamentoPodeEditar,
   type RmaChecklistTipo,
 } from "@teep/shared";
 import { AppError } from "../middleware/error";
@@ -16,6 +19,7 @@ import {
   type RmaPromoteResult,
 } from "../lib/rmaUploads";
 import { htmlToPdf } from "../lib/pdf";
+import { brandAssetDataUri } from "../lib/brandAssets";
 import { obterRma, podeDecidirAprovacaoRma } from "./rmaService";
 
 const ETAPAS_RECEBIMENTO = [
@@ -788,14 +792,22 @@ export async function salvarOrcamentoRmaItem(
   assertProcessoAberto(proc.status);
   const item = await loadItemNoProcesso(processoId, itemId);
 
-  if (item.etapa !== "AGUARDANDO_ORCAMENTO") {
-    throw new AppError(400, "Orçamento só editável na etapa de orçamento");
-  }
   if (
-    item.orcamento?.status === "APROVADO" ||
-    item.orcamento?.status === "ENVIADO"
+    !rmaOrcamentoPodeEditar({
+      etapa: item.etapa,
+      orcamentoStatus: item.orcamento?.status,
+    })
   ) {
-    throw new AppError(400, "Orçamento já enviado/aprovado — não editável");
+    if (
+      item.orcamento?.status === "APROVADO" ||
+      item.orcamento?.status === "RECUSADO"
+    ) {
+      throw new AppError(400, "Orçamento já aprovado/recusado — não editável");
+    }
+    throw new AppError(
+      400,
+      "Orçamento só editável em rascunho ou em negociação com o cliente"
+    );
   }
   if (!item.manutencaoPlano) {
     throw new AppError(400, "Plano de manutenção ausente");
@@ -842,9 +854,9 @@ export async function salvarOrcamentoRmaItem(
         where: {
           id: itemId,
           processoId,
-          etapa: "AGUARDANDO_ORCAMENTO",
+          etapa: item.etapa,
         },
-        data: { etapa: "AGUARDANDO_ORCAMENTO" },
+        data: { etapa: item.etapa },
       });
       if (claimItem.count === 0) {
         throw new AppError(409, "Item não está em orçamento — atualize a tela");
@@ -853,21 +865,32 @@ export async function salvarOrcamentoRmaItem(
       const existing = await tx.rmaOrcamento.findUnique({
         where: { rmaItemId: itemId },
       });
-      if (existing && existing.status !== "RASCUNHO") {
-        throw new AppError(409, "Orçamento já enviado/aprovado — não editável");
+      if (
+        existing &&
+        existing.status !== "RASCUNHO" &&
+        existing.status !== "ENVIADO"
+      ) {
+        throw new AppError(409, "Orçamento já aprovado/recusado — não editável");
       }
 
       let orcId: string;
       if (existing) {
         const claimOrc = await tx.rmaOrcamento.updateMany({
-          where: { id: existing.id, status: "RASCUNHO" },
+          where: {
+            id: existing.id,
+            status: { in: ["RASCUNHO", "ENVIADO"] },
+          },
           data: {
             maoDeObra: input.maoDeObra,
             desconto: input.desconto,
             observacaoComercial: input.observacaoComercial?.trim() || null,
-            enviadoEm: null,
-            aprovadoEm: null,
-            aprovadoPorId: null,
+            ...(existing.status === "RASCUNHO"
+              ? {
+                  enviadoEm: null,
+                  aprovadoEm: null,
+                  aprovadoPorId: null,
+                }
+              : {}),
           },
         });
         if (claimOrc.count === 0) {
@@ -922,6 +945,7 @@ export async function salvarOrcamentoRmaItem(
   return obterRma(user, processoId);
 }
 
+/** Fecha o orçamento (status interno ENVIADO). Não envia e-mail. */
 export async function enviarOrcamentoRmaItem(
   user: AuthUser,
   processoId: string,
@@ -934,7 +958,7 @@ export async function enviarOrcamentoRmaItem(
     throw new AppError(400, "Item não está aguardando orçamento");
   }
   if (!item.orcamento || item.orcamento.linhas.length === 0) {
-    throw new AppError(400, "Salve o orçamento com linhas antes de enviar");
+    throw new AppError(400, "Salve o orçamento com linhas antes de fechar");
   }
 
   await prisma.$transaction(async (tx) => {
@@ -948,7 +972,7 @@ export async function enviarOrcamentoRmaItem(
       data: { etapa: "AGUARDANDO_APROVACAO" },
     });
     if (claim.count === 0) {
-      throw new AppError(409, "Não foi possível enviar — atualize a tela");
+      throw new AppError(409, "Não foi possível fechar — atualize a tela");
     }
     const claimOrc = await tx.rmaOrcamento.updateMany({
       where: { id: item.orcamento!.id, status: "RASCUNHO" },
@@ -982,7 +1006,7 @@ export async function decidirOrcamentoRmaItem(
     throw new AppError(400, "Não há orçamento aguardando decisão");
   }
   if (item.orcamento.status !== "ENVIADO") {
-    throw new AppError(400, "Orçamento precisa estar enviado");
+    throw new AppError(400, "Orçamento precisa estar fechado");
   }
 
   const total = totalOrcamento(
@@ -1037,6 +1061,44 @@ export async function decidirOrcamentoRmaItem(
     });
     if (claimOrc.count === 0) {
       throw new AppError(409, "Orçamento já foi decidido — atualize a tela");
+    }
+  });
+
+  return obterRma(user, processoId);
+}
+
+export async function reabrirOrcamentoRmaItem(
+  user: AuthUser,
+  processoId: string,
+  itemId: string
+) {
+  const proc = await obterRma(user, processoId);
+  assertProcessoAberto(proc.status);
+  const item = await loadItemNoProcesso(processoId, itemId);
+  const bloqueio = mensagemBloqueioReabrirOrcamento({
+    orcamentoStatus: item.orcamento?.status,
+    etapa: item.etapa,
+  });
+  if (bloqueio) throw new AppError(400, bloqueio);
+
+  await prisma.$transaction(async (tx) => {
+    const claim = await tx.rmaItem.updateMany({
+      where: {
+        id: itemId,
+        processoId,
+        etapa: "AGUARDANDO_APROVACAO",
+      },
+      data: { etapa: "AGUARDANDO_ORCAMENTO" },
+    });
+    if (claim.count === 0) {
+      throw new AppError(409, "Não foi possível reabrir — atualize a tela");
+    }
+    const claimOrc = await tx.rmaOrcamento.updateMany({
+      where: { id: item.orcamento!.id, status: "ENVIADO" },
+      data: { status: "RASCUNHO", enviadoEm: null },
+    });
+    if (claimOrc.count === 0) {
+      throw new AppError(409, "Orçamento não está fechado — atualize a tela");
     }
   });
 
@@ -1110,6 +1172,14 @@ function formatTempoMinutos(min: number | null | undefined) {
   if (h <= 0) return `${m} min`;
   if (m === 0) return `${h} h`;
   return `${h} h ${m} min`;
+}
+
+function stampSaoPaulo() {
+  return new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date());
 }
 
 function escHtml(s: string) {
@@ -1267,6 +1337,11 @@ export async function exportarOrcamentoRmaPdf(
   const data = await obterOrcamentoAgregadoRma(user, processoId);
   const p = data.processo;
   const short = p.id.slice(0, 8);
+  const geradoEm = stampSaoPaulo();
+  const logoUri = brandAssetDataUri("logo-teep.png");
+  const brandMark = logoUri
+    ? `<img src="${logoUri}" alt="TEEP" />`
+    : `<h1>TEEP Estoque</h1>`;
 
   const blocos = data.itens
     .map((it) => {
@@ -1279,58 +1354,50 @@ export async function exportarOrcamentoRmaPdf(
           return `<tr>
             <td>${escHtml(l.descricao)}${
               l.origem === "SERVICO"
-                ? ` <span style="color:#64748b">(${formatTempoMinutos(
+                ? ` <span class="muted">(${formatTempoMinutos(
                     l.tempoMinutos
                   )})</span>`
                 : ""
             }</td>
-            <td style="text-align:right">${l.quantidade}</td>
-            <td style="text-align:right">${moneyBr(Number(l.valorUnitario))}</td>
-            <td style="text-align:right">${moneyBr(sub)}</td>
+            <td class="num">${l.quantidade}</td>
+            <td class="num">${moneyBr(Number(l.valorUnitario))}</td>
+            <td class="num">${moneyBr(sub)}</td>
           </tr>`;
         })
         .join("");
       return `
-        <section style="margin-top:18px;page-break-inside:avoid">
-          <h2 style="font-size:13px;margin:0 0 6px">
-            ${escHtml(it.produto.codigo)}${sn}
-          </h2>
-          <p style="margin:0 0 8px;color:#475569;font-size:11px">
-            ${escHtml(it.produto.descricao)}
-          </p>
+        <section class="item">
+          <h2>${escHtml(it.produto.codigo)}${sn}</h2>
+          <p class="desc">${escHtml(it.produto.descricao)}</p>
           ${
             it.diagnostico
-              ? `<p style="margin:0 0 8px;font-size:11px"><strong>Diagnóstico:</strong> ${escHtml(
+              ? `<p class="note"><strong>Diagnóstico:</strong> ${escHtml(
                   it.diagnostico.resumoProblema
                 )}</p>`
               : ""
           }
           ${
             it.orcamento?.observacaoComercial
-              ? `<p style="margin:0 0 8px;font-size:11px"><strong>Obs. comercial:</strong> ${escHtml(
+              ? `<p class="note"><strong>Obs. comercial:</strong> ${escHtml(
                   it.orcamento.observacaoComercial
                 )}</p>`
               : ""
           }
-          <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <table>
             <thead>
-              <tr style="background:#f1f5f9">
-                <th style="text-align:left;padding:4px;border-bottom:1px solid #cbd5e1">Descrição</th>
-                <th style="text-align:right;padding:4px;border-bottom:1px solid #cbd5e1">Qtd</th>
-                <th style="text-align:right;padding:4px;border-bottom:1px solid #cbd5e1">Valor</th>
-                <th style="text-align:right;padding:4px;border-bottom:1px solid #cbd5e1">Subtotal</th>
+              <tr>
+                <th>Descrição</th>
+                <th class="num">Qtd</th>
+                <th class="num">Valor</th>
+                <th class="num">Subtotal</th>
               </tr>
             </thead>
-            <tbody>${linhasHtml || `<tr><td colspan="4">Sem linhas</td></tr>`}</tbody>
+            <tbody>${
+              linhasHtml ||
+              `<tr><td colspan="4" class="muted">Sem linhas</td></tr>`
+            }</tbody>
           </table>
-          <p style="text-align:right;font-weight:600;margin:6px 0 0;font-size:12px">
-            Total item: ${moneyBr(it.total)}
-            ${
-              it.orcamento
-                ? ` · ${escHtml(it.orcamento.status)}`
-                : " · rascunho"
-            }
-          </p>
+          <p class="item-total">Total item: ${moneyBr(it.total)}</p>
         </section>`;
     })
     .join("");
@@ -1339,25 +1406,62 @@ export async function exportarOrcamentoRmaPdf(
 
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
-<head><meta charset="utf-8" />
-<title>Orçamento RMA ${escHtml(short)}</title>
-<style>
-  body { font-family: Arial, Helvetica, sans-serif; color: #0f172a; font-size: 12px; }
-  h1 { font-size: 18px; margin: 0 0 4px; }
-</style>
+<head>
+  <meta charset="utf-8" />
+  <title>Orçamento RMA ${escHtml(short)} — TEEP Estoque</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: "Segoe UI", system-ui, sans-serif; color: #0f172a; margin: 0; font-size: 10px; }
+    .brand { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 3px solid ${BRAND_COLOR}; padding-bottom: 8px; margin-bottom: 12px; }
+    .brand-left { display: flex; align-items: center; gap: 12px; }
+    .brand-left img { height: 32px; width: auto; display: block; }
+    .brand h1 { margin: 0; font-size: 18px; color: ${BRAND_COLOR}; letter-spacing: 0.02em; }
+    .brand .sub { color: #64748b; font-size: 10px; text-align: right; }
+    .meta { margin-bottom: 10px; color: #475569; line-height: 1.45; }
+    .item { margin-top: 16px; page-break-inside: avoid; }
+    .item h2 { margin: 0 0 4px; font-size: 12px; color: ${BRAND_COLOR}; }
+    .desc { margin: 0 0 8px; color: #475569; }
+    .note { margin: 0 0 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #f1f5f9; text-align: left; padding: 5px 6px; border-bottom: 1px solid #cbd5e1; font-size: 9px; text-transform: uppercase; letter-spacing: 0.03em; color: #475569; }
+    th.num, td.num { text-align: right; }
+    td { padding: 4px 6px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+    .item-total { text-align: right; font-weight: 600; margin: 6px 0 0; font-size: 11px; }
+    .total { margin-top: 16px; font-size: 13px; font-weight: 700; text-align: right; color: ${BRAND_COLOR}; }
+    .muted { color: #94a3b8; }
+    .foot { margin-top: 12px; color: #94a3b8; font-size: 9px; }
+  </style>
 </head>
 <body>
-  <h1>Orçamento RMA</h1>
-  <p style="margin:0 0 12px;color:#475569">
-    Processo ${escHtml(short)} · ${escHtml(p.cliente.nome)}
-    ${p.cliente.documento ? ` · ${escHtml(p.cliente.documento)}` : ""}
-    · Estoque ${escHtml(p.filial.sigla)}
-    ${p.nfEntradaNumero ? ` · NF entrada ${escHtml(p.nfEntradaNumero)}` : ""}
-  </p>
-  ${blocos || "<p>Nenhum item elegível.</p>"}
-  <p style="margin-top:20px;font-size:14px;font-weight:700;text-align:right">
-    Total geral: ${moneyBr(totalGeral)}
-  </p>
+  <div class="brand">
+    <div class="brand-left">
+      ${brandMark}
+      <div>
+        <div style="font-size:12px;font-weight:600;">Orçamento RMA</div>
+        <div style="font-size:9px;color:#64748b;margin-top:2px;">TEEP Estoque</div>
+      </div>
+    </div>
+    <div class="sub">
+      Gerado em ${escHtml(geradoEm)} (America/Sao_Paulo)<br/>
+      ${escHtml(user.nome)} · ${escHtml(user.perfil)}
+    </div>
+  </div>
+  <div class="meta">
+    <div><strong>Cliente:</strong> ${escHtml(p.cliente.nome)}${
+      p.cliente.documento ? ` · ${escHtml(p.cliente.documento)}` : ""
+    }</div>
+    <div><strong>Processo:</strong> ${escHtml(short)} · Estoque ${escHtml(
+      p.filial.sigla
+    )}${p.filial.nome ? ` — ${escHtml(p.filial.nome)}` : ""}</div>
+    ${
+      p.nfEntradaNumero
+        ? `<div><strong>NF entrada:</strong> ${escHtml(p.nfEntradaNumero)}</div>`
+        : ""
+    }
+  </div>
+  ${blocos || `<p class="muted">Nenhum item elegível.</p>`}
+  <p class="total">Total geral: ${moneyBr(totalGeral)}</p>
+  <div class="foot">TEEP Estoque — orçamento de RMA</div>
 </body>
 </html>`;
 

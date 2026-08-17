@@ -2,6 +2,7 @@
 
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
+import { rmaOrcamentoPodeEditar, rmaOrcamentoStatusLabel } from "@teep/shared";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -78,10 +79,7 @@ export default function RmaOrcamentoPage() {
 
   const [data, setData] = useState<OrcPayload | null>(null);
   const [drafts, setDrafts] = useState<
-    Record<
-      string,
-      { linhas: LinhaDraft[]; desconto: string; obs: string; send: boolean }
-    >
+    Record<string, { linhas: LinhaDraft[]; desconto: string; obs: string }>
   >({});
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -100,14 +98,10 @@ export default function RmaOrcamentoPage() {
     setData(row);
     const next: typeof drafts = {};
     for (const it of row.itens) {
-      const editavel =
-        it.etapa === "AGUARDANDO_ORCAMENTO" &&
-        (!it.orcamento || it.orcamento.status === "RASCUNHO");
       next[it.id] = {
         linhas: it.linhas.map((l) => ({ ...l })),
         desconto: String(it.orcamento?.desconto ?? 0),
         obs: it.orcamento?.observacaoComercial || "",
-        send: editavel,
       };
     }
     setDrafts(next);
@@ -138,14 +132,13 @@ export default function RmaOrcamentoPage() {
   async function salvar() {
     if (!data) return;
     const itens = data.itens
-      .filter((it) => {
-        const st = it.orcamento?.status;
-        return (
-          it.etapa === "AGUARDANDO_ORCAMENTO" &&
-          (!st || st === "RASCUNHO") &&
-          drafts[it.id]
-        );
-      })
+      .filter((it) =>
+        rmaOrcamentoPodeEditar({
+          etapa: it.etapa,
+          orcamentoStatus: it.orcamento?.status,
+        })
+      )
+      .filter((it) => drafts[it.id])
       .map((it) => {
         const d = drafts[it.id]!;
         return {
@@ -156,7 +149,7 @@ export default function RmaOrcamentoPage() {
         };
       });
     if (itens.length === 0) {
-      setError("Nenhum item em rascunho para salvar");
+      setError("Nenhum item editável para salvar");
       return;
     }
     setBusy(true);
@@ -168,7 +161,15 @@ export default function RmaOrcamentoPage() {
         body: JSON.stringify({ itens }),
       });
       setData(row);
-      setMsg("Orçamento salvo.");
+      const negociando = itens.some((rowItem) => {
+        const it = data.itens.find((i) => i.id === rowItem.itemId);
+        return it?.orcamento?.status === "ENVIADO";
+      });
+      setMsg(
+        negociando
+          ? "Valores atualizados. Gere o PDF de novo para enviar ao cliente."
+          : "Orçamento salvo."
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao salvar");
@@ -177,15 +178,19 @@ export default function RmaOrcamentoPage() {
     }
   }
 
-  async function enviar() {
+  async function fechar() {
     if (!data) return;
     const itensPayload = data.itens
-      .filter((it) => drafts[it.id]?.send)
-      .filter(
-        (it) =>
+      .filter((it) => {
+        const st = it.orcamento?.status;
+        const d = drafts[it.id];
+        return (
           it.etapa === "AGUARDANDO_ORCAMENTO" &&
-          (!it.orcamento || it.orcamento.status === "RASCUNHO")
-      )
+          (!st || st === "RASCUNHO") &&
+          d &&
+          d.linhas.length > 0
+        );
+      })
       .map((it) => {
         const d = drafts[it.id]!;
         return {
@@ -196,7 +201,7 @@ export default function RmaOrcamentoPage() {
         };
       });
     if (itensPayload.length === 0) {
-      setError("Marque ao menos um item em rascunho para enviar");
+      setError("Não há item em rascunho para fechar.");
       return;
     }
     setBusy(true);
@@ -207,16 +212,19 @@ export default function RmaOrcamentoPage() {
         method: "PUT",
         body: JSON.stringify({ itens: itensPayload }),
       });
-      await api(`/rma/${id}/orcamento/enviar`, {
+      await api(`/rma/${id}/orcamento/fechar`, {
         method: "POST",
         body: JSON.stringify({
           itemIds: itensPayload.map((i) => i.itemId),
         }),
       });
-      setMsg("Orçamento enviado ao cliente (status ENVIADO).");
+      setMsg(
+        "Pronto para negociar. Gere o PDF, ajuste os valores se o cliente pedir, gere de novo e envie. O RMA só é finalizado depois da aprovação, da manutenção e do retorno."
+      );
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erro ao enviar");
+      setError(e instanceof Error ? e.message : "Erro ao fechar");
+      await load().catch(() => undefined);
     } finally {
       setBusy(false);
     }
@@ -261,6 +269,22 @@ export default function RmaOrcamentoPage() {
     }
   }
 
+  async function reabrir(itemId: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/rma/${id}/itens/${itemId}/orcamento/reabrir`, {
+        method: "POST",
+      });
+      setMsg("Orçamento reaberto.");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao reabrir");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (!can) {
     return <p className="text-sm text-slate-600">Sem permissão.</p>;
   }
@@ -279,7 +303,7 @@ export default function RmaOrcamentoPage() {
   }
 
   const p = data.processo;
-  const enviados = data.itens.filter((i) => i.orcamento?.status === "ENVIADO");
+  const fechados = data.itens.filter((i) => i.orcamento?.status === "ENVIADO");
 
   return (
     <>
@@ -307,6 +331,13 @@ export default function RmaOrcamentoPage() {
         </Link>
       </div>
 
+      <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+        Fechar o orçamento libera a etapa para o comercial: gerar PDF, negociar
+        com o cliente, alterar valores e gerar um PDF novo. O RMA só é
+        finalizado depois de aprovado, com a manutenção realizada e o retorno
+        feito.
+      </p>
+
       {error ? (
         <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
@@ -331,8 +362,10 @@ export default function RmaOrcamentoPage() {
           if (!d) return null;
           const editavel =
             p.status === "ABERTO" &&
-            it.etapa === "AGUARDANDO_ORCAMENTO" &&
-            (!it.orcamento || it.orcamento.status === "RASCUNHO");
+            rmaOrcamentoPodeEditar({
+              etapa: it.etapa,
+              orcamentoStatus: it.orcamento?.status,
+            });
           const tot = totalItem(d.linhas, Number(d.desconto) || 0);
 
           return (
@@ -340,38 +373,21 @@ export default function RmaOrcamentoPage() {
               key={it.id}
               className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
             >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <p className="font-mono text-sm font-semibold text-slate-900">
-                    {it.produto.codigo}
-                    {it.unidadeSerie?.numeroSerie
-                      ? ` · N/S ${it.unidadeSerie.numeroSerie}`
-                      : ""}
-                  </p>
-                  <p className="text-sm text-slate-600">{it.produto.descricao}</p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {it.orcamento
-                      ? `Status: ${it.orcamento.status}`
-                      : "Sem orçamento salvo"}
-                    {" · "}
-                    {it.etapa}
-                  </p>
-                </div>
-                {editavel ? (
-                  <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={d.send}
-                      onChange={(e) =>
-                        setDrafts((prev) => ({
-                          ...prev,
-                          [it.id]: { ...d, send: e.target.checked },
-                        }))
-                      }
-                    />
-                    Incluir no envio
-                  </label>
-                ) : null}
+              <div>
+                <p className="font-mono text-sm font-semibold text-slate-900">
+                  {it.produto.codigo}
+                  {it.unidadeSerie?.numeroSerie
+                    ? ` · N/S ${it.unidadeSerie.numeroSerie}`
+                    : ""}
+                </p>
+                <p className="text-sm text-slate-600">{it.produto.descricao}</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {it.orcamento
+                    ? `Status: ${rmaOrcamentoStatusLabel(it.orcamento.status)}`
+                    : "Sem orçamento salvo"}
+                  {" · "}
+                  {it.etapa}
+                </p>
               </div>
 
               {it.diagnostico ? (
@@ -511,23 +527,26 @@ export default function RmaOrcamentoPage() {
         <button
           type="button"
           disabled={busy || p.status !== "ABERTO"}
-          onClick={() => void enviar()}
+          onClick={() => void fechar()}
           className="rounded-lg bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50"
         >
-          Enviar ao cliente
+          Fechar orçamento
         </button>
       </div>
 
-      {enviados.length > 0 ? (
+      {fechados.length > 0 ? (
         <section className="mt-8 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
           <h2 className="text-base font-semibold text-amber-950">
-            Aprovação por item
+            Orçar com o cliente
           </h2>
           <p className="mt-1 text-xs text-amber-900/80">
-            Marque a decisão de cada orçamento enviado.
+            Gere o PDF e envie por e-mail/WhatsApp. Se o cliente negociar,
+            altere os valores acima, salve e gere o PDF de novo. Quando
+            aceitar, aprove. Reabra só se quiser voltar ao rascunho. Isso ainda
+            não finaliza o RMA.
           </p>
           <ul className="mt-3 space-y-3">
-            {enviados.map((it) => (
+            {fechados.map((it) => (
               <li
                 key={it.id}
                 className="rounded-lg border border-amber-100 bg-white p-3 text-sm"
@@ -550,7 +569,15 @@ export default function RmaOrcamentoPage() {
                     }))
                   }
                 />
-                <div className="mt-2 flex gap-2">
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy || p.status !== "ABERTO"}
+                    onClick={() => void reabrir(it.id)}
+                    className="rounded border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-50"
+                  >
+                    Reabrir
+                  </button>
                   <button
                     type="button"
                     disabled={busy || !canDecidir || p.status !== "ABERTO"}

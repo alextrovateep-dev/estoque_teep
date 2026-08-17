@@ -20,9 +20,11 @@
 
 ## Etapas do item
 
-`AGUARDANDO_RECEBIMENTO` → checklist (se o produto tiver template) + diagnóstico/plano/peças → **Concluir diagnóstico** → `AGUARDANDO_ORCAMENTO` → (página Orçamento: valores + PDF + enviar) → `AGUARDANDO_APROVACAO` → aprovar por item → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar → `FINALIZADO`
+`AGUARDANDO_RECEBIMENTO` → checklist (se o produto tiver template) + diagnóstico/plano/peças → **Concluir diagnóstico** → `AGUARDANDO_ORCAMENTO` → (página Orçamento: valores + **Fechar orçamento** + **Gerar PDF** + orçar com o cliente) → `AGUARDANDO_APROVACAO` → aprovar por item → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar (**retorno**) → `FINALIZADO`
 
-Recusa do orçamento → `NAO_APROVADO`.
+**Fechar orçamento não finaliza o RMA e não trava valores.** Abre a etapa para o comercial gerar PDF, negociar, alterar valores e gerar um PDF novo. O processo só vai a `FECHADO` quando todos os itens tiverem retorno (ou cancelamento).
+
+Recusa do orçamento → `NAO_APROVADO`. Reabrir (só enquanto fechado, ainda não aprovado/recusado) → volta a `AGUARDANDO_ORCAMENTO` / rascunho.
 
 `AGUARDANDO_LAUDO` é legado (migrado para `AGUARDANDO_RECEBIMENTO`).
 
@@ -33,7 +35,9 @@ Recusa do orçamento → `NAO_APROVADO`.
 | Quem | Onde | Faz |
 |------|------|-----|
 | Técnico | Modal do item | Checklist; serviços com **tempo (minutos)**; Salvar / Concluir diagnóstico |
-| Comercial | `/rma/[id]/orcamento` | Preenche **valor** dos serviços; obs; PDF; envia; aprova/recusa por item |
+| Comercial | `/rma/[id]/orcamento` | Preenche **valor** dos serviços; Salvar; **Fechar orçamento** (libera PDF/negociação; valores continuam editáveis); **Gerar PDF**; envia por e-mail/WhatsApp; ajusta e gera PDF de novo; **Aprovar/Recusar**. **Reabrir** volta ao rascunho. |
+
+`RmaOrcamento.status` no banco continua `RASCUNHO | ENVIADO | APROVADO | RECUSADO`. Na tela, `ENVIADO` aparece como **Em negociação**.
 
 `RmaOrcamento.maoDeObra` permanece no schema (compat) e fica **0**; valores nas linhas `SERVICO`.
 
@@ -49,10 +53,11 @@ Recusa do orçamento → `NAO_APROVADO`.
 | PUT/POST | `…/checklist/:tipo` · `…/concluir` |
 | PUT/POST | `…/diagnostico-plano` · `…/concluir` |
 | GET | `…/orcamento/sugestao` |
-| PUT/POST | `…/orcamento` · `…/enviar` · `…/aprovar` · `…/recusar` |
+| PUT/POST | `…/orcamento` · `…/enviar` · `…/fechar` · `…/reabrir` · `…/aprovar` · `…/recusar` |
 | GET | `/rma/:id/orcamento` |
 | PUT | `/rma/:id/orcamento` (lote) |
-| POST | `/rma/:id/orcamento/enviar` `{ itemIds }` |
+| POST | `/rma/:id/orcamento/enviar` `{ itemIds }` (alias: `/fechar`) — fecha rascunhos; status interno `ENVIADO` |
+| POST | `/rma/:id/itens/:itemId/orcamento/reabrir` — só `ENVIADO` + `AGUARDANDO_APROVACAO`; volta a rascunho |
 | GET | `/rma/:id/orcamento.pdf` |
 
 Gate de avanço: plano/diagnóstico; checklist de entrada só se o produto tiver template (não anexo de laudo).

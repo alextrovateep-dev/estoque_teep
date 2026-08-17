@@ -57,6 +57,7 @@ import {
   decidirOrcamentoRmaItem,
   enviarOrcamentoAgregadoRma,
   enviarOrcamentoRmaItem,
+  reabrirOrcamentoRmaItem,
   exportarOrcamentoRmaPdf,
   iniciarOuObterChecklist,
   listarRmaChecklistTemplates,
@@ -468,12 +469,33 @@ rmaRouter.put(
 );
 
 rmaRouter.post(
-  "/:id/itens/:itemId/orcamento/enviar",
+  [
+    "/:id/itens/:itemId/orcamento/enviar",
+    "/:id/itens/:itemId/orcamento/fechar",
+  ],
   requirePermissao("rma", "rma_cobranca"),
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(
         await enviarOrcamentoRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/orcamento/reabrir",
+  requirePermissao("rma", "rma_cobranca"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await reabrirOrcamentoRmaItem(
           req.user!,
           req.params.id,
           req.params.itemId
@@ -556,7 +578,7 @@ rmaRouter.put(
 );
 
 rmaRouter.post(
-  "/:id/orcamento/enviar",
+  ["/:id/orcamento/enviar", "/:id/orcamento/fechar"],
   requirePermissao("rma", "rma_cobranca"),
   validateBody(enviarRmaOrcamentoLoteSchema),
   async (req: AuthedRequest, res, next) => {

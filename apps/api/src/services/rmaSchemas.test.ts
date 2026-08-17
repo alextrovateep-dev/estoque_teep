@@ -4,7 +4,10 @@ import {
   anexarRmaSchema,
   createRmaProcessoSchema,
   mensagemBloqueioDiagnostico,
+  mensagemBloqueioReabrirOrcamento,
   mensagemErroValidacao,
+  RMA_ORCAMENTO_STATUS_LABELS,
+  rmaOrcamentoPodeEditar,
   salvarRmaDiagnosticoPlanoSchema,
   semManutencaoRmaSchema,
   trocarRmaItemSchema,
@@ -307,6 +310,72 @@ describe("mensagemBloqueioDiagnostico", () => {
         execucaoRecebimento: { status: "CONCLUIDO" },
       }),
       null
+    );
+  });
+});
+
+describe("reabrir orçamento", () => {
+  it("rótulo ENVIADO é Em negociação", () => {
+    assert.equal(RMA_ORCAMENTO_STATUS_LABELS.ENVIADO, "Em negociação");
+  });
+
+  it("permite editar valores em negociação", () => {
+    assert.equal(
+      rmaOrcamentoPodeEditar({
+        etapa: "AGUARDANDO_APROVACAO",
+        orcamentoStatus: "ENVIADO",
+      }),
+      true
+    );
+    assert.equal(
+      rmaOrcamentoPodeEditar({
+        etapa: "AGUARDANDO_ORCAMENTO",
+        orcamentoStatus: "ENVIADO",
+      }),
+      false
+    );
+    assert.equal(
+      rmaOrcamentoPodeEditar({
+        etapa: "AGUARDANDO_MANUTENCAO",
+        orcamentoStatus: "APROVADO",
+      }),
+      false
+    );
+  });
+
+  it("permite reabrir fechado aguardando aprovação (volta a rascunho)", () => {
+    assert.equal(
+      mensagemBloqueioReabrirOrcamento({
+        orcamentoStatus: "ENVIADO",
+        etapa: "AGUARDANDO_APROVACAO",
+      }),
+      null
+    );
+  });
+
+  it("bloqueia se já aprovado", () => {
+    const msg = mensagemBloqueioReabrirOrcamento({
+      orcamentoStatus: "APROVADO",
+      etapa: "AGUARDANDO_MANUTENCAO",
+    });
+    assert.match(String(msg), /aprovado/i);
+  });
+
+  it("bloqueia se recusado ou ainda em rascunho", () => {
+    assert.match(
+      String(
+        mensagemBloqueioReabrirOrcamento({
+          orcamentoStatus: "RECUSADO",
+          etapa: "NAO_APROVADO",
+        })
+      ),
+      /recusado/i
+    );
+    assert.ok(
+      mensagemBloqueioReabrirOrcamento({
+        orcamentoStatus: "RASCUNHO",
+        etapa: "AGUARDANDO_ORCAMENTO",
+      })
     );
   });
 });
