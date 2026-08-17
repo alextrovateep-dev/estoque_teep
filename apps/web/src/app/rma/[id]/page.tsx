@@ -722,10 +722,16 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/itens/${itemId}/manutencao-realizada`, {
-        method: "POST",
-      });
-      setMsg("Manutenção marcada — item aguarda checklist de liberação");
+      const updated = await api<Rma>(
+        `/rma/${id}/itens/${itemId}/manutencao-realizada`,
+        { method: "POST" }
+      );
+      const etapa = updated.itens.find((i) => i.id === itemId)?.etapa;
+      setMsg(
+        etapa === "AGUARDANDO_ENVIO"
+          ? "Manutenção marcada — item liberado para devolver/trocar"
+          : "Manutenção marcada — item aguarda checklist de liberação"
+      );
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");

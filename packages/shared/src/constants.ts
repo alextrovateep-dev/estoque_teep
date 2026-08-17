@@ -186,6 +186,19 @@ export function rmaOrcamentoPodeEditar(opts: {
   return opts.etapa === "AGUARDANDO_APROVACAO" && st === "ENVIADO";
 }
 
+/** PDF do cliente: só rascunho ou em negociação. Aprovado/recusado ficam de fora. */
+export function rmaItemEntraNoPdfOrcamento(opts: {
+  etapa?: string | null;
+  orcamentoStatus?: string | null;
+}): boolean {
+  const st = opts.orcamentoStatus;
+  if (st === "APROVADO" || st === "RECUSADO") return false;
+  return (
+    opts.etapa === "AGUARDANDO_ORCAMENTO" ||
+    opts.etapa === "AGUARDANDO_APROVACAO"
+  );
+}
+
 /**
  * Reabrir só com orçamento fechado (ENVIADO) na etapa de aprovação.
  * Depois de aprovado/recusado não volta a rascunho.

@@ -6,6 +6,7 @@ import {
   mensagemBloqueioReabrirOrcamento,
   rmaEtapaEmRecebimento,
   rmaOrcamentoPodeEditar,
+  rmaItemEntraNoPdfOrcamento,
   type RmaChecklistTipo,
 } from "@teep/shared";
 import { AppError } from "../middleware/error";
@@ -20,6 +21,7 @@ import {
 } from "../lib/rmaUploads";
 import { htmlToPdf } from "../lib/pdf";
 import { brandAssetDataUri } from "../lib/brandAssets";
+import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
 import { obterRma, podeDecidirAprovacaoRma } from "./rmaService";
 
 const ETAPAS_RECEBIMENTO = [
@@ -46,16 +48,7 @@ function assertProcessoAberto(status: string) {
 }
 
 async function produtoTemChecklistRecebimento(produtoId: string) {
-  const t = await prisma.rmaChecklistTemplate.findFirst({
-    where: {
-      produtoId,
-      tipo: "RECEBIMENTO",
-      ativo: true,
-      itens: { some: {} },
-    },
-    select: { id: true },
-  });
-  return Boolean(t);
+  return produtoTemChecklistAtivo(produtoId, "RECEBIMENTO");
 }
 
 async function assertChecklistRecebimentoOkParaDiagnostico(item: {
@@ -1341,9 +1334,22 @@ export async function exportarOrcamentoRmaPdf(
   const logoUri = brandAssetDataUri("logo-teep.png");
   const brandMark = logoUri
     ? `<img src="${logoUri}" alt="TEEP" />`
-    : `<h1>TEEP Estoque</h1>`;
+    : `<h1>TEEP</h1>`;
 
-  const blocos = data.itens
+  const itensPdf = data.itens.filter((it) =>
+    rmaItemEntraNoPdfOrcamento({
+      etapa: it.etapa,
+      orcamentoStatus: it.orcamento?.status,
+    })
+  );
+  if (itensPdf.length === 0) {
+    throw new AppError(
+      400,
+      "Não há item em orçamento para o PDF. Feche o orçamento (ou gere com itens em rascunho). Itens já aprovados ou recusados não entram."
+    );
+  }
+
+  const blocos = itensPdf
     .map((it) => {
       const sn = it.unidadeSerie?.numeroSerie
         ? ` · N/S ${escHtml(it.unidadeSerie.numeroSerie)}`
@@ -1402,13 +1408,13 @@ export async function exportarOrcamentoRmaPdf(
     })
     .join("");
 
-  const totalGeral = data.itens.reduce((a, i) => a + i.total, 0);
+  const totalGeral = itensPdf.reduce((a, i) => a + i.total, 0);
 
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Orçamento RMA ${escHtml(short)} — TEEP Estoque</title>
+  <title>Orçamento RMA ${escHtml(short)}</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: "Segoe UI", system-ui, sans-serif; color: #0f172a; margin: 0; font-size: 10px; }
@@ -1438,7 +1444,6 @@ export async function exportarOrcamentoRmaPdf(
       ${brandMark}
       <div>
         <div style="font-size:12px;font-weight:600;">Orçamento RMA</div>
-        <div style="font-size:9px;color:#64748b;margin-top:2px;">TEEP Estoque</div>
       </div>
     </div>
     <div class="sub">
@@ -1450,18 +1455,16 @@ export async function exportarOrcamentoRmaPdf(
     <div><strong>Cliente:</strong> ${escHtml(p.cliente.nome)}${
       p.cliente.documento ? ` · ${escHtml(p.cliente.documento)}` : ""
     }</div>
-    <div><strong>Processo:</strong> ${escHtml(short)} · Estoque ${escHtml(
-      p.filial.sigla
-    )}${p.filial.nome ? ` — ${escHtml(p.filial.nome)}` : ""}</div>
+    <div><strong>Processo:</strong> RMA ${escHtml(short)}</div>
     ${
       p.nfEntradaNumero
         ? `<div><strong>NF entrada:</strong> ${escHtml(p.nfEntradaNumero)}</div>`
         : ""
     }
   </div>
-  ${blocos || `<p class="muted">Nenhum item elegível.</p>`}
+  ${blocos}
   <p class="total">Total geral: ${moneyBr(totalGeral)}</p>
-  <div class="foot">TEEP Estoque — orçamento de RMA</div>
+  <div class="foot">Orçamento de RMA</div>
 </body>
 </html>`;
 

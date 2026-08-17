@@ -304,6 +304,7 @@ model Movimentacao {
   @@index([movimentacaoOrigemId])
   @@index([movimentacaoMontagemId])
   @@index([grupoLancamentoId])
+  @@index([notaFiscalNumero])
   @@map("movimentacoes")
 }
 
@@ -360,6 +361,7 @@ model Transferencia {
   anexos          TransferenciaAnexo[]
 
   @@index([status])
+  @@index([notaFiscalNumero])
   @@map("transferencias")
 }
 
@@ -576,6 +578,9 @@ model RmaProcesso {
   @@index([status])
   @@index([criadoEm])
   @@index([responsavelComercialId])
+  @@index([nfEntradaNumero])
+  @@index([nfSaidaNumero])
+  @@index([nfCobrancaNumero])
   @@map("rma_processos")
 }
 
@@ -638,6 +643,7 @@ model RmaItem {
   @@index([status])
   @@index([etapa])
   @@index([unidadeSerieSubstituicaoId])
+  @@index([nfCobrancaNumero])
   @@map("rma_itens")
 }
 

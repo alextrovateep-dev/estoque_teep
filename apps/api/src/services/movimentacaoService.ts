@@ -24,6 +24,7 @@ import {
   criarTransferenciaPendenteAprovacao,
 } from "./transferenciaService";
 import { resolveOperadorFilialId } from "../lib/filialScope";
+import { assertNotaFiscalNumeroLivre } from "../lib/notaFiscalNumero";
 import { isValidRmaStoredPath } from "../lib/rmaUploads";
 import { isValidUploadPath } from "../lib/uploads";
 import {
@@ -213,6 +214,18 @@ export async function criarMovimentacao(
 
   if (!input.usoInternoRma && !tipoPermitidoParaPerfil(tipo, user.perfil)) {
     throw new AppError(403, "Perfil não autorizado para este tipo");
+  }
+
+  if (
+    !input.usoInternoRma &&
+    (tipo.operacao === "ENTRADA" || tipo.operacao === "SAIDA") &&
+    (tipo.requerCliente || tipo.ehRetornoDeId)
+  ) {
+    await assertNotaFiscalNumeroLivre({
+      numero: input.notaFiscalNumero,
+      operacao: tipo.operacao,
+      exclude: { grupoLancamentoId: input.grupoLancamentoId },
+    });
   }
 
   // F15: TRANSFERÊNCIA pelo Novo Lançamento
@@ -1035,9 +1048,12 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
 export async function rejeitarMovimentacao(
   user: AuthUser,
   id: string,
-  motivo?: string
+  motivo?: string,
+  opts?: { bypassPerfil?: boolean }
 ) {
-  requireGerenteOuAdmin(user);
+  if (!opts?.bypassPerfil) {
+    requireGerenteOuAdmin(user);
+  }
 
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM movimentacoes WHERE id = ${id}::uuid FOR UPDATE`;

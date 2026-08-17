@@ -5,6 +5,7 @@ import {
   TIPO_TRANSF_ENTRE_ESTOQUES,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
+import { assertNotaFiscalNumeroLivre } from "../lib/notaFiscalNumero";
 import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
 import {
@@ -412,6 +413,10 @@ async function criarTransferenciaInterna(
   const anexosIn = input.anexos || [];
   if (anexosIn.length) assertAnexosTransferencia(user.id, anexosIn);
   const notaFiscalNumero = input.notaFiscalNumero?.trim() || null;
+  await assertNotaFiscalNumeroLivre({
+    numero: notaFiscalNumero,
+    operacao: "TRANSFERENCIA",
+  });
 
   const result = await prisma.$transaction(async (tx) => {
     const transf = await tx.transferencia.create({
