@@ -473,29 +473,31 @@ export function RmaItemWorkflowPanel({
           ) : null}
         </div>
         {!exec ? (
-          <p className="text-sm text-slate-600">
-            {tipo !== "RECEBIMENTO"
-              ? "Cadastre o checklist do produto em Checklists RMA e inicie aqui."
-              : checklistConsultaFalhou && temChecklistRecebimento === null
-                ? "Não foi possível verificar o checklist de entrada. Tente de novo, ou inicie se este produto tiver um."
-                : temChecklistRecebimento === false
-                  ? "Não há checklist de entrada para este produto. Pode concluir o diagnóstico."
-                  : temChecklistRecebimento === true
-                    ? "Inicie e conclua o checklist de entrada antes de concluir o diagnóstico."
-                    : "Verificando se há checklist de entrada…"}
-          </p>
-          {tipo === "RECEBIMENTO" && checklistConsultaFalhou ? (
-            <button
-              type="button"
-              className="mt-2 text-sm text-sky-800 underline"
-              onClick={() => {
-                setChecklistConsulta("loading");
-                setChecklistRetry((n) => n + 1);
-              }}
-            >
-              Tentar de novo
-            </button>
-          ) : null}
+          <>
+            <p className="text-sm text-slate-600">
+              {tipo !== "RECEBIMENTO"
+                ? "Cadastre o checklist do produto em Checklists RMA e inicie aqui."
+                : checklistConsultaFalhou && temChecklistRecebimento === null
+                  ? "Não foi possível verificar o checklist de entrada. Tente de novo, ou inicie se este produto tiver um."
+                  : temChecklistRecebimento === false
+                    ? "Não há checklist de entrada para este produto. Pode concluir o diagnóstico."
+                    : temChecklistRecebimento === true
+                      ? "Inicie e conclua o checklist de entrada antes de concluir o diagnóstico."
+                      : "Verificando se há checklist de entrada…"}
+            </p>
+            {tipo === "RECEBIMENTO" && checklistConsultaFalhou ? (
+              <button
+                type="button"
+                className="mt-2 text-sm text-sky-800 underline"
+                onClick={() => {
+                  setChecklistConsulta("loading");
+                  setChecklistRetry((n) => n + 1);
+                }}
+              >
+                Tentar de novo
+              </button>
+            ) : null}
+          </>
         ) : (
           <ul className="space-y-2">
             {exec.template.itens.map((ti) => {
