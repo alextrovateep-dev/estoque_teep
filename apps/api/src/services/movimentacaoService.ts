@@ -183,6 +183,11 @@ export async function criarMovimentacao(
     grupoLancamentoId?: string | null;
     /** Entrada: reativa série SAIDO (ex. equipamento que volta em RMA) */
     permitirReativarSaido?: boolean;
+    /**
+     * Chamada pelo módulo RMA (não pelo Novo Lançamento).
+     * Permite tipo sistema Entrada/Saída RMA.
+     */
+    usoInternoRma?: boolean;
     anexos?: Array<{
       tipo: "NOTA_FISCAL" | "TERMO_COMODATO" | "LAUDO" | "OUTRO";
       arquivo: string;
@@ -194,14 +199,19 @@ export async function criarMovimentacao(
     where: { id: input.tipoId },
   });
   if (!tipo || !tipo.ativo) throw new AppError(400, "Tipo inválido");
-  if (tipo.sistema) {
+  const tipoRma =
+    tipo.rmaEntradaEstoque === true || tipo.rmaSaidaCliente === true;
+  if (tipo.sistema && !(input.usoInternoRma && tipoRma)) {
     throw new AppError(
       400,
       "Tipo de sistema não pode ser usado no lançamento manual"
     );
   }
+  if (input.usoInternoRma && !tipoRma) {
+    throw new AppError(400, "Tipo inválido para operação RMA");
+  }
 
-  if (!tipoPermitidoParaPerfil(tipo, user.perfil)) {
+  if (!input.usoInternoRma && !tipoPermitidoParaPerfil(tipo, user.perfil)) {
     throw new AppError(403, "Perfil não autorizado para este tipo");
   }
 

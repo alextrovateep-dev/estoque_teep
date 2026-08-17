@@ -64,6 +64,7 @@ export default function RmaNovoPage() {
   const [totalNota, setTotalNota] = useState("");
   const [linhas, setLinhas] = useState<LinhaForm[]>([]);
   const [error, setError] = useState("");
+  const errorRef = useRef<HTMLDivElement>(null);
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const linhasRef = useRef(linhas);
@@ -72,6 +73,12 @@ export default function RmaNovoPage() {
     {}
   );
   const searchAborts = useRef<Record<string, AbortController>>({});
+
+  useEffect(() => {
+    if (error) {
+      errorRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [error]);
 
   useEffect(() => {
     api<Cliente[]>("/clientes")
@@ -357,6 +364,16 @@ export default function RmaNovoPage() {
         onSubmit={(e) => void onSubmit(e)}
         className="mt-4 space-y-4 rounded-xl border bg-white p-4"
       >
+        {error ? (
+          <div
+            ref={errorRef}
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+          >
+            {error}
+          </div>
+        ) : null}
+
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="relative">
             <label className="mb-1 block text-sm font-medium">Cliente *</label>
@@ -453,7 +470,11 @@ export default function RmaNovoPage() {
                 const f = e.target.files?.[0];
                 if (f)
                   void onUploadNf(f).catch((err) =>
-                    setError(err instanceof Error ? err.message : "Upload")
+                    setError(
+                      err instanceof Error
+                        ? `Não foi possível anexar a NF: ${err.message}`
+                        : "Não foi possível anexar a NF. Tente de novo."
+                    )
                   );
               }}
             />
@@ -500,7 +521,7 @@ export default function RmaNovoPage() {
             <h2 className="text-sm font-semibold text-slate-900">
               Produtos da nota ({linhas.length})
             </h2>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {linhas.map((it, idx) => (
                 <div
                   key={it.key}
@@ -597,10 +618,6 @@ export default function RmaNovoPage() {
           </div>
         )}
 
-        {error && (
-          <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </p>
         )}
 
         <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">

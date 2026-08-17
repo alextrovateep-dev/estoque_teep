@@ -235,6 +235,7 @@ async function lancarSaidaRma(
     notaFiscalNumero: opts.notaFiscalNumero ?? null,
     notaFiscalArquivo: opts.notaFiscalArquivo ?? null,
     observacao: opts.observacao,
+    usoInternoRma: true,
   });
   const mov = result.movimentacao;
   if (!mov?.id || mov.status === "PENDENTE") {
@@ -522,7 +523,7 @@ export async function criarRmaProcesso(
   const cliente = await prisma.cliente.findFirst({
     where: { id: input.clienteId, ativo: true },
   });
-  if (!cliente) throw new AppError(400, "Cliente inválido");
+  if (!cliente) throw new AppError(400, "Cliente não encontrado ou inativo. Selecione outro.");
   if (cliente.tipo === "FORNECEDOR") {
     throw new AppError(400, "Selecione um cliente (não fornecedor)");
   }
@@ -533,7 +534,7 @@ export async function criarRmaProcesso(
     if (!isValidRmaTmpPath(input.nfEntradaArquivo, user.id)) {
       throw new AppError(
         400,
-        "Arquivo de NF entrada inválido — envie via upload context=rma"
+        "O anexo da NF de entrada expirou ou é inválido. Anexe o arquivo de novo."
       );
     }
     const ext = extFromPublicUrl(input.nfEntradaArquivo);
@@ -632,20 +633,24 @@ export async function criarRmaProcesso(
         notaFiscalNumero: input.nfEntradaNumero?.trim() || null,
         notaFiscalArquivo: nfTmp,
         permitirReativarSaido: true,
+        usoInternoRma: true,
         observacao: `RMA ${processo.id.slice(0, 8)}${
           linha.observacao ? ` — ${linha.observacao}` : ""
         }`,
       });
 
       if (result.fluxo && result.fluxo !== "LANCAMENTO") {
-        throw new AppError(400, "Falha ao lançar entrada RMA");
+        throw new AppError(
+          400,
+          `Não foi possível dar entrada de ${linha.codigo} / S/N ${linha.series[0]} no Estoque RMA.`
+        );
       }
       const mov = result.movimentacao;
       if (!mov?.id) throw new AppError(500, "Entrada RMA sem movimentação");
       if (mov.status === "PENDENTE") {
         throw new AppError(
           400,
-          "Entrada RMA ficou pendente de aprovação — ajuste o tipo Entrada RMA"
+          "A entrada ficou pendente de aprovação. Em Admin → Tipos, no tipo de entrada RMA, desative a exigência de aprovação."
         );
       }
 
@@ -734,9 +739,16 @@ export async function criarRmaProcesso(
       );
     }
     if (e instanceof AppError) throw e;
+    const raw = e instanceof Error ? e.message : "";
+    const tecnico =
+      /prisma|invalid `prisma|unique constraint|foreign key|deadlock/i.test(
+        raw
+      );
     throw new AppError(
       400,
-      e instanceof Error ? e.message : "Falha ao abrir RMA"
+      tecnico || !raw
+        ? "Não foi possível abrir o RMA. Confira se a série já está em estoque ou tente de novo."
+        : raw
     );
   }
 
@@ -821,7 +833,7 @@ export async function atualizarRmaCliente(
   const cliente = await prisma.cliente.findFirst({
     where: { id: input.clienteId, ativo: true },
   });
-  if (!cliente) throw new AppError(400, "Cliente inválido");
+  if (!cliente) throw new AppError(400, "Cliente não encontrado ou inativo. Selecione outro.");
   if (cliente.tipo === "FORNECEDOR") {
     throw new AppError(400, "Selecione um cliente (não fornecedor)");
   }
@@ -1140,20 +1152,24 @@ export async function adicionarRmaItens(
         notaFiscalNumero: proc.nfEntradaNumero,
         notaFiscalArquivo: nfEntradaArquivo,
         permitirReativarSaido: true,
+        usoInternoRma: true,
         observacao: `RMA ${id.slice(0, 8)} (item incluído)${
           input.observacao ? ` — ${input.observacao}` : ""
         }`,
       });
 
       if (result.fluxo && result.fluxo !== "LANCAMENTO") {
-        throw new AppError(400, "Falha ao lançar entrada RMA");
+        throw new AppError(
+          400,
+          `Não foi possível dar entrada de ${produto.codigo} / S/N ${series[0]} no Estoque RMA.`
+        );
       }
       const mov = result.movimentacao;
       if (!mov?.id) throw new AppError(500, "Entrada RMA sem movimentação");
       if (mov.status === "PENDENTE") {
         throw new AppError(
           400,
-          "Entrada RMA ficou pendente de aprovação — ajuste o tipo Entrada RMA"
+          "A entrada ficou pendente de aprovação. Em Admin → Tipos, no tipo de entrada RMA, desative a exigência de aprovação."
         );
       }
 

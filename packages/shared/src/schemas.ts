@@ -632,7 +632,7 @@ const uploadPath = z
 
 export const createRmaProcessoSchema = z
   .object({
-    clienteId: z.string().uuid(),
+    clienteId: z.string().uuid({ message: "Selecione o cliente" }),
     /** Usuário comercial responsável pela aprovação com o cliente */
     responsavelComercialId: z.string().uuid({
       message: "Selecione o responsável comercial",
@@ -649,14 +649,23 @@ export const createRmaProcessoSchema = z
     itens: z
       .array(
         z.object({
-          produtoId: z.string().uuid(),
+          produtoId: z.string().uuid({ message: "Selecione o produto na lista" }),
           /** Uma ou mais séries; cada série vira 1 item RMA (qtd 1) */
-          series: z.array(z.string().trim().min(1).max(80)).min(1).max(500),
+          series: z
+            .array(
+              z
+                .string()
+                .trim()
+                .min(1, "Informe o número de série")
+                .max(80, "Número de série muito longo")
+            )
+            .min(1, "Informe o número de série")
+            .max(500),
           observacao: z.string().max(500).optional().nullable(),
         })
       )
-      .min(1)
-      .max(50),
+      .min(1, "Informe ao menos um produto com série")
+      .max(50, "Máximo de 50 produtos por nota de RMA"),
   })
   .superRefine((data, ctx) => {
     const vistas = new Set<string>();

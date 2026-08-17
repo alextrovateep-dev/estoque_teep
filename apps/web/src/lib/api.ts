@@ -198,7 +198,16 @@ export async function api<T>(
 }
 
 function formatApiError(body: unknown, status: number): string {
-  if (!body || typeof body !== "object") return `Erro ${status}`;
+  if (status === 401) return "Sessão expirada. Entre de novo e tente outra vez.";
+  if (status === 403) return "Você não tem permissão para esta ação.";
+  if (status === 502 || status === 503) {
+    return "Serviço temporariamente indisponível. Tente de novo em instantes.";
+  }
+  if (!body || typeof body !== "object") {
+    return status === 400
+      ? "Não foi possível concluir. Verifique os dados e tente de novo."
+      : `Erro ${status}`;
+  }
   const b = body as {
     error?: unknown;
     details?: {
@@ -208,7 +217,13 @@ function formatApiError(body: unknown, status: number): string {
   };
   const isUseless = (m: string) => {
     const t = m.trim().toLowerCase();
-    return !t || t === "required" || t === "invalid" || t === "dados inválidos";
+    return (
+      !t ||
+      t === "required" ||
+      t === "invalid" ||
+      t === "dados inválidos" ||
+      t === "expected string, received undefined"
+    );
   };
   if (typeof b.error === "string" && b.error.trim() && !isUseless(b.error)) {
     return b.error.trim();
@@ -221,6 +236,9 @@ function formatApiError(body: unknown, status: number): string {
     (m) => typeof m === "string" && !isUseless(m)
   );
   if (fromForm) return fromForm;
+  if (status === 400) {
+    return "Não foi possível concluir. Verifique cliente, produtos e números de série.";
+  }
   if (typeof b.error === "string" && b.error.trim()) return b.error.trim();
   return `Erro ${status}`;
 }

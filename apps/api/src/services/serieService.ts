@@ -116,14 +116,48 @@ async function assertSerieNaoExisteNoProduto(
       produtoId,
       numeroSerie: { equals: numeroSerie, mode: "insensitive" },
     },
-    select: { numeroSerie: true, status: true },
+    select: {
+      numeroSerie: true,
+      status: true,
+      filial: { select: { sigla: true } },
+    },
   });
   if (existente) {
     throw new AppError(
       400,
-      `Número de série já cadastrado para este produto: ${existente.numeroSerie}`
+      mensagemSerieJaCadastrada({
+        numeroSerie: existente.numeroSerie,
+        status: existente.status,
+        filialSigla: existente.filial?.sigla,
+      })
     );
   }
+}
+
+function mensagemSerieJaCadastrada(opts: {
+  numeroSerie: string;
+  status: string;
+  filialSigla?: string | null;
+  paraRma?: boolean;
+}): string {
+  const sn = opts.numeroSerie;
+  if (opts.paraRma) {
+    if (opts.status === SERIE_STATUS.EM_ESTOQUE) {
+      const onde = opts.filialSigla
+        ? ` no estoque ${opts.filialSigla}`
+        : " em estoque";
+      return `S/N ${sn} já está${onde}. No RMA só entra série que já saiu (retorno). Se ficou de uma tentativa anterior, estorne essa entrada em Movimentações.`;
+    }
+    if (opts.status === SERIE_STATUS.EM_TRANSITO) {
+      return `S/N ${sn} está em trânsito e não pode entrar em RMA agora.`;
+    }
+    return `S/N ${sn} já está cadastrado neste produto.`;
+  }
+  const onde =
+    opts.status === "EM_ESTOQUE" && opts.filialSigla
+      ? ` (estoque ${opts.filialSigla})`
+      : "";
+  return `Número de série já cadastrado para este produto: ${sn}${onde}`;
 }
 
 /** Séries já reservadas em movimentações PENDENTE (seriesInformadas). */
@@ -233,6 +267,7 @@ export async function aplicarSeriesEntrada(
         produtoId: opts.produtoId,
         numeroSerie: { equals: numeroSerie, mode: "insensitive" },
       },
+      include: { filial: { select: { sigla: true } } },
     });
 
     let unidadeId: string;
@@ -254,7 +289,12 @@ export async function aplicarSeriesEntrada(
       } else {
         throw new AppError(
           400,
-          `Número de série já cadastrado para este produto: ${existente.numeroSerie}`
+          mensagemSerieJaCadastrada({
+            numeroSerie: existente.numeroSerie,
+            status: existente.status,
+            filialSigla: existente.filial?.sigla,
+            paraRma: opts.permitirReativarSaido === true,
+          })
         );
       }
     } else {
@@ -547,6 +587,7 @@ export async function validarSeriesEntradaNovas(
         produtoId: opts.produtoId,
         numeroSerie: { equals: numeroSerie, mode: "insensitive" },
       },
+      include: { filial: { select: { sigla: true } } },
     });
     if (!existente) continue;
     if (
@@ -557,7 +598,12 @@ export async function validarSeriesEntradaNovas(
     }
     throw new AppError(
       400,
-      `Número de série já cadastrado para este produto: ${existente.numeroSerie}`
+      mensagemSerieJaCadastrada({
+        numeroSerie: existente.numeroSerie,
+        status: existente.status,
+        filialSigla: existente.filial?.sigla,
+        paraRma: opts.permitirReativarSaido === true,
+      })
     );
   }
   return series;
