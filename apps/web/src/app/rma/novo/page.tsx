@@ -618,8 +618,6 @@ export default function RmaNovoPage() {
           </div>
         )}
 
-        )}
-
         <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
