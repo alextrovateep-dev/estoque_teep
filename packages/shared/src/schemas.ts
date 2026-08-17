@@ -934,15 +934,35 @@ export const salvarRmaChecklistRespostasSchema = z.object({
     .max(80),
 });
 
+const rmaTempoMinutosSchema = z.preprocess((v) => {
+  if (v == null || v === "") return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : v;
+}, z
+  .number({ invalid_type_error: "Informe o tempo em minutos (número inteiro)." })
+  .int("Informe o tempo em minutos (número inteiro).")
+  .min(0, "O tempo em minutos não pode ser negativo.")
+  .max(100_000, "Tempo em minutos acima do limite.")
+  .optional()
+  .nullable());
+
 export const salvarRmaDiagnosticoPlanoSchema = z.object({
-  resumoProblema: z.string().trim().min(1).max(2000),
+  resumoProblema: z
+    .string({ required_error: "Informe o resumo do problema." })
+    .trim()
+    .min(1, "Informe o resumo do problema.")
+    .max(2000, "O resumo do problema está longo demais (máx. 2000 caracteres)."),
   observacaoTecnica: z.string().max(4000).optional().nullable(),
   servicos: z
     .array(
       z.object({
-        descricao: z.string().trim().min(1).max(300),
-        ordem: z.number().int().min(0).max(999).optional(),
-        tempoMinutos: z.number().int().min(0).max(100_000).optional().nullable(),
+        descricao: z
+          .string()
+          .trim()
+          .min(1, "Informe a descrição do serviço.")
+          .max(300, "Descrição do serviço está longa demais."),
+        ordem: z.coerce.number().int().min(0).max(999).optional(),
+        tempoMinutos: rmaTempoMinutosSchema,
       })
     )
     .max(40)
@@ -950,8 +970,15 @@ export const salvarRmaDiagnosticoPlanoSchema = z.object({
   pecas: z
     .array(
       z.object({
-        produtoId: z.string().uuid(),
-        quantidade: z.number().positive().max(9999),
+        produtoId: z
+          .string()
+          .uuid({ message: "Selecione a peça na lista de produtos." }),
+        quantidade: z.coerce
+          .number({
+            invalid_type_error: "Informe a quantidade da peça (maior que zero).",
+          })
+          .positive("Informe a quantidade da peça (maior que zero).")
+          .max(9999, "Quantidade da peça acima do limite."),
         motivo: z.string().max(300).optional().nullable(),
       })
     )

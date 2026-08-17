@@ -1,24 +1,18 @@
 import { Request, Response, NextFunction } from "express";
 import { ZodSchema } from "zod";
 import multer from "multer";
-
-function zodIssueMessage(raw: string | undefined): string {
-  if (!raw) return "Dados inválidos";
-  const t = raw.trim();
-  const lower = t.toLowerCase();
-  if (!t || lower === "required" || lower === "invalid" || lower === "expected string, received undefined") {
-    return "Dados inválidos";
-  }
-  return t;
-}
+import { mensagemErroValidacao } from "@teep/shared";
 
 export function validateBody(schema: ZodSchema) {
   return (req: Request, res: Response, next: NextFunction) => {
     const parsed = schema.safeParse(req.body ?? {});
     if (!parsed.success) {
-      const first = parsed.error.issues[0]?.message;
+      const issue = parsed.error.issues[0];
       return res.status(400).json({
-        error: zodIssueMessage(first),
+        error: mensagemErroValidacao({
+          message: issue?.message,
+          path: issue?.path,
+        }),
         details: parsed.error.flatten(),
       });
     }

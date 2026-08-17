@@ -1,5 +1,7 @@
 "use client";
 
+import { mensagemErroValidacao, MSG_VALIDACAO_GENERICA } from "@teep/shared";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
 export type User = {
@@ -204,9 +206,7 @@ function formatApiError(body: unknown, status: number): string {
     return "Serviço temporariamente indisponível. Tente de novo em instantes.";
   }
   if (!body || typeof body !== "object") {
-    return status === 400
-      ? "Não foi possível concluir. Verifique os dados e tente de novo."
-      : `Erro ${status}`;
+    return status === 400 ? MSG_VALIDACAO_GENERICA : `Erro ${status}`;
   }
   const b = body as {
     error?: unknown;
@@ -215,31 +215,31 @@ function formatApiError(body: unknown, status: number): string {
       fieldErrors?: Record<string, string[] | undefined>;
     };
   };
-  const isUseless = (m: string) => {
-    const t = m.trim().toLowerCase();
-    return (
-      !t ||
-      t === "required" ||
-      t === "invalid" ||
-      t === "dados inválidos" ||
-      t === "expected string, received undefined"
-    );
-  };
-  if (typeof b.error === "string" && b.error.trim() && !isUseless(b.error)) {
-    return b.error.trim();
+  const fieldKey = Object.keys(b.details?.fieldErrors || {})[0];
+  const fieldMsg = fieldKey
+    ? (b.details?.fieldErrors?.[fieldKey] || []).find(
+        (m) => typeof m === "string" && m.trim()
+      )
+    : undefined;
+  if (typeof b.error === "string" && b.error.trim()) {
+    return mensagemErroValidacao({
+      message: b.error.trim(),
+      path: fieldKey ? [fieldKey] : [],
+    });
   }
-  const fromFields = Object.values(b.details?.fieldErrors || {})
-    .flat()
-    .find((m) => typeof m === "string" && !isUseless(m));
-  if (fromFields) return fromFields;
+  if (fieldMsg || fieldKey) {
+    return mensagemErroValidacao({
+      message: fieldMsg,
+      path: fieldKey ? [fieldKey] : [],
+    });
+  }
   const fromForm = (b.details?.formErrors || []).find(
-    (m) => typeof m === "string" && !isUseless(m)
+    (m) => typeof m === "string" && m.trim()
   );
-  if (fromForm) return fromForm;
-  if (status === 400) {
-    return "Não foi possível concluir. Verifique cliente, produtos e números de série.";
+  if (fromForm) {
+    return mensagemErroValidacao({ message: fromForm });
   }
-  if (typeof b.error === "string" && b.error.trim()) return b.error.trim();
+  if (status === 400) return MSG_VALIDACAO_GENERICA;
   return `Erro ${status}`;
 }
 

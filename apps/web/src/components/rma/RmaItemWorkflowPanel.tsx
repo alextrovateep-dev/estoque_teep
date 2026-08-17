@@ -2,8 +2,8 @@
 
 import { api, apiUpload } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
-import { rmaEtapaEmRecebimento } from "@teep/shared";
-import { useEffect, useMemo, useState } from "react";
+import { mensagemBloqueioDiagnostico, rmaEtapaEmRecebimento } from "@teep/shared";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type TemplateItem = {
   id: string;
@@ -90,6 +90,14 @@ function asFotos(raw: unknown): string[] {
   return Array.isArray(raw) ? (raw as string[]) : [];
 }
 
+function minutosOuNull(raw: string): number | null {
+  const t = raw.trim();
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.floor(n));
+}
+
 type Props = {
   processoId: string;
   item: RmaItemWorkflowData;
@@ -116,14 +124,37 @@ export function RmaItemWorkflowPanel({
   const [open, setOpen] = useState(false);
   const [localError, setLocalError] = useState("");
   const [produtos, setProdutos] = useState<ProdutoOpt[]>([]);
+  const [temChecklistRecebimento, setTemChecklistRecebimento] = useState<
+    boolean | null
+  >(null);
+  const [checklistConsulta, setChecklistConsulta] = useState<
+    "loading" | "ok" | "erro"
+  >("loading");
+  const [checklistRetry, setChecklistRetry] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   function reportError(msg: string) {
     setLocalError(msg);
     onError(msg);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   const recv = item.checklistExecucoes?.find((e) => e.tipo === "RECEBIMENTO");
   const lib = item.checklistExecucoes?.find((e) => e.tipo === "LIBERACAO");
+  const temParaBloqueio =
+    checklistConsulta === "erro" && temChecklistRecebimento === null
+      ? false
+      : temChecklistRecebimento;
+  const bloqueioDiagnostico = mensagemBloqueioDiagnostico({
+    execucaoRecebimento: recv ? { status: recv.status } : null,
+    temTemplateRecebimento: temParaBloqueio,
+  });
+  const checklistEntradaPendente = Boolean(bloqueioDiagnostico);
+  const checklistAindaVerificando =
+    !recv &&
+    temChecklistRecebimento === null &&
+    checklistConsulta === "loading";
+  const checklistConsultaFalhou = checklistConsulta === "erro";
 
   const [respMap, setRespMap] = useState<
     Record<
@@ -242,6 +273,31 @@ export function RmaItemWorkflowPanel({
       .catch(() => setProdutos([]));
   }, [etapa]);
 
+  useEffect(() => {
+    if (!rmaEtapaEmRecebimento(etapa)) return;
+    let cancelled = false;
+    setChecklistConsulta((c) => (c === "ok" ? "ok" : "loading"));
+    void api<Array<{ id: string; itens?: unknown[] }>>(
+      `/rma/checklists?produtoId=${encodeURIComponent(item.produtoId)}&tipo=RECEBIMENTO`
+    )
+      .then((list) => {
+        if (cancelled) return;
+        setTemChecklistRecebimento(
+          list.some((t) =>
+            Array.isArray(t.itens) ? t.itens.length > 0 : true
+          )
+        );
+        setChecklistConsulta("ok");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChecklistConsulta("erro");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [etapa, item.produtoId, open, checklistRetry]);
+
   async function ensureChecklist(tipo: "RECEBIMENTO" | "LIBERACAO") {
     setBusy(true);
     setLocalError("");
@@ -315,28 +371,54 @@ export function RmaItemWorkflowPanel({
   }
 
   async function salvarPlano(concluir: boolean): Promise<boolean> {
+    if (!resumo.trim()) {
+      reportError("Informe o resumo do problema");
+      return false;
+    }
+    const servicosPayload = servicos
+      .map((s) => ({
+        descricao: s.descricao.trim(),
+        tempoMinutos: minutosOuNull(s.tempoMinutos),
+      }))
+      .filter((s) => s.descricao)
+      .map((s, ordem) => ({ ...s, ordem }));
+    const pecasPayload = pecas
+      .filter((p) => p.produtoId && Number(p.quantidade) > 0)
+      .map((p) => ({
+        produtoId: p.produtoId,
+        quantidade: Number(p.quantidade),
+        motivo: p.motivo.trim() || null,
+      }));
+    for (const p of pecas) {
+      if (!p.produtoId) continue;
+      const qtd = Number(p.quantidade);
+      if (!Number.isFinite(qtd) || qtd <= 0) {
+        reportError("Informe a quantidade da peça (maior que zero).");
+        return false;
+      }
+    }
+    for (const s of servicos) {
+      if (!s.descricao.trim() && s.tempoMinutos.trim()) {
+        reportError("Informe a descrição do serviço, ou remova a linha.");
+        return false;
+      }
+    }
+    if (concluir && bloqueioDiagnostico) {
+      reportError(bloqueioDiagnostico);
+      return false;
+    }
+    if (concluir && servicosPayload.length === 0 && pecasPayload.length === 0) {
+      reportError("Informe ao menos um serviço ou uma peça prevista no plano");
+      return false;
+    }
     setBusy(true);
     setLocalError("");
     try {
       const body = {
         resumoProblema: resumo.trim(),
         observacaoTecnica: obsTec.trim() || null,
-        servicos: servicos
-          .map((s) => ({
-            descricao: s.descricao.trim(),
-            tempoMinutos: s.tempoMinutos.trim()
-              ? Math.max(0, Math.floor(Number(s.tempoMinutos)))
-              : null,
-          }))
-          .filter((s) => s.descricao)
-          .map((s, ordem) => ({ ...s, ordem })),
-        pecas: pecas
-          .filter((p) => p.produtoId && Number(p.quantidade) > 0)
-          .map((p) => ({
-            produtoId: p.produtoId,
-            quantidade: Number(p.quantidade),
-            motivo: p.motivo.trim() || null,
-          })),
+        servicos: servicosPayload,
+        pecas: pecasPayload,
       };
       const path = concluir
         ? `/rma/${processoId}/itens/${item.id}/diagnostico-plano/concluir`
@@ -375,7 +457,11 @@ export function RmaItemWorkflowPanel({
               </span>
             ) : null}
           </p>
-          {!exec && processoAberto ? (
+          {!exec &&
+          processoAberto &&
+          (tipo !== "RECEBIMENTO" ||
+            temChecklistRecebimento === true ||
+            checklistConsultaFalhou) ? (
             <button
               type="button"
               disabled={busy}
@@ -388,8 +474,28 @@ export function RmaItemWorkflowPanel({
         </div>
         {!exec ? (
           <p className="text-sm text-slate-600">
-            Cadastre o checklist do produto em Checklists RMA e inicie aqui.
+            {tipo !== "RECEBIMENTO"
+              ? "Cadastre o checklist do produto em Checklists RMA e inicie aqui."
+              : checklistConsultaFalhou && temChecklistRecebimento === null
+                ? "Não foi possível verificar o checklist de entrada. Tente de novo, ou inicie se este produto tiver um."
+                : temChecklistRecebimento === false
+                  ? "Não há checklist de entrada para este produto. Pode concluir o diagnóstico."
+                  : temChecklistRecebimento === true
+                    ? "Inicie e conclua o checklist de entrada antes de concluir o diagnóstico."
+                    : "Verificando se há checklist de entrada…"}
           </p>
+          {tipo === "RECEBIMENTO" && checklistConsultaFalhou ? (
+            <button
+              type="button"
+              className="mt-2 text-sm text-sky-800 underline"
+              onClick={() => {
+                setChecklistConsulta("loading");
+                setChecklistRetry((n) => n + 1);
+              }}
+            >
+              Tentar de novo
+            </button>
+          ) : null}
         ) : (
           <ul className="space-y-2">
             {exec.template.itens.map((ti) => {
@@ -540,8 +646,11 @@ export function RmaItemWorkflowPanel({
   }
 
   const acaoPrincipal = (() => {
-    if (showRecv && (!recv || recv.status !== "CONCLUIDO")) {
-      return recv ? "Continuar checklist" : "Abrir checklist de entrada";
+    if (showRecv && recv && recv.status !== "CONCLUIDO") {
+      return "Continuar checklist";
+    }
+    if (showRecv && !recv && temChecklistRecebimento === true) {
+      return "Abrir checklist de entrada";
     }
     if (showPlano && processoAberto) {
       return item.diagnostico ? "Editar diagnóstico" : "Diagnóstico e plano";
@@ -560,7 +669,7 @@ export function RmaItemWorkflowPanel({
     resumoCard.push(
       `Entrada: ${recv.status === "CONCLUIDO" ? "ok" : "em andamento"}`
     );
-  } else if (showRecv) {
+  } else if (showRecv && temChecklistRecebimento === true) {
     resumoCard.push("Entrada: pendente");
   }
   if (item.diagnostico) {
@@ -638,7 +747,10 @@ export function RmaItemWorkflowPanel({
               </div>
             </header>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+            <div
+              ref={scrollRef}
+              className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4 sm:p-5"
+            >
               {localError ? (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
                   {localError}
@@ -754,20 +866,31 @@ export function RmaItemWorkflowPanel({
                             </option>
                           ))}
                         </select>
-                        <input
-                          type="number"
-                          min={0.0001}
-                          step="any"
-                          className="rounded-lg border px-2 py-1.5"
-                          placeholder="Qtd"
-                          value={p.quantidade}
-                          disabled={busy}
-                          onChange={(e) => {
-                            const next = [...pecas];
-                            next[idx] = { ...p, quantidade: e.target.value };
-                            setPecas(next);
-                          }}
-                        />
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            min={0.0001}
+                            step="any"
+                            className="min-w-0 flex-1 rounded-lg border px-2 py-1.5"
+                            placeholder="Qtd"
+                            value={p.quantidade}
+                            disabled={busy}
+                            onChange={(e) => {
+                              const next = [...pecas];
+                              next[idx] = { ...p, quantidade: e.target.value };
+                              setPecas(next);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            className="rounded-lg border px-2"
+                            onClick={() =>
+                              setPecas(pecas.filter((_, i) => i !== idx))
+                            }
+                          >
+                            ×
+                          </button>
+                        </div>
                       </div>
                     ))}
                     <button
@@ -794,7 +917,14 @@ export function RmaItemWorkflowPanel({
                     </button>
                     <button
                       type="button"
-                      disabled={busy}
+                      disabled={busy || checklistEntradaPendente}
+                      title={
+                        checklistAindaVerificando
+                          ? "Aguarde a verificação do checklist de entrada"
+                          : checklistEntradaPendente
+                            ? "Conclua o checklist de entrada acima"
+                            : undefined
+                      }
                       onClick={() =>
                         void salvarPlano(true).then((ok) => {
                           if (ok) setOpen(false);
@@ -805,6 +935,23 @@ export function RmaItemWorkflowPanel({
                       Concluir diagnóstico
                     </button>
                   </div>
+                  {checklistEntradaPendente ? (
+                    <p className="mt-2 text-xs text-amber-800">
+                      {checklistAindaVerificando
+                        ? "Aguarde a verificação do checklist de entrada."
+                        : "Conclua o checklist de entrada acima para liberar o diagnóstico."}
+                    </p>
+                  ) : checklistConsultaFalhou && !recv ? (
+                    <p className="mt-2 text-xs text-amber-800">
+                      Não foi possível verificar o checklist de entrada. Tente
+                      de novo acima, ou conclua o diagnóstico.
+                    </p>
+                  ) : null}
+                  {localError ? (
+                    <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {localError}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 

@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 import {
   anexarRmaSchema,
   createRmaProcessoSchema,
+  mensagemBloqueioDiagnostico,
+  mensagemErroValidacao,
+  salvarRmaDiagnosticoPlanoSchema,
   semManutencaoRmaSchema,
   trocarRmaItemSchema,
   updateRmaItemFinanceiroSchema,
@@ -225,5 +228,108 @@ describe("detectWordMime / upload mime opts", () => {
     const pdf = Buffer.from("%PDF-1.4 rest", "ascii");
     assert.equal(detectPdfMime(pdf), "application/pdf");
     assert.equal(detectUploadMime(pdf, { pdf: true, word: false }), "application/pdf");
+  });
+});
+
+describe("salvarRmaDiagnosticoPlanoSchema", () => {
+  it("aceita plano com serviço, tempo e peça", () => {
+    const r = salvarRmaDiagnosticoPlanoSchema.safeParse({
+      resumoProblema: "Pulso fantasma — troca da placa de controle",
+      observacaoTecnica: "O aparelho não ligou na bancada.",
+      servicos: [
+        { descricao: "Troca da placa de controle", ordem: 0, tempoMinutos: 10 },
+      ],
+      pecas: [{ produtoId: UUID_B, quantidade: 1, motivo: null }],
+    });
+    assert.equal(r.success, true);
+  });
+
+  it("aceita quantidade e tempo como string", () => {
+    const r = salvarRmaDiagnosticoPlanoSchema.safeParse({
+      resumoProblema: "Defeito",
+      servicos: [{ descricao: "Revisão", tempoMinutos: "10" }],
+      pecas: [{ produtoId: UUID_B, quantidade: "1" }],
+    });
+    assert.equal(r.success, true);
+    if (r.success) {
+      assert.equal(r.data.servicos[0]?.tempoMinutos, 10);
+      assert.equal(r.data.pecas[0]?.quantidade, 1);
+    }
+  });
+
+  it("rejeita resumo vazio", () => {
+    const r = salvarRmaDiagnosticoPlanoSchema.safeParse({
+      resumoProblema: "  ",
+      servicos: [{ descricao: "Revisão" }],
+    });
+    assert.equal(r.success, false);
+    if (!r.success) {
+      assert.match(r.error.issues[0]?.message || "", /resumo/i);
+    }
+  });
+
+  it("pede para selecionar a peça se o id for inválido", () => {
+    const r = salvarRmaDiagnosticoPlanoSchema.safeParse({
+      resumoProblema: "Defeito",
+      pecas: [{ produtoId: "nao-e-uuid", quantidade: 1 }],
+    });
+    assert.equal(r.success, false);
+    if (!r.success) {
+      assert.match(r.error.issues[0]?.message || "", /peça|produto/i);
+    }
+  });
+});
+
+describe("mensagemBloqueioDiagnostico", () => {
+  it("libera sem template nem execução", () => {
+    assert.equal(
+      mensagemBloqueioDiagnostico({ temTemplateRecebimento: false }),
+      null
+    );
+  });
+
+  it("bloqueia template sem execução", () => {
+    assert.ok(
+      mensagemBloqueioDiagnostico({ temTemplateRecebimento: true })
+    );
+  });
+
+  it("bloqueia enquanto o template é desconhecido", () => {
+    assert.ok(
+      mensagemBloqueioDiagnostico({ temTemplateRecebimento: null })
+    );
+  });
+
+  it("libera checklist concluído", () => {
+    assert.equal(
+      mensagemBloqueioDiagnostico({
+        temTemplateRecebimento: true,
+        execucaoRecebimento: { status: "CONCLUIDO" },
+      }),
+      null
+    );
+  });
+});
+
+describe("mensagemErroValidacao", () => {
+  it("preserva mensagem específica (série, checklist, etc.)", () => {
+    assert.equal(
+      mensagemErroValidacao({ message: "Informe o número de série" }),
+      "Informe o número de série"
+    );
+  });
+
+  it("não chuta série quando o campo é peça", () => {
+    const msg = mensagemErroValidacao({
+      message: "Invalid uuid",
+      path: ["pecas", 0, "produtoId"],
+    });
+    assert.match(msg, /produto|peça/i);
+    assert.equal(/série|serie/i.test(msg), false);
+  });
+
+  it("usa fallback genérico sem citar série", () => {
+    const msg = mensagemErroValidacao({ message: "Dados inválidos" });
+    assert.equal(/série|serie|cliente/i.test(msg), false);
   });
 });

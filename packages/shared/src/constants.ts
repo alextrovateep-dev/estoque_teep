@@ -111,6 +111,27 @@ export function rmaEtapaEmRecebimento(etapa: string | null | undefined): boolean
   );
 }
 
+export const MSG_CHECKLIST_RECEBIMENTO_PENDENTE =
+  "Conclua o checklist de recebimento antes de concluir o diagnóstico";
+
+/**
+ * Exige checklist de entrada se o produto tem template ou a execução já começou.
+ * `temTemplateRecebimento: null` = ainda não sabemos (bloqueia, para não liberar cedo).
+ */
+export function mensagemBloqueioDiagnostico(opts: {
+  execucaoRecebimento?: { status: string } | null;
+  temTemplateRecebimento: boolean | null;
+}): string | null {
+  if (opts.execucaoRecebimento) {
+    return opts.execucaoRecebimento.status === "CONCLUIDO"
+      ? null
+      : MSG_CHECKLIST_RECEBIMENTO_PENDENTE;
+  }
+  return opts.temTemplateRecebimento === false
+    ? null
+    : MSG_CHECKLIST_RECEBIMENTO_PENDENTE;
+}
+
 export const RMA_CHECKLIST_TIPOS = ["RECEBIMENTO", "LIBERACAO"] as const;
 export type RmaChecklistTipo = (typeof RMA_CHECKLIST_TIPOS)[number];
 

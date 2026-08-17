@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import {
   RMA_CHECKLIST_CAMPO_TIPOS,
+  mensagemBloqueioDiagnostico,
   rmaEtapaEmRecebimento,
   type RmaChecklistTipo,
 } from "@teep/shared";
@@ -38,6 +39,34 @@ function assertProcessoAberto(status: string) {
   if (status !== "ABERTO") {
     throw new AppError(400, "Só permitido em RMA aberto");
   }
+}
+
+async function produtoTemChecklistRecebimento(produtoId: string) {
+  const t = await prisma.rmaChecklistTemplate.findFirst({
+    where: {
+      produtoId,
+      tipo: "RECEBIMENTO",
+      ativo: true,
+      itens: { some: {} },
+    },
+    select: { id: true },
+  });
+  return Boolean(t);
+}
+
+async function assertChecklistRecebimentoOkParaDiagnostico(item: {
+  produtoId: string;
+  checklistExecucoes: Array<{ tipo: string; status: string }>;
+}) {
+  const recv = item.checklistExecucoes.find((e) => e.tipo === "RECEBIMENTO");
+  const temTemplate = recv
+    ? true
+    : await produtoTemChecklistRecebimento(item.produtoId);
+  const msg = mensagemBloqueioDiagnostico({
+    execucaoRecebimento: recv || null,
+    temTemplateRecebimento: temTemplate,
+  });
+  if (msg) throw new AppError(400, msg);
 }
 
 async function loadItemNoProcesso(processoId: string, itemId: string) {
@@ -634,13 +663,7 @@ export async function salvarDiagnosticoEPlano(
   }
 
   if (concluir) {
-    const recv = item.checklistExecucoes.find((e) => e.tipo === "RECEBIMENTO");
-    if (!recv || recv.status !== "CONCLUIDO") {
-      throw new AppError(
-        400,
-        "Conclua o checklist de recebimento antes de concluir o diagnóstico"
-      );
-    }
+    await assertChecklistRecebimentoOkParaDiagnostico(item);
     if (input.servicos.length === 0 && input.pecas.length === 0) {
       throw new AppError(
         400,
@@ -656,7 +679,10 @@ export async function salvarDiagnosticoEPlano(
       select: { id: true },
     });
     if (found.length !== ids.length) {
-      throw new AppError(400, "Uma ou mais peças são inválidas/inativas");
+      throw new AppError(
+        400,
+        "A peça selecionada não existe ou está inativa. Selecione outra na lista."
+      );
     }
   }
 

@@ -20,7 +20,7 @@
 
 ## Etapas do item
 
-`AGUARDANDO_RECEBIMENTO` → checklist + diagnóstico/plano/peças → **Concluir diagnóstico** → `AGUARDANDO_ORCAMENTO` → (página Orçamento: valores + PDF + enviar) → `AGUARDANDO_APROVACAO` → aprovar por item → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar → `FINALIZADO`
+`AGUARDANDO_RECEBIMENTO` → checklist (se o produto tiver template) + diagnóstico/plano/peças → **Concluir diagnóstico** → `AGUARDANDO_ORCAMENTO` → (página Orçamento: valores + PDF + enviar) → `AGUARDANDO_APROVACAO` → aprovar por item → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar → `FINALIZADO`
 
 Recusa do orçamento → `NAO_APROVADO`.
 
@@ -55,4 +55,4 @@ Recusa do orçamento → `NAO_APROVADO`.
 | POST | `/rma/:id/orcamento/enviar` `{ itemIds }` |
 | GET | `/rma/:id/orcamento.pdf` |
 
-Gate de avanço: checklist + plano/diagnóstico (não anexo de laudo).
+Gate de avanço: plano/diagnóstico; checklist de entrada só se o produto tiver template (não anexo de laudo).
