@@ -286,6 +286,10 @@ export default function RmaNovoPage() {
       setError("Selecione o responsável comercial");
       return;
     }
+    if (!nfEntrada.trim()) {
+      setError("Informe o número da NF de entrada");
+      return;
+    }
     if (linhas.length === 0) {
       setError("Informe o total de produtos na nota de RMA");
       return;
@@ -332,7 +336,7 @@ export default function RmaNovoPage() {
         body: JSON.stringify({
           clienteId,
           responsavelComercialId: comercialId,
-          nfEntradaNumero: nfEntrada.trim() || null,
+          nfEntradaNumero: nfEntrada.trim(),
           nfEntradaArquivo: nfArquivo,
           observacao: observacao.trim() || null,
           destinatarioIds: destIds,
@@ -356,8 +360,9 @@ export default function RmaNovoPage() {
       </div>
       <h1 className="text-2xl font-semibold">Novo RMA</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Um RMA = uma NF de entrada. Cada produto/série entra no Estoque RMA;
-        checklist e diagnóstico ficam no sistema, item a item.
+        Um RMA = uma NF de entrada. Informe o número da nota de chegada; se
+        vier errada, dá para corrigir no processo. Cada produto/série entra no
+        Estoque RMA. Checklist e diagnóstico ficam no sistema, item a item.
       </p>
 
       <form
@@ -453,11 +458,12 @@ export default function RmaNovoPage() {
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">
-            <span className="mb-1 block font-medium">NF entrada (nº)</span>
+            <span className="mb-1 block font-medium">NF entrada (nº) *</span>
             <input
               className="w-full rounded-lg border px-3 py-2"
               value={nfEntrada}
               onChange={(e) => setNfEntrada(e.target.value)}
+              required
             />
           </label>
           <label className="block text-sm">

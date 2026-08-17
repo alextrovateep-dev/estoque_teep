@@ -35,12 +35,23 @@ describe("createRmaProcessoSchema", () => {
     assert.equal(r.success, false);
   });
 
-  it("aceita nota com produto + série", () => {
+  it("aceita nota com produto + série e NF de entrada", () => {
     const r = createRmaProcessoSchema.safeParse({
       clienteId: UUID_A,
+      responsavelComercialId: UUID_A,
+      nfEntradaNumero: "4040",
       itens: [{ produtoId: UUID_B, series: ["SN-001"] }],
     });
     assert.equal(r.success, true);
+  });
+
+  it("rejeita sem NF de entrada", () => {
+    const r = createRmaProcessoSchema.safeParse({
+      clienteId: UUID_A,
+      responsavelComercialId: UUID_A,
+      itens: [{ produtoId: UUID_B, series: ["SN-001"] }],
+    });
+    assert.equal(r.success, false);
   });
 
   it("rejeita série duplicada na mesma nota", () => {

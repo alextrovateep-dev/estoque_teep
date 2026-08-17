@@ -71,22 +71,22 @@ async function req<T = Json>(
   return data as T;
 }
 
-async function uploadLaudo(token: string): Promise<string> {
+async function uploadRmaPdf(token: string, filename: string): Promise<string> {
   const fd = new FormData();
   fd.append(
     "file",
     new Blob([MIN_PDF], { type: "application/pdf" }),
-    "smoke-laudo.pdf"
+    filename
   );
   fd.append("context", "rma");
-  fd.append("kind", "laudo");
+  fd.append("kind", "nf");
   const res = await fetch(`${API}/upload`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: fd,
   });
   const data = (await res.json()) as { url?: string };
-  if (!res.ok || !data.url) fail("upload laudo falhou", data);
+  if (!res.ok || !data.url) fail("upload NF RMA falhou", data);
   return data.url;
 }
 
@@ -198,6 +198,7 @@ async function main() {
     body: {
       clienteId,
       responsavelComercialId: comercialId,
+      nfEntradaNumero: "SMOKE-NF-ENT",
       itens: [{ produtoId: prod.id, series: [snRuim] }],
     },
     expectStatus: 201,
@@ -366,6 +367,14 @@ async function main() {
   );
   ok("liberação → AGUARDANDO_ENVIO");
 
+  const nfRetUrl = await uploadRmaPdf(token, "smoke-nf-retorno.pdf");
+  await req(`/rma/${processo.id}/anexos`, {
+    method: "POST",
+    token,
+    body: { tipo: "NF_SAIDA", arquivo: nfRetUrl },
+  });
+  ok("NF de retorno anexada");
+
   const aposTroca = await req<{
     status: string;
     itens: Array<{
@@ -385,6 +394,7 @@ async function main() {
       origemFilialId: pln!.id,
       numeroSerieBoa: snBoa,
       destinoDescarteFilialId: desc!.id,
+      nfSaidaNumero: "SMOKE-NF-RET",
       observacao: "Smoke: trocado por peça boa",
     },
   });
@@ -440,9 +450,9 @@ async function main() {
   ok(`série ruim EM_ESTOQUE em DESC`);
 
   if (aposTroca.status !== "FECHADO") {
-    fail(`processo esperado FECHADO, veio ${aposTroca.status}`, aposTroca);
+    fail(`processo esperado FECHADO após retorno com NF, veio ${aposTroca.status}`, aposTroca);
   }
-  ok("processo FECHADO");
+  ok("processo FECHADO após troca com NF de retorno");
 
   console.log("\n✅ Smoke RMA troca (por item) passou.\n");
 }

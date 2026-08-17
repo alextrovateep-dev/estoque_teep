@@ -638,7 +638,11 @@ export const createRmaProcessoSchema = z
       message: "Selecione o responsável comercial",
     }),
     observacao: z.string().max(2000).optional().nullable(),
-    nfEntradaNumero: z.string().max(60).optional().nullable(),
+    nfEntradaNumero: z
+      .string({ required_error: "Informe o número da NF de entrada" })
+      .trim()
+      .min(1, "Informe o número da NF de entrada")
+      .max(60),
     /** Path temporário /uploads/rma/_tmp/... (promovido na abertura) */
     nfEntradaArquivo: uploadPath.optional().nullable(),
     /**

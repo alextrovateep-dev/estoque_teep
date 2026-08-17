@@ -684,7 +684,7 @@ export const TOOL_DEFINITIONS = [
           type: "string",
           enum: [...RMA_PROCESSO_STATUS],
           description:
-            "ABERTO = abertos/pendentes; FECHADO; CANCELADO. Omitir = todos.",
+            "ABERTO = em atendimento (orçamento, manutenção, negociação). Fecha ao devolver/trocar o último item com NF de retorno. CANCELADO. Omitir = todos. Proibido tratar RMA fechado só porque o estoque RMA está vazio.",
         },
         etapa: {
           type: "string",

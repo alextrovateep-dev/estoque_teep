@@ -528,43 +528,98 @@ async function gravarDestinatariosRma(
 }
 
 
-async function maybeFecharProcesso(processoId: string) {
-  const abertos = await prisma.rmaItem.count({
-    where: {
-      processoId,
-      status: { in: ["ABERTO", "EM_ESTOQUE", "SEM_MANUTENCAO"] },
-    },
-  });
-  if (abertos === 0) {
-    const before = await prisma.rmaProcesso.findUnique({
-      where: { id: processoId },
-      select: {
-        status: true,
-        criadoPorId: true,
-        cliente: { select: { nome: true } },
-        destinatarios: {
-          select: { usuario: { select: { id: true } } },
-        },
-      },
+async function exigirDocumentosParaEnvioCliente(opts: {
+  processoId: string;
+  nfEntradaAtual: string | null | undefined;
+  nfSaidaAtual: string | null | undefined;
+  nfSaidaInformada?: string | null;
+}): Promise<{ numero: string; arquivo: string }> {
+  if (!opts.nfEntradaAtual?.trim()) {
+    throw new AppError(
+      400,
+      "Informe o número da NF de entrada antes de enviar ao cliente."
+    );
+  }
+  const numero = opts.nfSaidaInformada?.trim() || opts.nfSaidaAtual?.trim() || null;
+  if (!numero) {
+    throw new AppError(
+      400,
+      "Informe o número da NF de retorno antes de enviar ao cliente."
+    );
+  }
+  if (!mesmaNotaFiscalNumero(numero, opts.nfSaidaAtual)) {
+    await assertNotaFiscalNumeroLivre({
+      numero,
+      operacao: "SAIDA",
+      exclude: { rmaProcessoId: opts.processoId },
     });
-    if (
-      !before ||
-      before.status === "FECHADO" ||
-      before.status === "CANCELADO"
-    ) {
-      return;
-    }
     await prisma.rmaProcesso.update({
-      where: { id: processoId },
-      data: { status: "FECHADO" },
-    });
-    notificarRmaEncerrado({
-      processoId,
-      clienteNome: before.cliente.nome,
-      status: "FECHADO",
-      destinatarioIds: destinatarioIdsDoProcesso(before),
+      where: { id: opts.processoId },
+      data: { nfSaidaNumero: numero },
     });
   }
+  const arquivo = await arquivoAnexoAtivo(opts.processoId, "NF_SAIDA");
+  if (!arquivo) {
+    throw new AppError(
+      400,
+      "Anexe o arquivo da NF de retorno antes de enviar ao cliente."
+    );
+  }
+  return { numero, arquivo };
+}
+
+async function fecharProcessoAgora(processoId: string) {
+  const before = await prisma.rmaProcesso.findUnique({
+    where: { id: processoId },
+    select: {
+      status: true,
+      criadoPorId: true,
+      cliente: { select: { nome: true } },
+      destinatarios: {
+        select: { usuario: { select: { id: true } } },
+      },
+    },
+  });
+  if (
+    !before ||
+    before.status === "FECHADO" ||
+    before.status === "CANCELADO"
+  ) {
+    return;
+  }
+  await prisma.rmaProcesso.update({
+    where: { id: processoId },
+    data: { status: "FECHADO" },
+  });
+  notificarRmaEncerrado({
+    processoId,
+    clienteNome: before.cliente.nome,
+    status: "FECHADO",
+    destinatarioIds: destinatarioIdsDoProcesso(before),
+  });
+}
+
+/** Fecha só após retorno ao cliente (devolução/troca) com NF de saída, quando não resta item em atendimento. */
+async function maybeFecharAposRetornoAoCliente(processoId: string) {
+  const proc = await prisma.rmaProcesso.findUnique({
+    where: { id: processoId },
+    select: {
+      status: true,
+      nfSaidaNumero: true,
+      itens: { select: { status: true, movSaidaId: true } },
+    },
+  });
+  if (!proc || proc.status !== "ABERTO") return;
+  if (!proc.nfSaidaNumero?.trim()) return;
+  const aindaEmAtendimento = proc.itens.some((i) =>
+    (ITEM_NO_RMA as readonly string[]).includes(i.status)
+  );
+  if (aindaEmAtendimento) return;
+  const retornouAoCliente = proc.itens.some(
+    (i) => i.status === "DEVOLVIDO" || Boolean(i.movSaidaId)
+  );
+  if (!retornouAoCliente) return;
+  await fecharProcessoAgora(processoId);
 }
 
 export async function listarRma(
@@ -760,6 +815,9 @@ export async function criarRmaProcesso(
   }
   if (linhas.length > 50) {
     throw new AppError(400, "Máximo de 50 produtos por nota de RMA");
+  }
+  if (!input.nfEntradaNumero?.trim()) {
+    throw new AppError(400, "Informe o número da NF de entrada");
   }
 
   await assertNotaFiscalNumeroLivre({
@@ -1400,25 +1458,6 @@ export async function removerRmaItem(
     data: { observacao: observacaoProcesso },
   });
 
-  // Fecha só se já houve devolução/troca e não restou pendência
-  const pendentes = await prisma.rmaItem.count({
-    where: {
-      processoId: id,
-      status: { in: ["ABERTO", "EM_ESTOQUE", "SEM_MANUTENCAO"] },
-    },
-  });
-  if (pendentes === 0) {
-    const concluidos = await prisma.rmaItem.count({
-      where: {
-        processoId: id,
-        status: { in: ["DEVOLVIDO", "DESCARTADO"] },
-      },
-    });
-    if (concluidos > 0) {
-      await maybeFecharProcesso(id);
-    }
-  }
-
   return obterRma(user, id);
 }
 
@@ -1438,17 +1477,32 @@ export async function atualizarRmaFinanceiro(
   const proc = await prisma.rmaProcesso.findUnique({ where: { id } });
   if (!proc) throw new AppError(404, "Processo RMA não encontrado");
   assertPodeVerProcesso(user, proc.filialId);
-  if (proc.status === "CANCELADO" || proc.status === "FECHADO") {
-    throw new AppError(
-      400,
-      `Processo ${proc.status === "CANCELADO" ? "cancelado" : "fechado"} — não é possível alterar o financeiro`
-    );
+  if (proc.status === "CANCELADO") {
+    throw new AppError(400, "Processo cancelado — não é possível alterar o financeiro");
+  }
+  if (proc.status === "FECHADO") {
+    const soCorrecaoNf =
+      input.cobrou === undefined &&
+      input.valorCobrado === undefined &&
+      input.nfCobrancaNumero === undefined;
+    if (!soCorrecaoNf) {
+      throw new AppError(
+        400,
+        "Processo fechado — só número e arquivo da NF de entrada/retorno podem ser corrigidos"
+      );
+    }
   }
 
   const data: Record<string, unknown> = {};
   if (input.nfEntradaNumero !== undefined) {
     const nf = input.nfEntradaNumero?.trim() || null;
-    if (nf && !mesmaNotaFiscalNumero(nf, proc.nfEntradaNumero)) {
+    if (!nf) {
+      throw new AppError(
+        400,
+        "Informe o número da NF de entrada. Se estiver errada, troque pelo número correto."
+      );
+    }
+    if (!mesmaNotaFiscalNumero(nf, proc.nfEntradaNumero)) {
       await assertNotaFiscalNumeroLivre({
         numero: nf,
         operacao: "ENTRADA",
@@ -1491,6 +1545,30 @@ export async function atualizarRmaFinanceiro(
   }
 
   await prisma.rmaProcesso.update({ where: { id }, data });
+
+  const nfEntNova =
+    typeof data.nfEntradaNumero === "string" ? data.nfEntradaNumero : null;
+  const nfSaiNova =
+    typeof data.nfSaidaNumero === "string" ? data.nfSaidaNumero : null;
+  if (nfEntNova) {
+    await prisma.movimentacao.updateMany({
+      where: {
+        rmaItensEntrada: { some: { processoId: id } },
+        status: { notIn: ["ESTORNADO", "REJEITADO"] },
+      },
+      data: { notaFiscalNumero: nfEntNova },
+    });
+  }
+  if (nfSaiNova) {
+    await prisma.movimentacao.updateMany({
+      where: {
+        rmaItensSaida: { some: { processoId: id } },
+        status: { notIn: ["ESTORNADO", "REJEITADO"] },
+      },
+      data: { notaFiscalNumero: nfSaiNova },
+    });
+  }
+
   return obterRma(user, id);
 }
 
@@ -1513,20 +1591,25 @@ export async function anexarRma(
   }
 
   const tipo = input.tipo as RmaAnexoTipo;
-  // NF retorno (entrada/saída) e laudos: só com RMA aberto.
+  // NF entrada/retorno: dá para trocar o arquivo se a nota veio errada, mesmo após FECHADO.
   // NF cobrança: financeiro pode anexar também após FECHADO.
-  if (proc.status === "FECHADO" && tipo !== "NF_COBRANCA") {
+  if (
+    proc.status === "FECHADO" &&
+    tipo !== "NF_COBRANCA" &&
+    tipo !== "NF_ENTRADA" &&
+    tipo !== "NF_SAIDA"
+  ) {
     throw new AppError(
       400,
-      "Processo fechado — só a NF de cobrança pode ser anexada pelo financeiro"
+      "Processo fechado — só as NFs (entrada, retorno e cobrança) podem ser trocadas"
     );
   }
 
-  const precisaFin = tipo !== "LAUDO" && tipo !== "OUTRO";
-  if (precisaFin && !opts?.podeFinanceiro) {
+  const precisaCobranca = tipo === "NF_COBRANCA";
+  if (precisaCobranca && !opts?.podeFinanceiro) {
     throw new AppError(
       403,
-      "Anexos de NF/cobrança exigem permissão RMA financeiro"
+      "NF de cobrança exige permissão RMA financeiro"
     );
   }
 
@@ -1685,21 +1768,13 @@ export async function devolverRmaItens(
     );
   }
 
-  const nfSaida =
-    input.nfSaidaNumero?.trim() || proc.nfSaidaNumero || null;
-  if (nfSaida && !mesmaNotaFiscalNumero(nfSaida, proc.nfSaidaNumero)) {
-    await assertNotaFiscalNumeroLivre({
-      numero: nfSaida,
-      operacao: "SAIDA",
-      exclude: { rmaProcessoId: id },
+  const { numero: nfSaida, arquivo: nfSaidaArquivo } =
+    await exigirDocumentosParaEnvioCliente({
+      processoId: id,
+      nfEntradaAtual: proc.nfEntradaNumero,
+      nfSaidaAtual: proc.nfSaidaNumero,
+      nfSaidaInformada: input.nfSaidaNumero,
     });
-    await prisma.rmaProcesso.update({
-      where: { id },
-      data: { nfSaidaNumero: nfSaida },
-    });
-  }
-
-  const nfSaidaArquivo = await arquivoAnexoAtivo(id, "NF_SAIDA");
   const feitos: Array<{
     itemId: string;
     movSaidaId: string;
@@ -1822,7 +1897,7 @@ export async function devolverRmaItens(
     throw e;
   }
 
-  await maybeFecharProcesso(id);
+  await maybeFecharAposRetornoAoCliente(id);
   return obterRma(user, id);
 }
 
@@ -1975,6 +2050,14 @@ export async function trocarRmaItem(
     throw new AppError(400, "Estoque de descarte deve ser diferente do RMA");
   }
 
+  const { numero: nfSaida, arquivo: nfSaidaArquivo } =
+    await exigirDocumentosParaEnvioCliente({
+      processoId,
+      nfEntradaAtual: proc.nfEntradaNumero,
+      nfSaidaAtual: proc.nfSaidaNumero,
+      nfSaidaInformada: input.nfSaidaNumero,
+    });
+
   const tipoSaida = await tipoSaidaRma();
   const statusAnterior = item.status;
   const etapaAnterior = item.etapa || "AGUARDANDO_ENVIO";
@@ -2029,20 +2112,6 @@ export async function trocarRmaItem(
     unidadeSerieBoaId = boa.id;
 
     // 2) Expedir série boa ao cliente (Saída RMA)
-    const nfSaida =
-      input.nfSaidaNumero?.trim() || proc.nfSaidaNumero || null;
-    if (nfSaida && !mesmaNotaFiscalNumero(nfSaida, proc.nfSaidaNumero)) {
-      await assertNotaFiscalNumeroLivre({
-        numero: nfSaida,
-        operacao: "SAIDA",
-        exclude: { rmaProcessoId: processoId },
-      });
-      await prisma.rmaProcesso.update({
-        where: { id: processoId },
-        data: { nfSaidaNumero: nfSaida },
-      });
-    }
-    const nfSaidaArquivo = await arquivoAnexoAtivo(processoId, "NF_SAIDA");
     const saida = await lancarSaidaRma(user, {
       tipoSaidaId: tipoSaida.id,
       produtoId: item.produtoId,
@@ -2149,7 +2218,7 @@ export async function trocarRmaItem(
     throw e;
   }
 
-  await maybeFecharProcesso(processoId);
+  await maybeFecharAposRetornoAoCliente(processoId);
   return obterRma(user, processoId);
 }
 
@@ -2165,7 +2234,7 @@ export async function cancelarRma(
   if (proc.status === "FECHADO") {
     throw new AppError(
       400,
-      "Processo fechado — não é possível cancelar (itens já devolvidos ao cliente)"
+      "Processo fechado — não é possível cancelar"
     );
   }
 

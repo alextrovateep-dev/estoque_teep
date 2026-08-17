@@ -220,7 +220,7 @@ rmaRouter.get(
 
 rmaRouter.patch(
   "/:id/financeiro",
-  requirePermissao("rma_cobranca"),
+  requirePermissao("rma"),
   validateBody(updateRmaFinanceiroSchema),
   async (req: AuthedRequest, res, next) => {
     try {

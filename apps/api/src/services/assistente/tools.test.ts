@@ -293,7 +293,8 @@ describe("assistente system prompt transferência", () => {
     assert.match(p, /get_rma_process/);
     assert.match(p, /status=ABERTO/);
     assert.match(p, /PROCESSOS RMA/);
-    assert.match(p, /PROIBIDO confundir com saldo no estoque RMA/);
+    assert.match(p, /Não existe botão de fechar/);
+    assert.match(p, /PROIBIDO concluir que o RMA fechou só porque não há item no estoque RMA/);
   });
 
   it("fim do mês civil SP não coincide com YYYY-MM-DD de ateIso em UTC", () => {

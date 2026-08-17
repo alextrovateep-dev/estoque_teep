@@ -281,9 +281,15 @@ export default function RmaDetalhePage() {
 
   async function salvarFinanceiro(e: FormEvent) {
     e.preventDefault();
-    if (!canFin || actingRef.current) return;
-    if (row?.status !== "ABERTO") {
-      setError("Processo fechado ou cancelado — financeiro somente leitura");
+    if (actingRef.current) return;
+    if (row?.status === "CANCELADO") {
+      setError("Processo cancelado — NF somente leitura");
+      return;
+    }
+    if (!nfEnt.trim()) {
+      setError(
+        "Informe o número da NF de entrada. Se estiver errada, troque pelo correto."
+      );
       return;
     }
     actingRef.current = true;
@@ -374,12 +380,10 @@ export default function RmaDetalhePage() {
       return;
     }
     if (
-      (tipo === "NF_ENTRADA" ||
-        tipo === "NF_SAIDA" ||
-        tipo === "NF_COBRANCA") &&
+      tipo === "NF_COBRANCA" &&
       !canFin
     ) {
-      setError("Sem permissão para anexar NF");
+      setError("Sem permissão para anexar NF de cobrança");
       return;
     }
     actingRef.current = true;
@@ -440,6 +444,24 @@ export default function RmaDetalhePage() {
     sucessoMsg?: string
   ) {
     if (actingRef.current) return;
+    if (!nfSai.trim()) {
+      setError(
+        "Informe o número da NF de retorno antes de devolver ao cliente."
+      );
+      return;
+    }
+    if (!anexoAtivoPorTipo(row?.anexos || [], "NF_SAIDA")) {
+      setError(
+        "Anexe o arquivo da NF de retorno antes de devolver ao cliente."
+      );
+      return;
+    }
+    if (!nfEnt.trim()) {
+      setError(
+        "Informe o número da NF de entrada antes de devolver ao cliente."
+      );
+      return;
+    }
     actingRef.current = true;
     setActing(true);
     setError("");
@@ -810,6 +832,24 @@ export default function RmaDetalhePage() {
       setError("Selecione o estoque de descarte");
       return;
     }
+    if (!nfSai.trim()) {
+      setError(
+        "Informe o número da NF de retorno antes de enviar ao cliente."
+      );
+      return;
+    }
+    if (!anexoAtivoPorTipo(row?.anexos || [], "NF_SAIDA")) {
+      setError(
+        "Anexe o arquivo da NF de retorno antes de enviar ao cliente."
+      );
+      return;
+    }
+    if (!nfEnt.trim()) {
+      setError(
+        "Informe o número da NF de entrada antes de enviar ao cliente."
+      );
+      return;
+    }
     if (
       !confirm(
         "Confirmar troca? A série boa será transferida e expedida ao cliente; a série ruim vai ao descarte."
@@ -864,6 +904,16 @@ export default function RmaDetalhePage() {
   const itensAtivos = row.itens.filter((i) => i.status !== "CANCELADO");
   const itensRemovidos = row.itens.filter((i) => i.status === "CANCELADO");
   const processoAberto = row.status === "ABERTO";
+  const temNfRetornoArquivo = Boolean(
+    anexoAtivoPorTipo(row.anexos, "NF_SAIDA")
+  );
+  const faltaDocsRetorno = !nfEnt.trim()
+    ? "Informe o número da NF de entrada"
+    : !nfSai.trim()
+      ? "Informe o número da NF de retorno"
+      : !temNfRetornoArquivo
+        ? "Anexe o arquivo da NF de retorno"
+        : "";
   const itensAguardandoAprovacao = itensAtivos.filter(
     (i) => i.etapa === "AGUARDANDO_APROVACAO"
   );
@@ -888,8 +938,8 @@ export default function RmaDetalhePage() {
         "AGUARDANDO_LAUDO",
       ].includes(i.etapa || "")
     );
-  /** NFs do processo só com RMA aberto; cobrança por item também após FECHADO. */
-  const canEditFin = canFin && processoAberto;
+  /** NF entrada/retorno: dá para corrigir número/arquivo (mesmo após fechar). Cobrança por item: financeiro. */
+  const canEditNfsProcesso = row.status !== "CANCELADO";
   const canEditCobrancaItem = canFin && row.status !== "CANCELADO";
   const resumoEtapas = (() => {
     const counts = new Map<string, number>();
@@ -1279,17 +1329,19 @@ export default function RmaDetalhePage() {
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-slate-900">Processo / NFs</h2>
             <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              NF entrada e NF de retorno (saída): incluir antes de fechar; depois
-              só visualização. NF de cobrança: financeiro pode anexar também
-              após o fechamento. Cobrança de manutenção (valor/NF) fica em cada
-              item.
-              {!canFin && " Sem permissão de cobrança — somente leitura."}
-              {canFin &&
-                !processoAberto &&
-                " Processo fechado — retorno somente leitura; cobrança editável."}
+              A NF habilita a operação: entrada na chegada, retorno no envio ao
+              cliente. Se o número ou o arquivo vierem errados, troque pelo
+              correto — o histórico antigo fica em Anteriores. Devolver/Trocar
+              precisa das duas notas (retorno com arquivo). O processo fecha
+              quando a operação devolve ou troca o último item com a NF de
+              retorno. Orçamento e negociação não fecham o RMA. Cobrança de
+              manutenção fica em cada item.
+              {!canFin && " Cobrança por item exige permissão financeiro."}
+              {row.status === "FECHADO" &&
+                " Processo fechado — ainda dá para corrigir número e arquivo da NF."}
             </p>
           </div>
-          {canEditFin && (
+          {canEditNfsProcesso && (
             <button
               type="submit"
               form="rma-financeiro-form"
@@ -1308,10 +1360,10 @@ export default function RmaDetalhePage() {
         >
           <label className="block text-xs">
             <span className="mb-0.5 block font-medium text-slate-600">
-              NF entrada
+              NF entrada *
             </span>
             <input
-              disabled={!canEditFin || acting}
+              disabled={!canEditNfsProcesso || acting}
               className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
               value={nfEnt}
               onChange={(e) => setNfEnt(e.target.value)}
@@ -1319,10 +1371,10 @@ export default function RmaDetalhePage() {
           </label>
           <label className="block text-xs">
             <span className="mb-0.5 block font-medium text-slate-600">
-              NF retorno
+              NF retorno *
             </span>
             <input
-              disabled={!canEditFin || acting}
+              disabled={!canEditNfsProcesso || acting}
               className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
               value={nfSai}
               onChange={(e) => setNfSai(e.target.value)}
@@ -1333,7 +1385,7 @@ export default function RmaDetalhePage() {
               Observação
             </span>
             <input
-              disabled={!canEditFin || acting}
+              disabled={!canEditNfsProcesso || acting}
               className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
               value={obs}
               onChange={(e) => setObs(e.target.value)}
@@ -1345,6 +1397,10 @@ export default function RmaDetalhePage() {
         <div className="mt-4 border-t border-slate-100 pt-3">
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">
             Arquivos do RMA
+          </p>
+          <p className="mb-2 text-[11px] leading-snug text-slate-500">
+            Se o PDF veio errado, use Trocar — o arquivo anterior fica em
+            Anteriores.
           </p>
           <div className="grid gap-2 sm:grid-cols-3">
             {(
@@ -1361,7 +1417,7 @@ export default function RmaDetalhePage() {
               const podeAnexar =
                 regra === "financeiro"
                   ? canEditCobrancaItem
-                  : canEditFin;
+                  : canEditNfsProcesso;
               return (
                 <div
                   key={tipo}
@@ -1473,7 +1529,14 @@ export default function RmaDetalhePage() {
                 disabled={
                   acting || painelAcao !== null || removerItemId !== null
                 }
+                title={faltaDocsRetorno || undefined}
                 onClick={() => {
+                  if (faltaDocsRetorno) {
+                    setError(
+                      `${faltaDocsRetorno} antes de devolver ao cliente.`
+                    );
+                    return;
+                  }
                   setError("");
                   setMotivoAcao("");
                   setEditCliente(false);
@@ -1682,6 +1745,11 @@ export default function RmaDetalhePage() {
                 Destino: cliente do processo ({row.cliente.nome}) —{" "}
                 <strong>não</strong> estorna a entrada.
               </li>
+              <li>
+                Usa a NF de retorno <strong>{nfSai.trim()}</strong>
+                {temNfRetornoArquivo ? " e o arquivo anexado" : ""}. Se for o
+                último item em atendimento, o processo fecha.
+              </li>
             </ul>
           </ConfirmMotivoPanel>
         )}
@@ -1886,6 +1954,7 @@ export default function RmaDetalhePage() {
                               type="button"
                               disabled={acting || removerItemId !== null}
                               className="min-h-8 text-brand underline disabled:opacity-50"
+                              title={faltaDocsRetorno || undefined}
                               onClick={() => void devolver([i.id])}
                             >
                               Devolver
