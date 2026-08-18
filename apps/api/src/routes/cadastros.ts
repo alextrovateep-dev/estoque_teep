@@ -1201,11 +1201,14 @@ cadastrosRouter.patch(
       if ("documento" in data) {
         data.documento = normalizeDocumento(data.documento);
       }
-      const tipoFinal = data.tipo ?? existing.tipo;
-      const docFinal =
-        "documento" in data ? data.documento : existing.documento;
-      if (tipoExigeCnpj(tipoFinal) && !isValidCnpj(docFinal)) {
-        throw new AppError(400, MSG_CNPJ_OBRIGATORIO);
+      const mudouCnpjOuTipo = "documento" in data || "tipo" in data;
+      if (mudouCnpjOuTipo) {
+        const tipoFinal = data.tipo ?? existing.tipo;
+        const docFinal =
+          "documento" in data ? data.documento : existing.documento;
+        if (tipoExigeCnpj(tipoFinal) && !isValidCnpj(docFinal)) {
+          throw new AppError(400, MSG_CNPJ_OBRIGATORIO);
+        }
       }
       if (data.documento) {
         const dup = await findClienteByDocumento(

@@ -129,12 +129,16 @@ function ClientesPageInner() {
 
   async function toggleAtivo(c: Cliente) {
     setError("");
+    setMsg("");
     try {
-      await api(`/clientes/${c.id}`, {
+      const updated = await api<Pick<Cliente, "id" | "ativo">>(`/clientes/${c.id}`, {
         method: "PATCH",
         body: JSON.stringify({ ativo: !c.ativo }),
       });
-      await load();
+      setLista((prev) =>
+        prev.map((x) => (x.id === c.id ? { ...x, ativo: updated.ativo } : x))
+      );
+      setMsg(updated.ativo ? "Cadastro ativado" : "Cadastro desativado");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     }
@@ -237,7 +241,9 @@ function ClientesPageInner() {
                   ? "border-l-4 border-l-brand bg-brand/[0.07] text-sm shadow-[inset_0_0_0_1px_rgba(91,139,131,0.22)]"
                   : outroAberto
                     ? "text-sm opacity-45"
-                    : "text-sm"
+                    : c.ativo
+                      ? "text-sm"
+                      : "text-sm opacity-60"
               }
             >
               <div className="flex items-center justify-between gap-3 px-4 py-3">
@@ -325,7 +331,7 @@ function ClientesPageInner() {
                   {canEdit && (
                     <button
                       type="button"
-                      onClick={() => toggleAtivo(c)}
+                      onClick={() => void toggleAtivo(c)}
                       className="text-brand hover:underline"
                     >
                       {c.ativo ? "Desativar" : "Ativar"}

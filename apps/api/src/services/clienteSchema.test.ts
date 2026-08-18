@@ -69,8 +69,11 @@ describe("clienteSchema CNPJ", () => {
     assert.equal(r.success, true);
   });
 
-  it("PATCH sem documento continua válido", () => {
-    const r = updateClienteSchema.safeParse({ nome: "Novo nome" });
+  it("PATCH só de ativo não exige CNPJ", () => {
+    const r = updateClienteSchema.safeParse({ ativo: false });
     assert.equal(r.success, true);
+    if (r.success) {
+      assert.deepEqual(r.data, { ativo: false });
+    }
   });
 });
