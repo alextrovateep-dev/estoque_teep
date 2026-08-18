@@ -3,6 +3,8 @@
 import { api, apiUpload } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
 import {
+  checklistFotoExigida,
+  checklistMostrarCampoFoto,
   mensagemBloqueioDiagnostico,
   rmaEtapaEmRecebimento,
   rmaOrcamentoStatusLabel,
@@ -109,6 +111,8 @@ type Props = {
   produtoCodigo: string;
   produtoDescricao: string;
   numeroSerie?: string | null;
+  /** NF de retorno (número salvo + arquivo) — obrigatória para concluir a liberação */
+  bloqueioNfRetorno?: string | null;
   onUpdated: () => Promise<void> | void;
   onError: (msg: string) => void;
 };
@@ -120,6 +124,7 @@ export function RmaItemWorkflowPanel({
   produtoCodigo,
   produtoDescricao,
   numeroSerie,
+  bloqueioNfRetorno,
   onUpdated,
   onError,
 }: Props) {
@@ -337,6 +342,35 @@ export function RmaItemWorkflowPanel({
     if (!exec) {
       reportError("Inicie o checklist antes");
       return;
+    }
+    if (concluir && tipo === "LIBERACAO" && bloqueioNfRetorno) {
+      reportError(bloqueioNfRetorno);
+      return;
+    }
+    if (concluir) {
+      const faltaFoto = exec.template.itens.find((ti) => {
+        const r = respMap[ti.id];
+        if (
+          !checklistFotoExigida({
+            tipoCampo: ti.tipoCampo,
+            obrigatorio: ti.obrigatorio,
+            exigeFotoSe: ti.exigeFotoSe,
+            valorBool: r?.valorBool,
+            valorTexto: r?.valorTexto,
+          })
+        ) {
+          return false;
+        }
+        return !r?.fotos?.length;
+      });
+      if (faltaFoto) {
+        reportError(
+          faltaFoto.exigeFotoSe
+            ? `Anexe a foto de ${faltaFoto.codigo} — só é obrigatória nesta resposta.`
+            : `Anexe foto: ${faltaFoto.codigo}`
+        );
+        return;
+      }
     }
     setBusy(true);
     setLocalError("");
@@ -574,10 +608,19 @@ export function RmaItemWorkflowPanel({
                       ))}
                     </select>
                   ) : null}
-                  {(ti.tipoCampo === "FOTO" ||
-                    ti.exigeFotoSe ||
-                    (r.fotos && r.fotos.length > 0)) && (
+                  {checklistMostrarCampoFoto({
+                    tipoCampo: ti.tipoCampo,
+                    exigeFotoSe: ti.exigeFotoSe,
+                    valorBool: r.valorBool,
+                    valorTexto: r.valorTexto,
+                    temFotos: Boolean(r.fotos && r.fotos.length > 0),
+                  }) && (
                     <div className="mt-2 space-y-1">
+                      {ti.exigeFotoSe && ti.tipoCampo !== "FOTO" ? (
+                        <p className="text-xs text-slate-500">
+                          Foto obrigatória nesta resposta
+                        </p>
+                      ) : null}
                       <div className="flex flex-wrap gap-2">
                         {(r.fotos || []).map((f) => {
                           const href = resolveAssetUrl(f);
@@ -618,24 +661,36 @@ export function RmaItemWorkflowPanel({
           </ul>
         )}
         {exec && exec.status !== "CONCLUIDO" && processoAberto ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void salvarChecklist(tipo, false)}
-              className="rounded-lg border bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-            >
-              Salvar
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void salvarChecklist(tipo, true)}
-              className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-50"
-            >
-              Concluir checklist
-            </button>
-          </div>
+          <>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void salvarChecklist(tipo, false)}
+                className="rounded-lg border bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+              >
+                Salvar
+              </button>
+              <button
+                type="button"
+                disabled={
+                  busy || (tipo === "LIBERACAO" && Boolean(bloqueioNfRetorno))
+                }
+                title={
+                  tipo === "LIBERACAO" && bloqueioNfRetorno
+                    ? bloqueioNfRetorno
+                    : undefined
+                }
+                onClick={() => void salvarChecklist(tipo, true)}
+                className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-50"
+              >
+                Concluir checklist
+              </button>
+            </div>
+            {tipo === "LIBERACAO" && bloqueioNfRetorno ? (
+              <p className="mt-2 text-xs text-amber-800">{bloqueioNfRetorno}</p>
+            ) : null}
+          </>
         ) : null}
       </div>
     );

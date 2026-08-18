@@ -18,7 +18,7 @@ import {
   useState,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS } from "@teep/shared";
+import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS, mensagemBloqueioNfRetorno, formatYmdBr, ymdFromApi, ymdVencido } from "@teep/shared";
 
 type RmaAnexo = {
   id: string;
@@ -76,6 +76,7 @@ type Rma = {
   nfEntradaNumero: string | null;
   nfSaidaNumero: string | null;
   observacao: string | null;
+  prazoManutencao: string | null;
   criadoEm: string;
   responsavelComercialId?: string | null;
   cliente: { id: string; nome: string; documento?: string | null };
@@ -203,6 +204,7 @@ export default function RmaDetalhePage() {
   const [nfEnt, setNfEnt] = useState("");
   const [nfSai, setNfSai] = useState("");
   const [obs, setObs] = useState("");
+  const [prazoManutencao, setPrazoManutencao] = useState("");
   /** Cobrança editável por item */
   const [itemFinEditId, setItemFinEditId] = useState<string | null>(null);
   const [itemCobrou, setItemCobrou] = useState<"" | "true" | "false">("");
@@ -263,6 +265,7 @@ export default function RmaDetalhePage() {
         setNfEnt(r.nfEntradaNumero || "");
         setNfSai(r.nfSaidaNumero || "");
         setObs(r.observacao || "");
+        setPrazoManutencao(ymdFromApi(r.prazoManutencao) || "");
       } catch (e) {
         if (signal?.cancelled) return;
         setError(e instanceof Error ? e.message : "Erro");
@@ -303,9 +306,35 @@ export default function RmaDetalhePage() {
           nfEntradaNumero: nfEnt.trim() || null,
           nfSaidaNumero: nfSai.trim() || null,
           observacao: obs.trim() || null,
+          ...(row?.status === "ABERTO"
+            ? { prazoManutencao: prazoManutencao.trim() || null }
+            : {}),
         }),
       });
       setMsg("Dados do processo salvos");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function salvarPrazoManutencao(ymd: string) {
+    if (actingRef.current || row?.status !== "ABERTO") return;
+    const atual = ymdFromApi(row.prazoManutencao) || "";
+    if (ymd === atual) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/financeiro`, {
+        method: "PATCH",
+        body: JSON.stringify({ prazoManutencao: ymd.trim() || null }),
+      });
+      setMsg("Prazo da manutenção salvo");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -907,6 +936,10 @@ export default function RmaDetalhePage() {
   const temNfRetornoArquivo = Boolean(
     anexoAtivoPorTipo(row.anexos, "NF_SAIDA")
   );
+  const bloqueioNfRetorno = mensagemBloqueioNfRetorno({
+    nfSaidaNumero: row.nfSaidaNumero,
+    temArquivoNfSaida: temNfRetornoArquivo,
+  });
   const faltaDocsRetorno = !nfEnt.trim()
     ? "Informe o número da NF de entrada"
     : !nfSai.trim()
@@ -976,6 +1009,35 @@ export default function RmaDetalhePage() {
           {PROC_STATUS[row.status] || row.status}
         </span>
       </div>
+      <label className="mt-3 flex max-w-sm flex-col gap-1">
+        <span className="text-sm font-medium text-slate-800">
+          Prazo limite da manutenção
+        </span>
+        <input
+          type="date"
+          disabled={!processoAberto || acting}
+          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50"
+          value={prazoManutencao}
+          onChange={(e) => {
+            const v = e.target.value;
+            setPrazoManutencao(v);
+            void salvarPrazoManutencao(v);
+          }}
+        />
+        <span
+          className={`text-[11px] ${
+            processoAberto && ymdVencido(prazoManutencao)
+              ? "font-medium text-amber-800"
+              : "text-slate-500"
+          }`}
+        >
+          {prazoManutencao
+            ? ymdVencido(prazoManutencao)
+              ? `Vencido em ${formatYmdBr(prazoManutencao)}`
+              : `Concluir a manutenção até ${formatYmdBr(prazoManutencao)}`
+            : "Data limite para concluir a manutenção do equipamento."}
+        </span>
+      </label>
       <p className="mt-1 text-sm text-slate-600">
         <span className="font-medium text-slate-800">{row.cliente.nome}</span>
         {podeEditarCliente && !editCliente && (
@@ -1329,13 +1391,14 @@ export default function RmaDetalhePage() {
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-slate-900">Processo / NFs</h2>
             <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              A NF habilita a operação: entrada na chegada, retorno no envio ao
-              cliente. Se o número ou o arquivo vierem errados, troque pelo
-              correto — o histórico antigo fica em Anteriores. Devolver/Trocar
-              precisa das duas notas (retorno com arquivo). O processo fecha
-              quando a operação devolve ou troca o último item com a NF de
-              retorno. Orçamento e negociação não fecham o RMA. Cobrança de
-              manutenção fica em cada item.
+              A NF habilita a operação: entrada na chegada, retorno na
+              liberação e no envio ao cliente. Informe o número, salve e anexe
+              o arquivo da NF de retorno antes de concluir o checklist de
+              liberação ou de Devolver/Trocar. Se o número ou o arquivo vierem
+              errados, troque pelo correto — o histórico antigo fica em
+              Anteriores. O processo fecha quando a operação devolve ou troca o
+              último item com a NF de retorno. Orçamento e negociação não
+              fecham o RMA. Cobrança de manutenção fica em cada item.
               {!canFin && " Cobrança por item exige permissão financeiro."}
               {row.status === "FECHADO" &&
                 " Processo fechado — ainda dá para corrigir número e arquivo da NF."}
@@ -1527,7 +1590,10 @@ export default function RmaDetalhePage() {
               <button
                 type="button"
                 disabled={
-                  acting || painelAcao !== null || removerItemId !== null
+                  acting ||
+                  painelAcao !== null ||
+                  removerItemId !== null ||
+                  Boolean(faltaDocsRetorno)
                 }
                 title={faltaDocsRetorno || undefined}
                 onClick={() => {
@@ -1897,6 +1963,7 @@ export default function RmaDetalhePage() {
                     produtoCodigo={i.produto.codigo}
                     produtoDescricao={descLimpa || i.produto.descricao}
                     numeroSerie={i.unidadeSerie?.numeroSerie || null}
+                    bloqueioNfRetorno={bloqueioNfRetorno}
                     onUpdated={async () => {
                       await load();
                     }}
@@ -1952,18 +2019,27 @@ export default function RmaDetalhePage() {
                           <>
                             <button
                               type="button"
-                              disabled={acting || removerItemId !== null}
-                              className="min-h-8 text-brand underline disabled:opacity-50"
+                              disabled={
+                                acting ||
+                                removerItemId !== null ||
+                                Boolean(faltaDocsRetorno)
+                              }
                               title={faltaDocsRetorno || undefined}
                               onClick={() => void devolver([i.id])}
+                              className="min-h-8 text-brand underline disabled:opacity-50"
                             >
                               Devolver
                             </button>
                             <button
                               type="button"
-                              disabled={acting || removerItemId !== null}
-                              className="min-h-8 text-amber-800 underline disabled:opacity-50"
+                              disabled={
+                                acting ||
+                                removerItemId !== null ||
+                                Boolean(faltaDocsRetorno)
+                              }
+                              title={faltaDocsRetorno || undefined}
                               onClick={() => void abrirTroca(i)}
+                              className="min-h-8 text-amber-800 underline disabled:opacity-50"
                             >
                               Trocar
                             </button>

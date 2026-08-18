@@ -107,6 +107,25 @@ describe("assistente tools authz", () => {
     assert.equal(r.ok, false);
     assert.match(String(r.error), /RMA/i);
   });
+
+  it("list_transfers recusa sem permissão transferencias (sem tocar no DB)", async () => {
+    const r = (await executeTool(
+      "list_transfers",
+      { periodo: "mes_atual" },
+      {
+        user: operador,
+        permissoes: {
+          dashboard: true,
+          assistente: true,
+          transferencias: false,
+        },
+      }
+    )) as { ok: boolean; error?: string; transferencias?: unknown };
+
+    assert.equal(r.ok, false);
+    assert.match(String(r.error), /Transferências/i);
+    assert.equal(r.transferencias, undefined);
+  });
 });
 
 describe("assistente actionLinks ACL", () => {
@@ -156,6 +175,22 @@ describe("assistente actionLinks ACL", () => {
       {
         ok: true,
         actionLink: { href, label: "Abrir processo RMA" },
+      },
+      out,
+      allowed
+    );
+    assert.equal(out.length, 1);
+    assert.equal(out[0]!.href, href);
+  });
+
+  it("collectActionLink aceita /transferencias/:uuid quando /transferencias está na allowlist", () => {
+    const out: AssistenteActionLink[] = [];
+    const allowed = new Set(["/transferencias"]);
+    const href = "/transferencias/00000000-0000-4000-8000-0000000000aa";
+    collectActionLink(
+      {
+        ok: true,
+        actionLink: { href, label: "Abrir transferência" },
       },
       out,
       allowed
@@ -230,15 +265,15 @@ describe("assistente system prompt transferência", () => {
     assert.match(p, /list_product_series/);
   });
 
-  it("consulta de transferência aponta fluxo=transferencia e separa de criar", () => {
+  it("consulta de transferência aponta list_transfers e separa de criar", () => {
     const p = buildSystemPrompt({
       user: operador,
       permissoes: { lancamentos: true, assistente: true, dashboard: true },
     });
-    assert.match(p, /fluxo=transferencia/);
-    assert.match(p, /papelFilial=destino/);
+    assert.match(p, /list_transfers/);
+    assert.match(p, /destinoSigla=TBO/);
     assert.match(p, /NUNCA chame prepare_transfer só para consultar/);
-    assert.match(p, /contagemEnviadas/);
+    assert.match(p, /periodo=hoje/);
     assert.match(p, /Janela de “hoje”/);
   });
 

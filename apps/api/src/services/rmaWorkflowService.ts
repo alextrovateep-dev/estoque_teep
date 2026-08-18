@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import {
   BRAND_COLOR,
   RMA_CHECKLIST_CAMPO_TIPOS,
+  checklistFotoExigida,
   mensagemBloqueioDiagnostico,
   mensagemBloqueioReabrirOrcamento,
   rmaEtapaEmRecebimento,
@@ -22,7 +23,11 @@ import {
 import { htmlToPdf } from "../lib/pdf";
 import { brandAssetDataUri } from "../lib/brandAssets";
 import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
-import { obterRma, podeDecidirAprovacaoRma } from "./rmaService";
+import {
+  exigirNfRetornoParaLiberacao,
+  obterRma,
+  podeDecidirAprovacaoRma,
+} from "./rmaService";
 
 const ETAPAS_RECEBIMENTO = [
   "AGUARDANDO_RECEBIMENTO",
@@ -417,22 +422,21 @@ function validarRespostasContraTemplate(
       }
     }
 
-    if (ti.exigeFotoSe) {
-      const val =
-        ti.tipoCampo === "SIM_NAO"
-          ? r?.valorBool === false
-            ? "NAO"
-            : r?.valorBool === true
-              ? "SIM"
-              : ""
-          : (r?.valorTexto || "").trim().toUpperCase();
-      const trigger = ti.exigeFotoSe.trim().toUpperCase();
-      if (val === trigger && fotos.length === 0) {
-        throw new AppError(
-          400,
-          `Foto obrigatória para ${ti.codigo} quando resposta = ${ti.exigeFotoSe}`
-        );
-      }
+    if (
+      ti.exigeFotoSe &&
+      fotos.length === 0 &&
+      checklistFotoExigida({
+        tipoCampo: ti.tipoCampo,
+        obrigatorio: ti.obrigatorio,
+        exigeFotoSe: ti.exigeFotoSe,
+        valorBool: r?.valorBool,
+        valorTexto: r?.valorTexto,
+      })
+    ) {
+      throw new AppError(
+        400,
+        `Foto obrigatória para ${ti.codigo} quando resposta = ${ti.exigeFotoSe}`
+      );
     }
   }
 }
@@ -522,6 +526,12 @@ export async function salvarChecklistRespostas(
   } else if (tipo === "LIBERACAO") {
     if (item.etapa !== "AGUARDANDO_LIBERACAO") {
       throw new AppError(400, "Checklist de liberação só na etapa de liberação");
+    }
+    if (concluir) {
+      await exigirNfRetornoParaLiberacao({
+        processoId,
+        nfSaidaNumero: proc.nfSaidaNumero,
+      });
     }
   }
 

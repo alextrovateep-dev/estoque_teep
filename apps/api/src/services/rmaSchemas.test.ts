@@ -4,7 +4,11 @@ import {
   anexarRmaSchema,
   createRmaProcessoSchema,
   mensagemBloqueioDiagnostico,
+  mensagemBloqueioNfRetorno,
   mensagemBloqueioReabrirOrcamento,
+  checklistFotoExigida,
+  checklistMostrarCampoFoto,
+  parseYmd,
   mensagemErroValidacao,
   RMA_ORCAMENTO_STATUS_LABELS,
   rmaOrcamentoPodeEditar,
@@ -43,6 +47,34 @@ describe("createRmaProcessoSchema", () => {
       itens: [{ produtoId: UUID_B, series: ["SN-001"] }],
     });
     assert.equal(r.success, true);
+  });
+
+  it("aceita prazo de manutenção válido", () => {
+    const r = createRmaProcessoSchema.safeParse({
+      clienteId: UUID_A,
+      responsavelComercialId: UUID_A,
+      nfEntradaNumero: "4040",
+      prazoManutencao: "2026-08-25",
+      itens: [{ produtoId: UUID_B, series: ["SN-001"] }],
+    });
+    assert.equal(r.success, true);
+  });
+
+  it("rejeita prazo de manutenção inválido", () => {
+    const r = createRmaProcessoSchema.safeParse({
+      clienteId: UUID_A,
+      responsavelComercialId: UUID_A,
+      nfEntradaNumero: "4040",
+      prazoManutencao: "2026-02-31",
+      itens: [{ produtoId: UUID_B, series: ["SN-001"] }],
+    });
+    assert.equal(r.success, false);
+  });
+
+  it("parseYmd rejeita 31/02 e aceita data civil", () => {
+    assert.equal(parseYmd("2026-02-31"), null);
+    assert.equal(parseYmd("2026-08-25"), "2026-08-25");
+    assert.equal(parseYmd(""), null);
   });
 
   it("rejeita sem NF de entrada", () => {
@@ -291,6 +323,107 @@ describe("salvarRmaDiagnosticoPlanoSchema", () => {
     if (!r.success) {
       assert.match(r.error.issues[0]?.message || "", /peça|produto/i);
     }
+  });
+});
+
+describe("mensagemBloqueioNfRetorno", () => {
+  it("bloqueia sem número", () => {
+    const msg = mensagemBloqueioNfRetorno({
+      nfSaidaNumero: "  ",
+      temArquivoNfSaida: true,
+    });
+    assert.match(String(msg), /NF de retorno/i);
+  });
+
+  it("bloqueia sem arquivo", () => {
+    const msg = mensagemBloqueioNfRetorno({
+      nfSaidaNumero: "4040",
+      temArquivoNfSaida: false,
+    });
+    assert.match(String(msg), /arquivo/i);
+  });
+
+  it("libera com número e arquivo", () => {
+    assert.equal(
+      mensagemBloqueioNfRetorno({
+        nfSaidaNumero: "4040",
+        temArquivoNfSaida: true,
+      }),
+      null
+    );
+  });
+});
+
+describe("checklistFotoExigida", () => {
+  it("Não não exige foto quando o gatilho é SIM", () => {
+    assert.equal(
+      checklistFotoExigida({
+        tipoCampo: "SIM_NAO",
+        exigeFotoSe: "SIM",
+        valorBool: false,
+      }),
+      false
+    );
+  });
+
+  it("Sim exige foto quando o gatilho é SIM", () => {
+    assert.equal(
+      checklistFotoExigida({
+        tipoCampo: "SIM_NAO",
+        exigeFotoSe: "SIM",
+        valorBool: true,
+      }),
+      true
+    );
+  });
+
+  it("normaliza Não acentuado no gatilho de outras perguntas", () => {
+    assert.equal(
+      checklistFotoExigida({
+        tipoCampo: "SIM_NAO",
+        exigeFotoSe: "Não",
+        valorBool: false,
+      }),
+      true
+    );
+    assert.equal(
+      checklistFotoExigida({
+        tipoCampo: "SIM_NAO",
+        exigeFotoSe: "Não",
+        valorBool: true,
+      }),
+      false
+    );
+  });
+
+  it("pergunta Só foto obrigatória continua exigindo anexo", () => {
+    assert.equal(
+      checklistFotoExigida({
+        tipoCampo: "FOTO",
+        obrigatorio: true,
+        exigeFotoSe: "SIM",
+        valorBool: false,
+      }),
+      true
+    );
+    assert.equal(
+      checklistFotoExigida({
+        tipoCampo: "FOTO",
+        obrigatorio: false,
+      }),
+      false
+    );
+  });
+
+  it("esconde o campo de foto quando Não e o gatilho é SIM", () => {
+    assert.equal(
+      checklistMostrarCampoFoto({
+        tipoCampo: "SIM_NAO",
+        exigeFotoSe: "SIM",
+        valorBool: false,
+      }),
+      false
+    );
   });
 });
 

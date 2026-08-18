@@ -4,6 +4,7 @@ import { FormEvent, ReactNode, useState } from "react";
 import Link from "next/link";
 import {
   emptyChecklistItem,
+  exigeFotoSeSelectValue,
   ItemDraft,
   TIPO_LABEL,
 } from "@/components/rma/rmaChecklistShared";
@@ -110,6 +111,22 @@ export function RmaChecklistFormEditor({
                       />
                       Obrigatória
                     </label>
+                    {it.tipoCampo === "SIM_NAO" ? (
+                      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                        Foto extra
+                        <select
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
+                          value={exigeFotoSeSelectValue(it.exigeFotoSe)}
+                          onChange={(e) =>
+                            update(idx, { exigeFotoSe: e.target.value })
+                          }
+                        >
+                          <option value="">Não exigir</option>
+                          <option value="SIM">Só se Sim</option>
+                          <option value="NAO">Só se Não</option>
+                        </select>
+                      </label>
+                    ) : null}
                     <button
                       type="button"
                       className="ml-auto text-xs text-red-600 hover:underline"
@@ -138,14 +155,22 @@ export function RmaChecklistFormEditor({
                         value={it.ajuda}
                         onChange={(e) => update(idx, { ajuda: e.target.value })}
                       />
-                      <input
-                        className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
-                        placeholder="Exigir foto se = NAO / SIM…"
-                        value={it.exigeFotoSe}
-                        onChange={(e) =>
-                          update(idx, { exigeFotoSe: e.target.value })
-                        }
-                      />
+                      {it.tipoCampo === "OPCAO" ? (
+                        <input
+                          className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
+                          placeholder="Exigir foto se a opção for…"
+                          value={it.exigeFotoSe}
+                          onChange={(e) =>
+                            update(idx, { exigeFotoSe: e.target.value })
+                          }
+                        />
+                      ) : (
+                        <p className="text-[11px] text-slate-500 sm:col-span-1">
+                          Em Sim/Não, foto extra fica ao lado da pergunta. Ex.:
+                          “O equipamento está ligando?” → Só se Sim; se Não,
+                          conclui sem foto.
+                        </p>
+                      )}
                     </div>
                   ) : null}
                 </div>

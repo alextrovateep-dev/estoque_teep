@@ -224,6 +224,14 @@ Mapa de dados TEEP (PostgreSQL — só leitura via tools; sem SQL):
 - Estoque (saldoAtual por produto×filial; mín/máx do produto) → get_product_stock | get_inventory_balance | list_stock_by_value
 - Números de série / N/S em estoque → list_product_series
 - Movimentacao (lista detalhada) → list_stock_movements; ranking por qty no período → rank_product_movements
+- Transferências entre estoques (cargas da tela Transferências) → list_transfers
+  · “quais transferências?”, “transferências efetuadas/realizadas no período”, “teve transferência hoje/este mês” → SEMPRE list_transfers
+  · periodo=hoje | mes_atual | mes_passado (“no período” / “este mês” = mes_atual)
+  · PARA TBO → destinoSigla=TBO; DE PLN → origemSigla=PLN
+  · Uma carga = 1 registro. Liste origem → destino, status, data, itens/qty
+  · NUNCA diga que não há transferências sem chamar list_transfers
+  · NUNCA use prepare_transfer para consultar
+  · Ledger Enviada/Recebida (dobra a conta) só se o usuário pedir movimentações no histórico — list_stock_movements fluxo=transferencia
 - Demo / Comodato / Retorno de cliente (tipos com alerta ou termo — NÃO é transferência entre estoques):
   · “temos itens em comodato?” / “o que está em demo?” → list_stock_movements com fluxo=comodato|demo|alerta_retorno e somenteAbertos=true
   · “quais as datas de alerta?” → mesma tool; leia diasAlertaConfig e alertasRetorno[].dataAgendada
@@ -248,14 +256,14 @@ PAPEL DO PARCEIRO (obrigatório — não confundir):
 - Se a tool trouxer papelParceiro / parceiroPapel, use esse valor na frase.
 
 TRANSFERÊNCIA ENTRE ESTOQUES — dois casos distintos (não misture):
-A) CONSULTAR histórico (“teve transferência?”, “o que foi pra TBO hoje?”):
-  · list_stock_movements com fluxo=transferencia, de/ate da janela de hoje se for “hoje”
-  · “PARA TBO” → filialSigla=TBO + papelFilial=destino
-  · “DE PLN” → filialSigla=PLN + papelFilial=origem
-  · No ledger: “Transferência Enviada” (operacao SAIDA) tem filialDestino; “Transferência Recebida” (ENTRADA) é o crédito no destino
-  · Ao CONTAR eventos, use contagemEnviadas (ou papelNaTransferencia=enviada) — Recebida dobra a conta
+A) CONSULTAR / LISTAR (“quais transferências?”, “transferências efetuadas no período?”, “o que foi pra TBO hoje?”):
+  · SEMPRE list_transfers (tela Transferências). Proibido concluir “não houve” sem essa consulta.
+  · “hoje” → periodo=hoje; “este mês” / “no período” → periodo=mes_atual; “mês passado” → periodo=mes_passado
+  · “PARA TBO” → destinoSigla=TBO; “DE PLN” → origemSigla=PLN
+  · Responda com as cargas: sentido (PLN → TBO), statusLabel, data (criadoEmSp), produtos e qtdEnviada
   · NUNCA use fluxo=retorno / comodato / demo para isso
   · NUNCA chame prepare_transfer só para consultar
+  · NÃO substitua por list_stock_movements (Enviada+Recebida dobra). Só use fluxo=transferencia se pedirem o ledger.
 B) CRIAR / EFETUAR (“quero transferir”, “faz uma transferência de X…”):
   · ${
     podeLancamentos
@@ -274,8 +282,8 @@ Escolha de tools:
 - SKU ou nome parcial → search_products
 - saldo de um produto → get_product_stock
 - números de série / N/S / “quais séries” / follow-up “quais são os números?” → list_product_series
+- CONSULTAR / listar transferências efetuadas no período → list_transfers (periodo=hoje|mes_atual|mes_passado)
 - movimentações gerais / o que moveu hoje (sem falar em transferência) → list_stock_movements (de/ate de hoje; sem fluxo=retorno)
-- CONSULTAR transferência entre estoques → list_stock_movements (fluxo=transferencia + filialSigla + papelFilial)
 - comodato / demo / retorno de cliente / itens ainda fora / datas de alerta → list_stock_movements (fluxo comodato|demo|alerta_retorno|retorno)
 - abaixo do mínimo / KPIs / visão geral → get_inventory_balance
 - o que cliente X já comprou / o que já compramos do fornecedor Y → get_partner_products
@@ -309,7 +317,7 @@ Regras:
       : "não chame prepare_transfer; diga que falta permissão."
   } Proibido Transferências para criar. Proibido usar saldoAtual como quantidade.
 10. prepare_transfer com ok=false: explique o erro; não invente botão.
-11. CONSULTAR transferência (ver bloco A): SEMPRE list_stock_movements fluxo=transferencia. Proibido concluir “não houve” sem essa consulta. Proibido prepare_transfer. Responda com contagemEnviadas (não some Enviada+Recebida), mesmo se operacao=SAIDA.
+11. CONSULTAR transferência (ver bloco A): SEMPRE list_transfers. Proibido concluir “não houve” sem essa consulta. Proibido prepare_transfer. Proibido list_stock_movements no lugar da lista de cargas. Responda com as transferências do retorno (sentido, statusLabel, data, itens).
 12. Se o usuário disser “transferir N”, N é a quantidade — saldo só serve para validar se cabe; o atalho deve abrir com qty=N.
 13. Árvore / BOM / composição: SEMPRE list_product_trees ou get_product_tree. Proibido dizer que não tem acesso ou só mandar o usuário para a tela sem consultar.
 14. Relatório em arquivo (produtos / estoque / árvore): SEMPRE a tool export_* correspondente. Avise que o botão de download aparece abaixo. Proibido dizer que não gera relatório.
@@ -350,6 +358,7 @@ export function suggestedLinksFor(
     export_saldos_report: ["/relatorios", "/dashboard"],
     export_arvore_report: ["/relatorios", "/cadastros/arvore"],
     prepare_transfer: ["/lancamentos/novo"],
+    list_transfers: ["/transferencias"],
     list_rma_processes: ["/rma"],
     get_rma_process: ["/rma"],
   };

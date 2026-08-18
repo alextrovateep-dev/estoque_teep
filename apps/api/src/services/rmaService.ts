@@ -2,6 +2,8 @@ import {
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPAS_SAIDA,
   SIGLA_ESTOQUE_RMA,
+  mensagemBloqueioNfRetorno,
+  parseYmd,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
@@ -540,13 +542,13 @@ async function exigirDocumentosParaEnvioCliente(opts: {
       "Informe o número da NF de entrada antes de enviar ao cliente."
     );
   }
-  const numero = opts.nfSaidaInformada?.trim() || opts.nfSaidaAtual?.trim() || null;
-  if (!numero) {
-    throw new AppError(
-      400,
-      "Informe o número da NF de retorno antes de enviar ao cliente."
-    );
-  }
+  const numero =
+    opts.nfSaidaInformada?.trim() || opts.nfSaidaAtual?.trim() || "";
+  const faltaNumero = mensagemBloqueioNfRetorno({
+    nfSaidaNumero: numero,
+    temArquivoNfSaida: true,
+  });
+  if (faltaNumero) throw new AppError(400, faltaNumero);
   if (!mesmaNotaFiscalNumero(numero, opts.nfSaidaAtual)) {
     await assertNotaFiscalNumeroLivre({
       numero,
@@ -559,13 +561,30 @@ async function exigirDocumentosParaEnvioCliente(opts: {
     });
   }
   const arquivo = await arquivoAnexoAtivo(opts.processoId, "NF_SAIDA");
-  if (!arquivo) {
+  const faltaArquivo = mensagemBloqueioNfRetorno({
+    nfSaidaNumero: numero,
+    temArquivoNfSaida: Boolean(arquivo),
+  });
+  if (faltaArquivo || !arquivo) {
     throw new AppError(
       400,
-      "Anexe o arquivo da NF de retorno antes de enviar ao cliente."
+      faltaArquivo ?? "Anexe o arquivo da NF de retorno antes de liberar o equipamento"
     );
   }
   return { numero, arquivo };
+}
+
+/** Número + arquivo já gravados no processo — usado na liberação (checklist / skip). */
+export async function exigirNfRetornoParaLiberacao(opts: {
+  processoId: string;
+  nfSaidaNumero?: string | null;
+}) {
+  const arquivo = await arquivoAnexoAtivo(opts.processoId, "NF_SAIDA");
+  const msg = mensagemBloqueioNfRetorno({
+    nfSaidaNumero: opts.nfSaidaNumero,
+    temArquivoNfSaida: Boolean(arquivo),
+  });
+  if (msg) throw new AppError(400, msg);
 }
 
 async function fecharProcessoAgora(processoId: string) {
@@ -711,6 +730,7 @@ export async function criarRmaProcesso(
     clienteId: string;
     responsavelComercialId: string;
     observacao?: string | null;
+    prazoManutencao?: string | null;
     nfEntradaNumero?: string | null;
     nfEntradaArquivo?: string | null;
     destinatarioIds?: string[];
@@ -832,6 +852,10 @@ export async function criarRmaProcesso(
       status: "ABERTO",
       nfEntradaNumero: input.nfEntradaNumero?.trim() || null,
       observacao: input.observacao?.trim() || null,
+      prazoManutencao: (() => {
+        const ymd = parseYmd(input.prazoManutencao);
+        return ymd ? new Date(`${ymd}T00:00:00.000Z`) : null;
+      })(),
       criadoPorId: user.id,
       responsavelComercialId: input.responsavelComercialId,
     },
@@ -1155,6 +1179,12 @@ export async function marcarManutencaoRealizadaRmaItem(
   const proximaEtapa = temLiberacao
     ? "AGUARDANDO_LIBERACAO"
     : "AGUARDANDO_ENVIO";
+  if (proximaEtapa === "AGUARDANDO_ENVIO") {
+    await exigirNfRetornoParaLiberacao({
+      processoId,
+      nfSaidaNumero: proc.nfSaidaNumero,
+    });
+  }
   const claim = await prisma.rmaItem.updateMany({
     where: {
       id: itemId,
@@ -1472,6 +1502,7 @@ export async function atualizarRmaFinanceiro(
     valorCobrado?: number | null;
     nfCobrancaNumero?: string | null;
     observacao?: string | null;
+    prazoManutencao?: string | null;
   }
 ) {
   const proc = await prisma.rmaProcesso.findUnique({ where: { id } });
@@ -1524,6 +1555,16 @@ export async function atualizarRmaFinanceiro(
   }
   if (input.observacao !== undefined) {
     data.observacao = input.observacao?.trim() || null;
+  }
+  if (input.prazoManutencao !== undefined) {
+    if (proc.status !== "ABERTO") {
+      throw new AppError(
+        400,
+        "Prazo da manutenção só pode ser alterado em RMA aberto"
+      );
+    }
+    const ymd = parseYmd(input.prazoManutencao);
+    data.prazoManutencao = ymd ? new Date(`${ymd}T00:00:00.000Z`) : null;
   }
   // Compat: ainda aceita cobrança no processo, mas a UI usa o item
   if (input.cobrou !== undefined) data.cobrou = input.cobrou;

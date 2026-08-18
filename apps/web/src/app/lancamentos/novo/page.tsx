@@ -1229,10 +1229,10 @@ function NovoLancamentoForm() {
     series.length > maxRetornoAberto + 1e-9;
 
   const tipoSelect = (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium">Tipo</span>
+    <label className="flex min-w-0 flex-col">
+      <span className="mb-1 block h-5 text-sm font-medium leading-5">Tipo</span>
       <select
-        className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
+        className="h-12 w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
         value={tipoId}
         disabled={camposTravados}
         onChange={(e) => {
@@ -1249,8 +1249,8 @@ function NovoLancamentoForm() {
     </label>
   );
 
-  const estoqueSubtitle = (
-    <span className="mb-1 block text-xs text-slate-500">
+  const estoqueHint = (
+    <span className="mt-1 block text-xs leading-4 text-slate-500">
       Filial onde o saldo muda
     </span>
   );
@@ -1265,21 +1265,24 @@ function NovoLancamentoForm() {
 
   const estoqueField =
     user?.perfil === "OPERADOR" && !operadorMultiFilial ? (
-      <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
-        <div className="font-medium text-slate-700">Estoque</div>
-        {estoqueSubtitle}
-        <div className="mt-1 text-slate-600">
+      <div className="flex min-w-0 flex-col">
+        <span className="mb-1 block h-5 text-sm font-medium leading-5">
+          Estoque
+        </span>
+        <div className="flex h-12 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600">
           {filialOrigemLabel
             ? `${filialOrigemLabel.sigla} — ${filialOrigemLabel.nome}`
             : "Filial do operador"}
         </div>
+        {estoqueHint}
       </div>
     ) : (
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium">Estoque</span>
-        {estoqueSubtitle}
+      <label className="flex min-w-0 flex-col">
+        <span className="mb-1 block h-5 text-sm font-medium leading-5">
+          Estoque
+        </span>
         <select
-          className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
+          className="h-12 w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
           value={filialId}
           disabled={travaProdutoFilial}
           onChange={(e) => setFilialId(e.target.value)}
@@ -1287,6 +1290,7 @@ function NovoLancamentoForm() {
         >
           {estoqueSelectOptions}
         </select>
+        {estoqueHint}
       </label>
     );
 
@@ -1469,7 +1473,7 @@ function NovoLancamentoForm() {
             {origemDestinoFields}
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid items-start gap-3 sm:grid-cols-2">
             {tipoSelect}
             {estoqueField}
           </div>

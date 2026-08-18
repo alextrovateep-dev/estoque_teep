@@ -9,6 +9,9 @@ import {
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPA_LABELS,
   RMA_PROCESSO_STATUS,
+  formatYmdBr,
+  ymdFromApi,
+  ymdVencido,
 } from "@teep/shared";
 
 type Row = {
@@ -18,6 +21,7 @@ type Row = {
   valorCobrado: string | number | null;
   nfEntradaNumero: string | null;
   nfSaidaNumero: string | null;
+  prazoManutencao?: string | null;
   criadoEm: string;
   cliente: { id: string; nome: string; documento?: string | null };
   filial: { id: string; sigla: string; nome: string };
@@ -400,6 +404,13 @@ function RmaListPageInner() {
                 {r._count.itens} item{r._count.itens === 1 ? "" : "s"}
                 {r.nfEntradaNumero ? ` · NF ent. ${r.nfEntradaNumero}` : ""}
                 {r.nfSaidaNumero ? ` · NF saí. ${r.nfSaidaNumero}` : ""}
+                {(() => {
+                  const prazo = ymdFromApi(r.prazoManutencao);
+                  if (!prazo) return "";
+                  return ` · Prazo manut. ${formatYmdBr(prazo)}${
+                    r.status === "ABERTO" && ymdVencido(prazo) ? " (vencido)" : ""
+                  }`;
+                })()}
                 {(() => {
                   const cobrados = (r.itens || []).filter((i) => i.cobrou === true);
                   if (cobrados.length > 0) {

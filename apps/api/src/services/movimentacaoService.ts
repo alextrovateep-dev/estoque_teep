@@ -266,6 +266,7 @@ export async function criarMovimentacao(
       destinoFilialId: input.filialDestinoId,
       guiaTransporte: input.guiaTransporte?.trim() || null,
       notaFiscalNumero: input.notaFiscalNumero?.trim() || null,
+      observacao: input.observacao?.trim() || null,
       anexos: (input.anexos || []).filter((a) =>
         ["NOTA_FISCAL", "LAUDO", "OUTRO"].includes(a.tipo)
       ),

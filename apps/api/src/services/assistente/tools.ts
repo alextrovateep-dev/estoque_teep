@@ -6,6 +6,8 @@ import {
   RMA_PROCESSO_STATUS,
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPA_LABELS,
+  TRANSFERENCIA_STATUS,
+  ymdFromApi,
 } from "@teep/shared";
 import { AuthUser } from "../../middleware/auth";
 import { AppError } from "../../middleware/error";
@@ -17,6 +19,7 @@ import {
 } from "../parceiroHistoricoService";
 import { mapaQtyOcupadaPorSaidas } from "../retornoVinculoHelper";
 import { listarRma, obterRma } from "../rmaService";
+import { listarTransferencias } from "../transferenciaService";
 import { gerarExportDossieProduto } from "./assistenteExportService";
 import { putAssistenteExport } from "./assistenteExportTokenStore";
 import {
@@ -244,6 +247,21 @@ const listRmaProcessesArgs = z.object({
   limit: z.coerce.number().int().min(1).max(50).optional().default(20),
 });
 
+const listTransfersArgs = z.object({
+  periodo: z
+    .enum(["hoje", "mes_atual", "mes_passado"])
+    .optional()
+    .nullable(),
+  dataInicio: z.string().min(8).max(40).optional().nullable(),
+  dataFim: z.string().min(8).max(40).optional().nullable(),
+  origemSigla: z.string().min(1).max(80).optional().nullable(),
+  destinoSigla: z.string().min(1).max(80).optional().nullable(),
+  status: z.enum(TRANSFERENCIA_STATUS).optional().nullable(),
+  /** false = inclui canceladas/rejeitadas. Padrão true (efetuadas / em andamento). */
+  excluirCanceladas: z.boolean().optional().default(true),
+  limit: z.coerce.number().int().min(1).max(50).optional().default(20),
+});
+
 const getRmaProcessArgs = z.object({
   id: z.string().uuid(),
 });
@@ -435,7 +453,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "list_stock_movements",
     description:
-      "Lista movimentações (máx. 50). NÃO use para 'produto com mais saída no mês' — use rank_product_movements. CONSULTAR transferência: fluxo=transferencia. operacao=SAIDA filtra o campo operacao do ledger (inclui Transferência Enviada; NÃO é o badge SAÍDA da tela). NÃO use somenteAbertos para saídas do mês. Datas: ISO ou YYYY-MM-DD — nunca dd/mm/aaaa.",
+      "Lista movimentações (máx. 50). NÃO use para 'produto com mais saída no mês' — use rank_product_movements. NÃO use para LISTAR transferências da tela Transferências — use list_transfers. CONSULTAR lançamentos Enviada/Recebida no ledger: fluxo=transferencia. operacao=SAIDA filtra o campo operacao do ledger (inclui Transferência Enviada; NÃO é o badge SAÍDA da tela). NÃO use somenteAbertos para saídas do mês. Datas: ISO ou YYYY-MM-DD — nunca dd/mm/aaaa.",
     parameters: {
       type: "object",
       properties: {
@@ -648,7 +666,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "prepare_transfer",
     description:
-      "Só para CRIAR intenção de transferência (usuário quer transferir agora). NÃO use para consultar histórico (‘teve transferência?’). quantidade = número EXATO pedido pelo usuário (se pediu 20, passe 20 — nunca o saldo). Prepara atalho Novo Lançamento. NÃO diga Transferências para criar. Retorna actionLink + saldo. Usuário ainda confirma.",
+      "Só para CRIAR intenção de transferência (usuário quer transferir agora). NÃO use para consultar/listar histórico (‘quais transferências?’, ‘teve transferência no período?’) — use list_transfers. quantidade = número EXATO pedido pelo usuário (se pediu 20, passe 20 — nunca o saldo). Prepara atalho Novo Lançamento. NÃO diga Transferências para criar. Retorna actionLink + saldo. Usuário ainda confirma.",
     parameters: {
       type: "object",
       properties: {
@@ -671,6 +689,55 @@ export const TOOL_DEFINITIONS = [
         },
       },
       required: ["origem", "destino", "codigoOuNome", "quantidade"],
+    },
+  },
+  {
+    name: "list_transfers",
+    description:
+      "Lista CARGAS de transferência entre estoques (tela Transferências). USE para ‘quais transferências’, ‘transferências efetuadas/realizadas no período’, ‘teve transferência hoje/este mês’. periodo=hoje|mes_atual|mes_passado. Uma carga = 1 registro (não dobre Enviada+Recebida). Exige permissão transferencias. Só leitura. NÃO use prepare_transfer nem list_stock_movements no lugar desta lista.",
+    parameters: {
+      type: "object",
+      properties: {
+        periodo: {
+          type: "string",
+          enum: ["hoje", "mes_atual", "mes_passado"],
+          description:
+            "Janela em America/Sao_Paulo. ‘hoje’ / ‘este mês’ / ‘mês passado’ / ‘no período’ (mês atual). Preferir em vez de dataInicio/dataFim.",
+        },
+        dataInicio: {
+          type: "string",
+          description: "ISO ou YYYY-MM-DD início (criação). Preferir periodo.",
+        },
+        dataFim: {
+          type: "string",
+          description: "ISO ou YYYY-MM-DD fim (criação). Preferir periodo.",
+        },
+        origemSigla: {
+          type: "string",
+          description: "Estoque de origem (ex.: PLN). ‘DE PLN’.",
+        },
+        destinoSigla: {
+          type: "string",
+          description: "Estoque de destino (ex.: TBO). ‘PARA TBO’.",
+        },
+        status: {
+          type: "string",
+          enum: [...TRANSFERENCIA_STATUS],
+          description:
+            "Filtrar um status. Omitir = efetuadas/em andamento (sem cancelada/rejeitada).",
+        },
+        excluirCanceladas: {
+          type: "boolean",
+          description:
+            "true (padrão) omite CANCELADO e REJEITADO. false = incluir todas.",
+        },
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 50,
+          description: "Máx. cargas (padrão 20)",
+        },
+      },
     },
   },
   {
@@ -775,6 +842,8 @@ export async function executeTool(
       return exportArvoreReport(exportArvoreReportArgs.parse(rawArgs), ctx);
     case "prepare_transfer":
       return prepareTransfer(prepareTransferArgs.parse(rawArgs), ctx);
+    case "list_transfers":
+      return listTransfers(listTransfersArgs.parse(rawArgs), ctx);
     case "list_rma_processes":
       return listRmaProcesses(listRmaProcessesArgs.parse(rawArgs), ctx);
     case "get_rma_process":
@@ -950,6 +1019,28 @@ function assertPermRma(ctx: ToolContext) {
   }
   return null;
 }
+
+function assertPermTransferencias(ctx: ToolContext) {
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  if (!hasPermissao(ctx.user.perfil, perms, "transferencias")) {
+    return {
+      ok: false as const,
+      error:
+        "Usuário sem permissão de Transferências. Oriente pedir acesso ao Admin ou abrir a tela Transferências se tiver acesso.",
+    };
+  }
+  return null;
+}
+
+const TRANSF_STATUS_LABEL: Record<string, string> = {
+  PENDENTE_APROVACAO: "Aguardando aprovação",
+  EM_TRANSITO: "Em trânsito",
+  CONFERINDO: "Conferindo",
+  RECEBIDO: "Recebido",
+  PARCIAL: "Parcial",
+  CANCELADO: "Cancelado",
+  REJEITADO: "Rejeitado",
+};
 
 function etiquetaEtapaRma(etapa: string | null | undefined): string {
   if (!etapa) return "—";
@@ -1134,6 +1225,7 @@ async function getRmaProcess(
         : null,
       comercial: row.responsavelComercial?.nome ?? null,
       observacao: row.observacao ?? null,
+      prazoManutencao: ymdFromApi(row.prazoManutencao),
       nfEntradaNumero: row.nfEntradaNumero ?? null,
       nfSaidaNumero: row.nfSaidaNumero ?? null,
       itens,
@@ -1143,6 +1235,141 @@ async function getRmaProcess(
       label: "Abrir processo RMA",
     },
     nota: "Processo RMA (manutenção). Não confundir com saldo do estoque RMA.",
+  };
+}
+
+async function listTransfers(
+  args: z.infer<typeof listTransfersArgs>,
+  ctx: ToolContext
+) {
+  const denied = assertPermTransferencias(ctx);
+  if (denied) return denied;
+
+  let criadoDe: Date | undefined;
+  let criadoAte: Date | undefined;
+  let periodoLabel: string | null = null;
+
+  if (args.periodo) {
+    const janela = resolvePeriodoJanela(args.periodo, args.dataInicio, args.dataFim);
+    if (!janela.ok) {
+      return { ok: false as const, encontrados: 0, error: janela.error };
+    }
+    criadoDe = janela.de;
+    criadoAte = janela.ate;
+    periodoLabel = janela.label;
+  } else if (args.dataInicio?.trim() || args.dataFim?.trim()) {
+    if (args.dataInicio?.trim()) {
+      const deP = parseAssistenteDateBound(args.dataInicio, "start");
+      if (!deP.ok) {
+        return { ok: false as const, encontrados: 0, error: deP.error };
+      }
+      criadoDe = deP.date;
+    }
+    if (args.dataFim?.trim()) {
+      const ateP = parseAssistenteDateBound(args.dataFim, "end");
+      if (!ateP.ok) {
+        return { ok: false as const, encontrados: 0, error: ateP.error };
+      }
+      criadoAte = ateP.date;
+    }
+    if (criadoDe && criadoAte && criadoDe > criadoAte) {
+      return {
+        ok: false as const,
+        encontrados: 0,
+        error: "dataInicio deve ser ≤ dataFim",
+      };
+    }
+    periodoLabel = "custom";
+  }
+
+  let origemFilialId: string | undefined;
+  let destinoFilialId: string | undefined;
+  if (args.origemSigla?.trim()) {
+    const origem = await findFilialBySiglaOuNome(args.origemSigla);
+    if (!origem) {
+      return {
+        ok: false as const,
+        encontrados: 0,
+        mensagem: `Estoque de origem não encontrado: “${args.origemSigla}”`,
+      };
+    }
+    origemFilialId = origem.id;
+  }
+  if (args.destinoSigla?.trim()) {
+    const destino = await findFilialBySiglaOuNome(args.destinoSigla);
+    if (!destino) {
+      return {
+        ok: false as const,
+        encontrados: 0,
+        mensagem: `Estoque de destino não encontrado: “${args.destinoSigla}”`,
+      };
+    }
+    destinoFilialId = destino.id;
+  }
+
+  const result = await listarTransferencias(ctx.user, {
+    status: args.status || undefined,
+    criadoDe,
+    criadoAte,
+    origemFilialId,
+    destinoFilialId,
+    excluirCanceladas: args.status ? false : args.excluirCanceladas,
+    take: args.limit,
+  });
+
+  const fmtSp = (d: Date) =>
+    new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(d);
+
+  const transferencias = result.data.map((t) => ({
+    id: t.id,
+    status: t.status,
+    statusLabel: TRANSF_STATUS_LABEL[t.status] || t.status,
+    criadoEm: t.criadoEm.toISOString(),
+    criadoEmSp: fmtSp(t.criadoEm),
+    origem: t.origemFilial.sigla,
+    destino: t.destinoFilial.sigla,
+    sentido: `${t.origemFilial.sigla} → ${t.destinoFilial.sigla}`,
+    guiaTransporte: t.guiaTransporte ?? null,
+    notaFiscalNumero: t.notaFiscalNumero ?? null,
+    criadoPor: t.criadoPor?.nome ?? null,
+    itens: t.itens.map((i) => ({
+      codigo: i.produto.codigo,
+      descricao: i.produto.descricao,
+      qtdEnviada: Number(i.qtdEnviada),
+      qtdRecebida: i.qtdRecebida != null ? Number(i.qtdRecebida) : null,
+    })),
+  }));
+
+  return {
+    ok: true as const,
+    encontrados: transferencias.length,
+    total: result.total,
+    truncado: result.truncado,
+    periodo: args.periodo ?? periodoLabel,
+    de: criadoDe?.toISOString() ?? null,
+    ate: criadoAte?.toISOString() ?? null,
+    filtro: {
+      origemSigla: args.origemSigla ?? null,
+      destinoSigla: args.destinoSigla ?? null,
+      status: args.status ?? null,
+      excluirCanceladas: args.status ? false : args.excluirCanceladas,
+    },
+    transferencias,
+    aviso:
+      transferencias.length === 0
+        ? "Nenhuma transferência no filtro. Diga isso em uma frase — não invente cargas."
+        : result.truncado
+          ? `Mostrando ${transferencias.length} de ${result.total}. Cite as mais recentes.`
+          : undefined,
+    nota: "Cada item é UMA carga (tela Transferências). Não some Enviada+Recebida do ledger.",
+    actionLink: {
+      href: "/transferencias",
+      label: "Abrir Transferências",
+    },
   };
 }
 

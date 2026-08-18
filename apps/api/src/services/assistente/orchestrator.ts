@@ -74,14 +74,20 @@ export function collectActionLink(
   out.push({ href: a.href, label: a.label });
 }
 
-/** Exact allowlist match, or /rma/<uuid> when /rma is allowed. */
+/** Exact allowlist match, or /rma|/transferencias/<uuid> when the list href is allowed. */
 function isActionHrefAllowed(pathOnly: string, allowedHrefs: Set<string>): boolean {
   if (allowedHrefs.has(pathOnly)) return true;
+  const uuid =
+    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
   if (
     allowedHrefs.has("/rma") &&
-    /^\/rma\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
-      pathOnly
-    )
+    new RegExp(`^/rma/${uuid}$`, "i").test(pathOnly)
+  ) {
+    return true;
+  }
+  if (
+    allowedHrefs.has("/transferencias") &&
+    new RegExp(`^/transferencias/${uuid}$`, "i").test(pathOnly)
   ) {
     return true;
   }

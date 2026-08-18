@@ -3,6 +3,8 @@ import {
   TIPO_TRANSF_ENVIADA,
   TIPO_TRANSF_RECEBIDA,
   TIPO_TRANSF_ENTRE_ESTOQUES,
+  TRANSFERENCIA_STATUS,
+  type TransferenciaStatus,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { assertNotaFiscalNumeroLivre } from "../lib/notaFiscalNumero";
@@ -204,22 +206,53 @@ function whereEscopo(user: AuthUser) {
   };
 }
 
-export async function listarTransferencias(user: AuthUser) {
-  const where = whereEscopo(user);
+export type ListarTransferenciasQuery = {
+  status?: TransferenciaStatus;
+  criadoDe?: Date;
+  criadoAte?: Date;
+  origemFilialId?: string;
+  destinoFilialId?: string;
+  /** Omite CANCELADO e REJEITADO (cargas efetuadas / em andamento). */
+  excluirCanceladas?: boolean;
+  take?: number;
+};
+
+export async function listarTransferencias(
+  user: AuthUser,
+  q?: ListarTransferenciasQuery
+) {
+  const where: Record<string, unknown> = { ...whereEscopo(user) };
+  if (q?.status && (TRANSFERENCIA_STATUS as readonly string[]).includes(q.status)) {
+    where.status = q.status;
+  } else if (q?.excluirCanceladas) {
+    where.status = { notIn: ["CANCELADO", "REJEITADO"] };
+  }
+  if (q?.origemFilialId) where.origemFilialId = q.origemFilialId;
+  if (q?.destinoFilialId) where.destinoFilialId = q.destinoFilialId;
+  if (q?.criadoDe || q?.criadoAte) {
+    where.criadoEm = {
+      ...(q.criadoDe ? { gte: q.criadoDe } : {}),
+      ...(q.criadoAte ? { lte: q.criadoAte } : {}),
+    };
+  }
+  const take = Math.min(
+    LIST_LIMITE,
+    Math.max(1, q?.take ?? LIST_LIMITE)
+  );
   const [total, data] = await Promise.all([
     prisma.transferencia.count({ where }),
     prisma.transferencia.findMany({
       where,
       include: transfInclude,
       orderBy: { criadoEm: "desc" },
-      take: LIST_LIMITE,
+      take,
     }),
   ]);
   return {
     data,
     total,
-    take: LIST_LIMITE,
-    truncado: total > LIST_LIMITE,
+    take,
+    truncado: total > take,
   };
 }
 
@@ -288,6 +321,7 @@ export async function criarTransferencia(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     notaFiscalNumero?: string | null;
+    observacao?: string | null;
     anexos?: Array<{
       tipo: string;
       arquivo: string;
@@ -309,6 +343,7 @@ export async function criarTransferenciaImediata(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     notaFiscalNumero?: string | null;
+    observacao?: string | null;
     anexos?: Array<{
       tipo: string;
       arquivo: string;
@@ -332,6 +367,7 @@ export async function criarTransferenciaPendenteAprovacao(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     notaFiscalNumero?: string | null;
+    observacao?: string | null;
     anexos?: Array<{
       tipo: string;
       arquivo: string;
@@ -352,6 +388,7 @@ async function criarTransferenciaInterna(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     notaFiscalNumero?: string | null;
+    observacao?: string | null;
     anexos?: Array<{
       tipo: string;
       arquivo: string;
@@ -431,6 +468,7 @@ async function criarTransferenciaInterna(
         creditoDestino,
         guiaTransporte: input.guiaTransporte || null,
         notaFiscalNumero,
+        observacao: input.observacao?.trim() || null,
         criadoPorId: user.id,
         anexos:
           anexosIn.length > 0
@@ -1774,6 +1812,7 @@ export async function criarTransferenciaViaApiLegada(
     destinoFilialId: string;
     guiaTransporte?: string | null;
     creditoDestino?: "IMEDIATO" | "AGUARDAR_RECEBIMENTO";
+    observacao?: string | null;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
   }
 ) {

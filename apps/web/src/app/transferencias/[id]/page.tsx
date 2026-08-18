@@ -44,6 +44,7 @@ type Transferencia = {
   creditoDestino?: string | null;
   guiaTransporte: string | null;
   notaFiscalNumero?: string | null;
+  observacao?: string | null;
   motivoRejeicao?: string | null;
   criadoEm: string;
   origemFilialId: string;
@@ -467,6 +468,14 @@ export default function TransferenciaDetalhePage() {
                 {data.notaFiscalNumero || "—"}
               </p>
             </div>
+            {data.observacao?.trim() ? (
+              <p className="mt-3 whitespace-pre-wrap rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                <span className="mb-0.5 block text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Observação
+                </span>
+                {data.observacao.trim()}
+              </p>
+            ) : null}
             {data.motivoRejeicao ? (
               <p className="mt-2 text-red-700">
                 Motivo rejeição: {data.motivoRejeicao}
@@ -480,38 +489,20 @@ export default function TransferenciaDetalhePage() {
                 Anexos ({data.anexos?.length || 0})
               </h2>
               {canAnexar ? (
-                <div className="flex flex-wrap gap-2">
-                  <label className="cursor-pointer rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                    {uploading ? "Enviando…" : "+ NF"}
-                    <input
-                      type="file"
-                      accept=".pdf,image/*"
-                      className="hidden"
-                      disabled={uploading}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        e.target.value = "";
-                        if (f) void uploadAnexo(f, "NOTA_FISCAL", "nota-fiscal");
-                      }}
-                    />
-                  </label>
-                  <label className="cursor-pointer rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
-                    {uploading ? "Enviando…" : "+ Laudo/doc"}
-                    <input
-                      type="file"
-                      accept=".pdf,.doc,.docx,image/*"
-                      className="hidden"
-                      disabled={uploading}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        e.target.value = "";
-                        if (!f) return;
-                        const tipo = /laudo/i.test(f.name) ? "LAUDO" : "OUTRO";
-                        void uploadAnexo(f, tipo, "documento");
-                      }}
-                    />
-                  </label>
-                </div>
+                <label className="cursor-pointer rounded-lg border px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50">
+                  {uploading ? "Enviando…" : "+ NF"}
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    className="hidden"
+                    disabled={uploading}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (f) void uploadAnexo(f, "NOTA_FISCAL", "nota-fiscal");
+                    }}
+                  />
+                </label>
               ) : null}
             </div>
             {!data.anexos?.length ? (

@@ -104,6 +104,72 @@ export const RMA_ITEM_ETAPAS_SAIDA = [
   "NAO_APROVADO",
 ] as const;
 
+export const MSG_NF_RETORNO_NUMERO_PENDENTE =
+  "Informe o número da NF de retorno antes de liberar o equipamento";
+export const MSG_NF_RETORNO_ARQUIVO_PENDENTE =
+  "Anexe o arquivo da NF de retorno antes de liberar o equipamento";
+
+/** Número + arquivo da NF de retorno são obrigatórios para liberar/expedir. */
+export function mensagemBloqueioNfRetorno(opts: {
+  nfSaidaNumero?: string | null;
+  temArquivoNfSaida: boolean;
+}): string | null {
+  if (!opts.nfSaidaNumero?.trim()) return MSG_NF_RETORNO_NUMERO_PENDENTE;
+  if (!opts.temArquivoNfSaida) return MSG_NF_RETORNO_ARQUIVO_PENDENTE;
+  return null;
+}
+
+export const YMD_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Data civil AAAA-MM-DD, ou null se vazia/inválida (inclui 31/02). */
+export function parseYmd(raw?: string | null): string | null {
+  const t = (raw || "").trim();
+  if (!YMD_REGEX.test(t)) return null;
+  const [ys, ms, ds] = t.split("-");
+  const y = Number(ys);
+  const m = Number(ms);
+  const d = Number(ds);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (
+    dt.getUTCFullYear() !== y ||
+    dt.getUTCMonth() !== m - 1 ||
+    dt.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return t;
+}
+
+export function ymdFromApi(
+  value: Date | string | null | undefined
+): string | null {
+  if (value == null || value === "") return null;
+  if (typeof value === "string") return parseYmd(value.slice(0, 10));
+  if (Number.isNaN(value.getTime())) return null;
+  return parseYmd(value.toISOString().slice(0, 10));
+}
+
+export function formatYmdBr(ymd?: string | null): string {
+  const p = parseYmd(ymd ?? null);
+  if (!p) return "—";
+  const [y, m, d] = p.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+export function hojeYmdSaoPaulo(now = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  }).format(now);
+}
+
+export function ymdVencido(
+  ymd?: string | null,
+  hoje = hojeYmdSaoPaulo()
+): boolean {
+  const p = parseYmd(ymd ?? null);
+  return Boolean(p && p < hoje);
+}
+
 /** Recebimento ativo (inclui legado AGUARDANDO_LAUDO). */
 export function rmaEtapaEmRecebimento(etapa: string | null | undefined): boolean {
   return (
@@ -142,6 +208,71 @@ export const RMA_CHECKLIST_CAMPO_TIPOS = [
   "FOTO",
 ] as const;
 export type RmaChecklistCampoTipo = (typeof RMA_CHECKLIST_CAMPO_TIPOS)[number];
+
+function stripAcentosChecklist(s: string): string {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/** SIM / NAO a partir de bool ou texto (Não, NÃO, nao, Sim…). */
+export function normalizarRespostaChecklistSimNao(
+  valorBool?: boolean | null,
+  valorTexto?: string | null
+): "SIM" | "NAO" | "" {
+  if (valorBool === true) return "SIM";
+  if (valorBool === false) return "NAO";
+  const t = stripAcentosChecklist((valorTexto || "").trim().toUpperCase());
+  if (["SIM", "S", "YES", "TRUE", "1"].includes(t)) return "SIM";
+  if (["NAO", "N", "NO", "FALSE", "0"].includes(t)) return "NAO";
+  return "";
+}
+
+export function normalizarGatilhoFotoChecklist(
+  raw?: string | null
+): string {
+  const t = stripAcentosChecklist((raw || "").trim().toUpperCase());
+  if (!t) return "";
+  if (["SIM", "S", "YES", "TRUE", "1"].includes(t)) return "SIM";
+  if (["NAO", "N", "NO", "FALSE", "0"].includes(t)) return "NAO";
+  return t;
+}
+
+/**
+ * Foto extra só quando a resposta atual é igual ao gatilho (`exigeFotoSe`).
+ * Pergunta “Só foto”: exige se o item for obrigatório (ignora gatilho residual).
+ */
+export function checklistFotoExigida(opts: {
+  tipoCampo: string;
+  obrigatorio?: boolean;
+  exigeFotoSe?: string | null;
+  valorBool?: boolean | null;
+  valorTexto?: string | null;
+}): boolean {
+  if (opts.tipoCampo === "FOTO") {
+    return opts.obrigatorio !== false;
+  }
+  const gatilho = normalizarGatilhoFotoChecklist(opts.exigeFotoSe);
+  if (!gatilho) return false;
+  const resposta =
+    opts.tipoCampo === "SIM_NAO"
+      ? normalizarRespostaChecklistSimNao(opts.valorBool, opts.valorTexto)
+      : stripAcentosChecklist((opts.valorTexto || "").trim().toUpperCase());
+  return Boolean(resposta) && resposta === gatilho;
+}
+
+/** Mostra o campo de foto: tipo FOTO, condição já verdadeira, ou já há anexo. */
+export function checklistMostrarCampoFoto(opts: {
+  tipoCampo: string;
+  exigeFotoSe?: string | null;
+  valorBool?: boolean | null;
+  valorTexto?: string | null;
+  temFotos?: boolean;
+  obrigatorio?: boolean;
+}): boolean {
+  if (opts.temFotos) return true;
+  if (opts.tipoCampo === "FOTO") return true;
+  if (!opts.exigeFotoSe?.trim()) return false;
+  return checklistFotoExigida(opts);
+}
 
 export const RMA_CHECKLIST_EXEC_STATUS = [
   "EM_PREENCHIMENTO",

@@ -405,6 +405,19 @@ async function main() {
   const libTi = lib?.template.itens[0]?.id;
   if (!libTi) fail("checklist liberação sem item", lib);
 
+  const nfRetUrl = await uploadRmaPdf(token, "smoke-nf-retorno.pdf");
+  await req(`/rma/${processo.id}/anexos`, {
+    method: "POST",
+    token,
+    body: { tipo: "NF_SAIDA", arquivo: nfRetUrl },
+  });
+  await req(`/rma/${processo.id}/financeiro`, {
+    method: "PATCH",
+    token,
+    body: { nfSaidaNumero: "SMOKE-NF-RET" },
+  });
+  ok("NF de retorno informada (número + arquivo)");
+
   await req(
     `/rma/${processo.id}/itens/${itemId}/checklist/LIBERACAO/concluir`,
     {
@@ -416,14 +429,6 @@ async function main() {
     }
   );
   ok("liberação → AGUARDANDO_ENVIO");
-
-  const nfRetUrl = await uploadRmaPdf(token, "smoke-nf-retorno.pdf");
-  await req(`/rma/${processo.id}/anexos`, {
-    method: "POST",
-    token,
-    body: { tipo: "NF_SAIDA", arquivo: nfRetUrl },
-  });
-  ok("NF de retorno anexada");
 
   const aposTroca = await req<{
     status: string;

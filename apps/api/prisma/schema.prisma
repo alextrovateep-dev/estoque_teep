@@ -350,6 +350,7 @@ model Transferencia {
   guiaTransporte  String?            @map("guia_transporte") @db.VarChar(120)
   /// Número da NF / documento da carga (opcional)
   notaFiscalNumero String?           @map("nota_fiscal_numero") @db.VarChar(60)
+  observacao      String?            @db.Text
   motivoRejeicao  String?            @map("motivo_rejeicao") @db.Text
   criadoPorId     String             @map("criado_por_id") @db.Uuid
   criadoEm        DateTime           @default(now()) @map("criado_em") @db.Timestamptz
@@ -560,6 +561,8 @@ model RmaProcesso {
   valorCobrado             Decimal?   @map("valor_cobrado") @db.Decimal(12, 2)
   nfCobrancaNumero         String?    @map("nf_cobranca_numero") @db.VarChar(60)
   observacao               String?    @db.Text
+  /// Data civil (AAAA-MM-DD) limite para concluir a manutenção dos equipamentos
+  prazoManutencao          DateTime?  @map("prazo_manutencao") @db.Date
   /// Usuário comercial responsável pela aprovação com o cliente (snapshot na abertura)
   responsavelComercialId   String?    @map("responsavel_comercial_id") @db.Uuid
   criadoPorId              String     @map("criado_por_id") @db.Uuid
@@ -581,6 +584,7 @@ model RmaProcesso {
   @@index([nfEntradaNumero])
   @@index([nfSaidaNumero])
   @@index([nfCobrancaNumero])
+  @@index([prazoManutencao])
   @@map("rma_processos")
 }
 

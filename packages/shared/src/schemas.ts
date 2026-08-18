@@ -5,6 +5,7 @@ import {
   OPERACOES,
   PERFIS,
   PERMISSAO_KEYS,
+  parseYmd,
 } from "./constants";
 import {
   isValidCnpj,
@@ -621,6 +622,7 @@ export const createTransferenciaSchema = z.object({
     .enum(["IMEDIATO", "AGUARDAR_RECEBIMENTO"])
     .optional()
     .default("AGUARDAR_RECEBIMENTO"),
+  observacao: z.string().max(2000).optional().nullable(),
   itens: z.array(createTransferenciaItemSchema).min(1),
 });
 
@@ -683,6 +685,15 @@ export const createRmaProcessoSchema = z
       message: "Selecione o responsável comercial",
     }),
     observacao: z.string().max(2000).optional().nullable(),
+    prazoManutencao: z.preprocess(
+      (v) => (v == null || String(v).trim() === "" ? null : String(v).trim()),
+      z
+        .string()
+        .nullable()
+        .refine((v) => v == null || parseYmd(v) != null, {
+          message: "Informe uma data válida para o prazo da manutenção",
+        })
+    ),
     nfEntradaNumero: z
       .string({ required_error: "Informe o número da NF de entrada" })
       .trim()
@@ -746,6 +757,20 @@ export const updateRmaFinanceiroSchema = z.object({
   nfEntradaNumero: z.string().max(60).optional().nullable(),
   nfSaidaNumero: z.string().max(60).optional().nullable(),
   observacao: z.string().max(2000).optional().nullable(),
+  prazoManutencao: z.preprocess(
+    (v) => {
+      if (v === undefined) return undefined;
+      if (v == null || String(v).trim() === "") return null;
+      return String(v).trim();
+    },
+    z
+      .string()
+      .nullable()
+      .optional()
+      .refine((v) => v == null || v === undefined || parseYmd(v) != null, {
+        message: "Informe uma data válida para o prazo da manutenção",
+      })
+  ),
   /** @deprecated Cobrança migrou para o item — aceito só por compat. */
   cobrou: z.boolean().optional().nullable(),
   valorCobrado: z.coerce.number().min(0).optional().nullable(),

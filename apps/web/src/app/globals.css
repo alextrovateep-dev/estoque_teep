@@ -10,6 +10,13 @@ body {
   @apply bg-slate-50 text-slate-900 antialiased;
 }
 
+html,
+body {
+  min-height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 input,
 select,
 textarea,

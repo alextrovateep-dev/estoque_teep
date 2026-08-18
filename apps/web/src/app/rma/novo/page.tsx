@@ -56,6 +56,7 @@ export default function RmaNovoPage() {
   const [nfEntrada, setNfEntrada] = useState("");
   const [nfArquivo, setNfArquivo] = useState<string | null>(null);
   const [observacao, setObservacao] = useState("");
+  const [prazoManutencao, setPrazoManutencao] = useState("");
   const [destPadrao, setDestPadrao] = useState<UsuarioDest[]>([]);
   const [destTodos, setDestTodos] = useState<UsuarioDest[]>([]);
   const [destIds, setDestIds] = useState<string[]>([]);
@@ -339,6 +340,7 @@ export default function RmaNovoPage() {
           nfEntradaNumero: nfEntrada.trim(),
           nfEntradaArquivo: nfArquivo,
           observacao: observacao.trim() || null,
+          prazoManutencao: prazoManutencao.trim() || null,
           destinatarioIds: destIds,
           itens: payloadItens,
         }),
@@ -455,6 +457,22 @@ export default function RmaNovoPage() {
             </span>
           </label>
         </div>
+
+        <label className="block text-sm">
+          <span className="mb-1 block font-medium">
+            Prazo limite da manutenção
+          </span>
+          <input
+            type="date"
+            className="w-full max-w-sm rounded-lg border px-3 py-2 text-sm"
+            value={prazoManutencao}
+            onChange={(e) => setPrazoManutencao(e.target.value)}
+          />
+          <span className="mt-0.5 block text-[11px] text-slate-500">
+            Data limite para concluir a manutenção do equipamento. Pode
+            preencher agora ou depois no chamado.
+          </span>
+        </label>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block text-sm">

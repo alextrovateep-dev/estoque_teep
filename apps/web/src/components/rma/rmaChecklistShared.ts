@@ -1,3 +1,5 @@
+import { normalizarGatilhoFotoChecklist } from "@teep/shared";
+
 export type ProdutoOpt = {
   id: string;
   codigo: string;
@@ -74,4 +76,11 @@ export function parseChecklistTipo(
   const t = String(raw || "").toUpperCase();
   if (t === "RECEBIMENTO" || t === "LIBERACAO") return t;
   return null;
+}
+
+/** Valor do seletor de foto condicional (Sim / Não). */
+export function exigeFotoSeSelectValue(raw: string): "" | "SIM" | "NAO" {
+  const t = normalizarGatilhoFotoChecklist(raw);
+  if (t === "SIM" || t === "NAO") return t;
+  return "";
 }
