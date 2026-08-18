@@ -186,7 +186,7 @@ export async function criarMovimentacao(
     permitirReativarSaido?: boolean;
     /**
      * Chamada pelo módulo RMA (não pelo Novo Lançamento).
-     * Permite tipo sistema Entrada/Saída RMA.
+     * Permite tipos cadastrados com flag RMA (entrada/saída automática).
      */
     usoInternoRma?: boolean;
     anexos?: Array<{

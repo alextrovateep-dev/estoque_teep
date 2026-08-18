@@ -119,9 +119,9 @@ function TiposPageInner() {
             Tipos de Movimentação
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Cadastre Compra, Venda e demais operações. Tipos com flag RMA
-            (entrada/saída automática) aparecem aqui para associação à tela de
-            RMA.
+            Cadastre Compra, Venda e demais operações. Para RMA, marque a flag
+            «entrada automática» ou «saída ao devolver/trocar» em um tipo que
+            você cadastrou.
           </p>
         </div>
         <Link
@@ -245,9 +245,7 @@ function TiposPageInner() {
                     </td>
                     <td className="px-3 py-3 align-top whitespace-nowrap">
                       <div className="flex gap-3">
-                        {(!t.sistema ||
-                          t.rmaEntradaEstoque ||
-                          t.rmaSaidaCliente) && (
+                        {!t.sistema && (
                           <Link
                             href={`/admin/tipos/${t.id}`}
                             className="text-sm font-medium text-brand hover:underline"

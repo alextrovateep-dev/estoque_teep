@@ -1277,14 +1277,9 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
       const all = await prisma.tipoMovimentacao.findMany({
         orderBy: { nome: "asc" },
       });
-      // Cadastro: tipos de negócio + tipos sistema usados pelo RMA (flags).
+      // Cadastro: só tipos de negócio (sistema fica oculto).
       return res.json(
-        incluirSistema
-          ? all
-          : all.filter(
-              (t) =>
-                !t.sistema || t.rmaEntradaEstoque || t.rmaSaidaCliente
-            )
+        incluirSistema ? all : all.filter((t) => !t.sistema)
       );
     }
 
@@ -1294,11 +1289,7 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
     });
 
     if (!paraLancamento) {
-      return res.json(
-        all.filter(
-          (t) => !t.sistema || t.rmaEntradaEstoque || t.rmaSaidaCliente
-        )
-      );
+      return res.json(all.filter((t) => !t.sistema));
     }
 
     // Lançamento: filtra por flags de perfil (cadastro), não por lista fixa de nomes.

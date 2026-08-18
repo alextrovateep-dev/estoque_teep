@@ -12,9 +12,10 @@ type TipoSistema = {
 };
 
 /**
- * Tipos internos referenciados pelo código (inventário, transferência, RMA, árvore).
+ * Tipos internos referenciados pelo código (inventário, transferência, árvore).
  * Não são cadastro de negócio — `sistema: true` e ficam fora da lista de cadastro / lançamento
  * (exceto Transferência entre estoques no Novo Lançamento).
+ * RMA usa tipos cadastrados pelo admin com flags `rmaEntradaEstoque` / `rmaSaidaCliente`.
  */
 const TIPOS_SISTEMA: TipoSistema[] = [
   {
@@ -92,24 +93,6 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao:
       "Lançamento A->B: creditar destino agora ou aguardar confirmação de recebimento (F15)",
   },
-  {
-    nome: "Entrada RMA",
-    operacao: "ENTRADA",
-    requerCliente: true,
-    requerAprovacao: false,
-    permitidoOperador: true,
-    permitidoGerente: true,
-    descricao: "Usado pelo módulo RMA",
-  },
-  {
-    nome: "Saída RMA",
-    operacao: "SAIDA",
-    requerCliente: true,
-    requerAprovacao: false,
-    permitidoOperador: true,
-    permitidoGerente: true,
-    descricao: "Usado pelo módulo RMA (devolução ao cliente)",
-  },
 ];
 
 async function renameTipoLegado(from: string, to: string) {
@@ -135,9 +118,27 @@ async function renameTipoLegado(from: string, to: string) {
   });
 }
 
+async function removeTiposRmaFixosLegado() {
+  for (const nome of ["Entrada RMA", "Saída RMA"]) {
+    const t = await prisma.tipoMovimentacao.findUnique({ where: { nome } });
+    if (!t) continue;
+    const usados = await prisma.movimentacao.count({ where: { tipoId: t.id } });
+    if (usados > 0) {
+      // Histórico: mantém o tipo só para movimentações antigas; RMA novo exige cadastro.
+      await prisma.tipoMovimentacao.update({
+        where: { id: t.id },
+        data: { rmaEntradaEstoque: false, rmaSaidaCliente: false },
+      });
+      continue;
+    }
+    await prisma.tipoMovimentacao.delete({ where: { id: t.id } }).catch(() => {});
+  }
+}
+
 /** Garante tipos internos. Idempotente — seguro no boot e no seed. */
 export async function ensureSystemTipos(): Promise<number> {
   await renameTipoLegado("Consumo Montagem", "Baixa de componente (árvore)");
+  await removeTiposRmaFixosLegado();
 
   for (const t of TIPOS_SISTEMA) {
     const { baixaPorArvore, ...base } = t;
@@ -158,48 +159,6 @@ export async function ensureSystemTipos(): Promise<number> {
         ...base,
         sistema: true,
         baixaPorArvore: baixaPorArvore === true,
-      },
-    });
-  }
-
-  const entradaRma = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Entrada RMA" },
-  });
-  const saidaRma = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: "Saída RMA" },
-  });
-  if (saidaRma) {
-    const jaTemSaida = await prisma.tipoMovimentacao.findFirst({
-      where: { rmaSaidaCliente: true, id: { not: saidaRma.id } },
-      select: { id: true },
-    });
-    await prisma.tipoMovimentacao.update({
-      where: { id: saidaRma.id },
-      data: {
-        geraAlertaRetorno: false,
-        ehRetornoDeId: null,
-        requerCliente: true,
-        sistema: true,
-        // Só marca se ninguém mais já configurou a flag
-        ...(jaTemSaida ? {} : { rmaSaidaCliente: true }),
-        rmaEntradaEstoque: false,
-      },
-    });
-  }
-  if (entradaRma) {
-    const jaTemEntrada = await prisma.tipoMovimentacao.findFirst({
-      where: { rmaEntradaEstoque: true, id: { not: entradaRma.id } },
-      select: { id: true },
-    });
-    await prisma.tipoMovimentacao.update({
-      where: { id: entradaRma.id },
-      data: {
-        geraAlertaRetorno: false,
-        ehRetornoDeId: null,
-        requerCliente: true,
-        sistema: true,
-        ...(jaTemEntrada ? {} : { rmaEntradaEstoque: true }),
-        rmaSaidaCliente: false,
       },
     });
   }

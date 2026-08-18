@@ -90,6 +90,52 @@ async function uploadRmaPdf(token: string, filename: string): Promise<string> {
   return data.url;
 }
 
+type TipoMov = {
+  id: string;
+  nome: string;
+  operacao: string;
+  rmaEntradaEstoque?: boolean;
+  rmaSaidaCliente?: boolean;
+};
+
+async function ensureRmaTipos(token: string, suf: string) {
+  const tipos = await req<TipoMov[]>("/tipos-movimentacao", { token });
+  if (!tipos.some((t) => t.rmaEntradaEstoque)) {
+    await req("/tipos-movimentacao", {
+      method: "POST",
+      token,
+      body: {
+        nome: `Smoke entrada RMA ${suf}`,
+        operacao: "ENTRADA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        rmaEntradaEstoque: true,
+      },
+      expectStatus: 201,
+    });
+    ok("tipo ENTRADA com flag RMA cadastrado");
+  }
+  if (!tipos.some((t) => t.rmaSaidaCliente)) {
+    await req("/tipos-movimentacao", {
+      method: "POST",
+      token,
+      body: {
+        nome: `Smoke saída RMA ${suf}`,
+        operacao: "SAIDA",
+        requerCliente: true,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        rmaSaidaCliente: true,
+      },
+      expectStatus: 201,
+    });
+    ok("tipo SAÍDA com flag RMA cadastrado");
+  }
+}
+
 async function main() {
   console.log(`\nRMA troca smoke (etapas por item) → ${API}\n`);
 
@@ -182,6 +228,8 @@ async function main() {
     },
   });
   ok(`peça boa ${snBoa} em PLN`);
+
+  await ensureRmaTipos(token, suf);
 
   const processo = await req<{
     id: string;
