@@ -15,6 +15,7 @@ const POR_CAMPO: Record<string, string> = {
   numeroSerie: "Informe o número de série.",
   numeroSerieBoa: "Informe o número de série da peça boa.",
   clienteId: "Selecione o cliente.",
+  documento: "CNPJ é obrigatório e deve ser válido (00.000.000/0000-00).",
   responsavelComercialId: "Selecione o responsável comercial.",
   nfCobrancaNumero: "Informe o número da NF de cobrança.",
   valorCobrado: "Informe o valor cobrado (maior que zero).",

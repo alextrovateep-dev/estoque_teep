@@ -8,6 +8,7 @@
  *   API_URL=http://localhost:4000 pnpm smoke:f10
  */
 import "dotenv/config";
+import { cnpjFromRaiz } from "@teep/shared";
 
 const API = process.env.API_URL || "http://localhost:4000";
 const EMAIL = process.env.SEED_ADMIN_EMAIL || "admin@teep.com.br";
@@ -131,7 +132,7 @@ async function main() {
     body: {
       nome: `Cliente Smoke ${codigo}`,
       tipo: "FORNECEDOR",
-      documento: null,
+      documento: cnpjFromRaiz(String(Date.now())),
     },
     expectStatus: 201,
   });

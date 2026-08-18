@@ -6,6 +6,7 @@ import {
   formatCnpj,
   onlyDigits,
 } from "@/lib/documento";
+import { isValidCnpj, MSG_CNPJ_OBRIGATORIO, tipoExigeCnpj } from "@teep/shared";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
@@ -161,9 +162,9 @@ export function ClienteCadastroForm({
 
   async function buscarCnpj(opts?: { silent?: boolean; documento?: string }) {
     const digits = onlyDigits(opts?.documento ?? form.documento);
-    if (digits.length !== 14) {
+    if (digits.length !== 14 || !isValidCnpj(digits)) {
       if (!opts?.silent) {
-        setError("Informe um CNPJ com 14 dígitos para consultar");
+        setError("Informe um CNPJ válido para consultar");
       }
       return;
     }
@@ -248,9 +249,14 @@ export function ClienteCadastroForm({
     if (readOnly) return;
     setError("");
     setMsg("");
+    if (tipoExigeCnpj(form.tipo) && !isValidCnpj(form.documento)) {
+      setError(MSG_CNPJ_OBRIGATORIO);
+      return;
+    }
     const digits = onlyDigits(form.documento);
-    const documento =
-      digits.length === 14 ? formatCnpj(digits) : nullish(form.documento);
+    const documento = isValidCnpj(form.documento)
+      ? formatCnpj(digits)
+      : nullish(form.documento);
 
     const body = {
       nome: form.nome.trim(),
@@ -358,10 +364,14 @@ export function ClienteCadastroForm({
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-slate-600">
-              CNPJ / documento
+              CNPJ{tipoExigeCnpj(form.tipo) ? " *" : ""}
             </span>
             <input
+              required={tipoExigeCnpj(form.tipo)}
+              inputMode="numeric"
+              autoComplete="off"
               placeholder="00.000.000/0000-00"
+              maxLength={18}
               className="w-full rounded-lg border px-3 py-2 font-mono text-sm"
               value={form.documento}
               onChange={(e) => {

@@ -8,12 +8,16 @@ import {
   createProdutoSchema,
   updateProdutoSchema,
   clienteSchema,
+  updateClienteSchema,
   tipoMovimentacaoSchema,
   tipoMovimentacaoObjectSchema,
   putProdutoComponentesSchema,
   normalizeDocumento,
   onlyDigits,
   sameDocumento,
+  isValidCnpj,
+  tipoExigeCnpj,
+  MSG_CNPJ_OBRIGATORIO,
   TIPO_TRANSF_ENTRE_ESTOQUES,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
@@ -1186,20 +1190,30 @@ cadastrosRouter.patch(
   "/clientes/:id",
   requirePerfil("ADMIN", "GERENTE"),
   requirePermissao("cadastros_clientes_editar"),
-  validateBody(clienteSchema.partial()),
+  validateBody(updateClienteSchema),
   async (req, res, next) => {
     try {
+      const existing = await prisma.cliente.findUnique({
+        where: { id: req.params.id },
+      });
+      if (!existing) throw new AppError(404, "Cadastro não encontrado");
       const data = { ...req.body };
       if ("documento" in data) {
         data.documento = normalizeDocumento(data.documento);
-        if (data.documento) {
-          const dup = await findClienteByDocumento(
-            data.documento,
-            req.params.id
-          );
-          if (dup) {
-            throw new AppError(409, "CNPJ/documento já cadastrado");
-          }
+      }
+      const tipoFinal = data.tipo ?? existing.tipo;
+      const docFinal =
+        "documento" in data ? data.documento : existing.documento;
+      if (tipoExigeCnpj(tipoFinal) && !isValidCnpj(docFinal)) {
+        throw new AppError(400, MSG_CNPJ_OBRIGATORIO);
+      }
+      if (data.documento) {
+        const dup = await findClienteByDocumento(
+          data.documento,
+          req.params.id
+        );
+        if (dup) {
+          throw new AppError(409, "CNPJ/documento já cadastrado");
         }
       }
       if ("responsavelComercialId" in data) {

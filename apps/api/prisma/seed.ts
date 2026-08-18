@@ -455,13 +455,15 @@ async function main() {
     }
 
     const clienteDemo = await prisma.cliente.findFirst({
-      where: { documento: "00.000.000/0001-91" },
+      where: {
+        documento: { in: ["00.000.000/0001-91", "11.222.333/0001-81"] },
+      },
     });
     if (!clienteDemo) {
       await prisma.cliente.create({
         data: {
           nome: "Fornecedor Demo TEEP",
-          documento: "00.000.000/0001-91",
+          documento: "11.222.333/0001-81",
           tipo: "FORNECEDOR",
           email: "fornecedor.demo@teep.com.br",
           cidade: "Paulínia",

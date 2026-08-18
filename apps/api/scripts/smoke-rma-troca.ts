@@ -10,6 +10,8 @@ import dotenv from "dotenv";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
+import { cnpjFromRaiz } from "@teep/shared";
+
 const API = process.env.API_URL || "http://localhost:4000";
 const EMAIL = process.env.SEED_ADMIN_EMAIL || "admin@teep.com.br";
 const SENHA = process.env.SEED_ADMIN_PASSWORD || "Admin@123";
@@ -178,7 +180,7 @@ async function main() {
       body: {
         nome: "Cliente Smoke RMA",
         tipo: "CLIENTE",
-        documento: null,
+        documento: cnpjFromRaiz(`4${String(Date.now()).slice(-7)}`),
       },
       expectStatus: 201,
     });

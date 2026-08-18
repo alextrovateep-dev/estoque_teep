@@ -8,6 +8,8 @@ import dotenv from "dotenv";
 
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
+import { cnpjFromRaiz } from "@teep/shared";
+
 const API = process.env.API_URL || "http://localhost:4000";
 const EMAIL = process.env.SEED_ADMIN_EMAIL || "admin@teep.com.br";
 const SENHA = process.env.SEED_ADMIN_PASSWORD || "Admin@123";
@@ -102,7 +104,11 @@ async function main() {
     const c = await req<{ id: string }>("/clientes", {
       method: "POST",
       token,
-      body: { nome: "Forn Smoke Multi", tipo: "FORNECEDOR", documento: null },
+      body: {
+        nome: "Forn Smoke Multi",
+        tipo: "FORNECEDOR",
+        documento: cnpjFromRaiz(`1${String(Date.now()).slice(-7)}`),
+      },
       expectStatus: 201,
     });
     clienteId = c.id;

@@ -6,6 +6,13 @@ import {
   PERFIS,
   PERMISSAO_KEYS,
 } from "./constants";
+import {
+  isValidCnpj,
+  MSG_CNPJ_INVALIDO,
+  MSG_CNPJ_OBRIGATORIO,
+  onlyDigits,
+  tipoExigeCnpj,
+} from "./documento";
 
 const alertasEmailSchema = z
   .record(z.enum(ALERTA_EVENTOS), z.boolean())
@@ -257,7 +264,7 @@ export const updateProdutoSchema = z
 const emptyToNull = (v: unknown) =>
   v === "" || v === undefined ? null : v;
 
-export const clienteSchema = z.object({
+const clienteObjectSchema = z.object({
   nome: z.string().min(1).max(150),
   nomeFantasia: z.preprocess(
     emptyToNull,
@@ -299,6 +306,44 @@ export const clienteSchema = z.object({
     z.string().uuid().nullable().optional()
   ),
 });
+
+function issueCnpj(
+  ctx: z.RefinementCtx,
+  message: string
+) {
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["documento"],
+    message,
+  });
+}
+
+export const clienteSchema = clienteObjectSchema.superRefine((data, ctx) => {
+  if (tipoExigeCnpj(data.tipo)) {
+    if (!isValidCnpj(data.documento)) {
+      issueCnpj(ctx, MSG_CNPJ_OBRIGATORIO);
+    }
+    return;
+  }
+  if (onlyDigits(data.documento || "").length === 14 && !isValidCnpj(data.documento)) {
+    issueCnpj(ctx, MSG_CNPJ_INVALIDO);
+  }
+});
+
+export const updateClienteSchema = clienteObjectSchema
+  .partial()
+  .superRefine((data, ctx) => {
+    if (data.documento === undefined) return;
+    if (tipoExigeCnpj(data.tipo)) {
+      if (!isValidCnpj(data.documento)) {
+        issueCnpj(ctx, MSG_CNPJ_OBRIGATORIO);
+      }
+      return;
+    }
+    if (onlyDigits(data.documento || "").length === 14 && !isValidCnpj(data.documento)) {
+      issueCnpj(ctx, MSG_CNPJ_INVALIDO);
+    }
+  });
 
 export const tipoMovimentacaoObjectSchema = z.object({
   nome: z.string().min(1).max(50),

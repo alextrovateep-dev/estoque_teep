@@ -1,5 +1,5 @@
 import { AppError } from "../middleware/error";
-import { formatCep, formatCnpj, onlyDigits } from "@teep/shared";
+import { formatCep, formatCnpj, isValidCnpj, onlyDigits } from "@teep/shared";
 
 export type CnpjLookupResult = {
   cnpj: string;
@@ -216,10 +216,10 @@ function mapFromBrasilApi(digits: string, data: BrasilApiCnpj): CnpjLookupResult
  * Consulta CNPJ: publica.cnpj.ws, fallback BrasilAPI.
  */
 export async function lookupCnpj(cnpjRaw: string): Promise<CnpjLookupResult> {
-  const digits = onlyDigits(cnpjRaw);
-  if (digits.length !== 14) {
-    throw new AppError(400, "CNPJ deve ter 14 dígitos");
+  if (!isValidCnpj(cnpjRaw)) {
+    throw new AppError(400, "Informe um CNPJ válido");
   }
+  const digits = onlyDigits(cnpjRaw);
 
   // 1) CNPJ.ws pública
   try {
