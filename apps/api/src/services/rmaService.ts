@@ -455,8 +455,8 @@ function emailsAlertaDoProcessoRma(
     destinatarios?: Array<{
       usuario: { email?: string | null; ativo?: boolean };
     }>;
-    criadoPor?: { email?: string | null };
-    responsavelComercial?: { email?: string | null };
+    criadoPor?: { email?: string | null } | null;
+    responsavelComercial?: { email?: string | null } | null;
   },
   userEmail?: string | null
 ): string[] {
