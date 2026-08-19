@@ -468,7 +468,7 @@ export const createMovimentacaoSchema = z
     /** Números de série (obrigatório se produto.controlaSerie) */
     series: seriesArraySchema,
     precoUnitario: z.coerce.number().min(0).optional(),
-    observacao: z.string().optional().nullable(),
+    observacao: z.string().max(2000).optional().nullable(),
     /** Número da NF — uso em tipos com cliente/fornecedor */
     notaFiscalNumero: z
       .string()

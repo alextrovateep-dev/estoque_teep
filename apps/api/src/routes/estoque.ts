@@ -815,6 +815,7 @@ estoqueRouter.get(
         filialDestino: true,
         cliente: true,
         usuario: { select: { id: true, nome: true, email: true } },
+        anexos: { select: { id: true, tipo: true, arquivo: true, label: true } },
         series: {
           include: {
             unidadeSerie: {

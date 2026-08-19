@@ -758,7 +758,7 @@ export async function criarMovimentacao(
         quantidade,
         precoUnitario: preco,
         operacao,
-        observacao: input.observacao || null,
+        observacao: input.observacao?.trim() || null,
         notaFiscalNumero,
         notaFiscalArquivo,
         alertaEmails: alertaEmails as Prisma.InputJsonValue,

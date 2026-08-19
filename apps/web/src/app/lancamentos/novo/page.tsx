@@ -770,7 +770,7 @@ function NovoLancamentoForm() {
         tipoId,
         filialId,
         clienteId: precisaCliente ? clienteId || null : null,
-        observacao: observacao || null,
+        observacao: observacao.trim() || null,
       };
 
       if (multiSkuMode) {
@@ -2290,11 +2290,15 @@ function NovoLancamentoForm() {
 
         <label className="block">
           <span className="mb-1 block text-sm font-medium">Observação</span>
-          <input
+          <textarea
             value={observacao}
             onChange={(e) => setObservacao(e.target.value)}
+            rows={2}
+            maxLength={2000}
             placeholder={
-              retornoPrefill ? "Opcional — detalhes do retorno" : undefined
+              retornoPrefill
+                ? "Opcional — detalhes do retorno (aparece no detalhe da movimentação)"
+                : "Opcional — aparece no detalhe da movimentação"
             }
             className="w-full rounded-lg border px-3 py-3"
           />

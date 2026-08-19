@@ -1280,8 +1280,15 @@ export default function MovimentacoesPage() {
                           </span>
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 align-middle">
+                          <div className="inline-flex flex-wrap items-center gap-2">
+                            <Link
+                              href={`/movimentacoes/${m.id}`}
+                              className="text-xs font-medium text-brand hover:underline"
+                            >
+                              Ver
+                            </Link>
                           {temAcoes && !painelAberto ? (
-                            <div className="inline-flex flex-wrap items-center gap-2">
+                            <>
                               {canConfirmarRecebimento &&
                                 m.aguardandoRecebimento && (
                                   <Link
@@ -1346,10 +1353,9 @@ export default function MovimentacoesPage() {
                                     Estornar
                                   </button>
                                 )}
-                            </div>
-                          ) : (
-                            <span className="text-slate-300">—</span>
-                          )}
+                            </>
+                          ) : null}
+                          </div>
                         </td>
                       </tr>
                       {painelAberto && (
