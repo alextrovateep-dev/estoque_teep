@@ -2,6 +2,7 @@ import {
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPAS_SAIDA,
   SIGLA_ESTOQUE_RMA,
+  emailsAlertaDeUsuariosRma,
   mensagemBloqueioNfRetorno,
   parseYmd,
 } from "@teep/shared";
@@ -66,7 +67,7 @@ const anexoSelect = {
 const processoInclude = {
   cliente: { select: { id: true, nome: true, documento: true, tipo: true } },
   filial: { select: { id: true, nome: true, sigla: true } },
-  criadoPor: { select: { id: true, nome: true } },
+  criadoPor: { select: { id: true, nome: true, email: true } },
   responsavelComercial: { select: { id: true, nome: true, email: true } },
   destinatarios: {
     select: {
@@ -234,6 +235,7 @@ async function lancarSaidaRma(
     notaFiscalNumero?: string | null;
     notaFiscalArquivo?: string | null;
     observacao: string;
+    alertaEmails?: string[];
   }
 ) {
   const result = await criarMovimentacao(user, {
@@ -246,6 +248,7 @@ async function lancarSaidaRma(
     notaFiscalNumero: opts.notaFiscalNumero ?? null,
     notaFiscalArquivo: opts.notaFiscalArquivo ?? null,
     observacao: opts.observacao,
+    alertaEmails: opts.alertaEmails,
     usoInternoRma: true,
   });
   const mov = result.movimentacao;
@@ -446,6 +449,24 @@ function podeDecidirAprovacao(
   return podeDecidirAprovacaoRma(user, responsavelComercialId);
 }
 
+
+function emailsAlertaDoProcessoRma(
+  proc: {
+    destinatarios?: Array<{
+      usuario: { email?: string | null; ativo?: boolean };
+    }>;
+    criadoPor?: { email?: string | null };
+    responsavelComercial?: { email?: string | null };
+  },
+  userEmail?: string | null
+): string[] {
+  return emailsAlertaDeUsuariosRma([
+    ...(proc.destinatarios || []).map((d) => d.usuario),
+    proc.criadoPor,
+    proc.responsavelComercial,
+    userEmail ? { email: userEmail, ativo: true } : null,
+  ]);
+}
 
 function destinatarioIdsDoProcesso(proc: {
   destinatarios?: Array<{ usuario: { id: string } }>;
@@ -1865,6 +1886,7 @@ export async function devolverRmaItens(
             `Devolução RMA ${id.slice(0, 8)}`,
             input.observacao
           ),
+          alertaEmails: emailsAlertaDoProcessoRma(proc, user.email),
         });
         saidaOk = true;
         movSaidaId = mov.id;
@@ -2163,6 +2185,7 @@ export async function trocarRmaItem(
       notaFiscalNumero: nfSaida,
       notaFiscalArquivo: nfSaidaArquivo,
       observacao: `Troca RMA ${processoId.slice(0, 8)} — substitui ${serieRuim}`,
+      alertaEmails: emailsAlertaDoProcessoRma(proc, user.email),
     });
     movSaidaId = saida.id;
 

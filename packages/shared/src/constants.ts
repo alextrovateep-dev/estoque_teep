@@ -119,6 +119,21 @@ export function mensagemBloqueioNfRetorno(opts: {
   return null;
 }
 
+/** E-mails únicos de usuários ativos (destinatários do RMA, comercial, operador). */
+export function emailsAlertaDeUsuariosRma(
+  pessoas: Array<
+    { email?: string | null; ativo?: boolean | null } | null | undefined
+  >
+): string[] {
+  const emails = new Set<string>();
+  for (const p of pessoas) {
+    if (!p || p.ativo === false) continue;
+    const e = p.email?.trim().toLowerCase();
+    if (e) emails.add(e);
+  }
+  return [...emails];
+}
+
 export const YMD_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 /** Data civil AAAA-MM-DD, ou null se vazia/inválida (inclui 31/02). */

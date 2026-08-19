@@ -8,6 +8,7 @@ import {
   mensagemBloqueioReabrirOrcamento,
   checklistFotoExigida,
   checklistMostrarCampoFoto,
+  emailsAlertaDeUsuariosRma,
   parseYmd,
   mensagemErroValidacao,
   RMA_ORCAMENTO_STATUS_LABELS,
@@ -350,6 +351,30 @@ describe("mensagemBloqueioNfRetorno", () => {
         temArquivoNfSaida: true,
       }),
       null
+    );
+  });
+});
+
+describe("emailsAlertaDeUsuariosRma", () => {
+  it("usa e-mail dos destinatários do RMA", () => {
+    assert.deepEqual(
+      emailsAlertaDeUsuariosRma([
+        { email: "admin@teep.com.br", ativo: true },
+        { email: "  Admin@teep.com.br ", ativo: true },
+      ]),
+      ["admin@teep.com.br"]
+    );
+  });
+
+  it("ignora inativo e sem e-mail", () => {
+    assert.deepEqual(
+      emailsAlertaDeUsuariosRma([
+        { email: "off@teep.com.br", ativo: false },
+        { email: "  ", ativo: true },
+        null,
+        { email: "ok@teep.com.br" },
+      ]),
+      ["ok@teep.com.br"]
     );
   });
 });

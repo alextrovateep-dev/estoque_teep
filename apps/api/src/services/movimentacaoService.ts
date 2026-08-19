@@ -528,7 +528,11 @@ export async function criarMovimentacao(
   const alertaEmails = (input.alertaEmails || [])
     .map((e) => e.trim().toLowerCase())
     .filter(Boolean);
-  if (tipo.geraAlertaRetorno && alertaEmails.length === 0) {
+  if (
+    tipo.geraAlertaRetorno &&
+    alertaEmails.length === 0 &&
+    !input.usoInternoRma
+  ) {
     throw new AppError(
       400,
       "Informe ao menos um e-mail para alertas de retorno"
@@ -832,7 +836,11 @@ export async function criarMovimentacao(
       }
     }
 
-    if (tipo.geraAlertaRetorno && status === "CONCLUIDO") {
+    if (
+      tipo.geraAlertaRetorno &&
+      status === "CONCLUIDO" &&
+      !input.usoInternoRma
+    ) {
       await agendarAlertasRetorno(tx, {
         movimentacaoId: mov.id,
         dataMovimento: mov.dataMovimento,
