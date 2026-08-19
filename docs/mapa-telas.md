@@ -19,6 +19,7 @@ Auth / 1º acesso: [senha-provisoria.md](./senha-provisoria.md) · `/login` · `
 | Tela | Rota | Permissão | Doc |
 |------|------|-----------|-----|
 | Novo Lançamento | `/lancamentos/novo` | `lancamentos` | [lançamento / transf.](./lancamento.md) · [séries](./geracao-numero-serie.md) |
+| Pedidos | `/pedidos` | `pedidos` | [pedidos eGestor](./pedidos-egestor.md) |
 | Transferências | `/transferencias` | `transferencias` | idem (só conferência) |
 | RMA | `/rma` | `rma` · financeiro: `rma_cobranca` | [RMA](./rma.md) |
 
@@ -41,14 +42,14 @@ Auth / 1º acesso: [senha-provisoria.md](./senha-provisoria.md) · `/login` · `
 | Clientes / Fornecedores | `/cadastros/clientes` | `cadastros_clientes_*` | — (CRUD + CNPJ/CEP na API) |
 | Árvore de produto | `/cadastros/arvore` | `cadastros_arvore_*` | [árvore](./arvore-produto.md) |
 | Categorias | `/admin/categorias` | **Admin** | — |
-| Estoques (filiais) | `/admin/filiais` | **Admin** | Locais de saldo; seed demo: PLN/TBO/RMA/DESC |
+| Estoques (filiais) | `/admin/filiais` | **Admin** | Locais de saldo; flag **acabados** para pedidos; seed demo: PLN/TBO/RMA/DESC |
 
 ## Administração (só Admin)
 
 | Tela | Rota | Doc |
 |------|------|-----|
 | Usuários e Perfis | `/admin/usuarios` | [senha provisória](./senha-provisoria.md) · permissões em `PERMISSAO_KEYS` |
-| Tipos de Movimentação | `/admin/tipos` | Flags: aprovação, retorno, termo, `baixaPorArvore`, cliente… |
+| Tipos de Movimentação | `/admin/tipos` | Flags: aprovação, retorno, termo, `baixaPorArvore`, cliente, RMA, **saída pedido eGestor**… |
 | E-mails do sistema | `/admin/email` | [alertas / e-mail](./alertas-email.md) |
 
 Sino no header: [alertas / e-mail](./alertas-email.md).

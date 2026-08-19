@@ -2,7 +2,7 @@
 
 import { api } from "@/lib/api";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { SeriesInput } from "@/components/SeriesInput";
+import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 
 type Filial = { id: string; nome: string; sigla: string };
 type Produto = {
@@ -517,11 +517,25 @@ export default function InitEstoquePage() {
                           value={r.novoSaldo}
                           onChange={(e) =>
                             setRows((prev) =>
-                              prev.map((x) =>
-                                x.produtoId === r.produtoId
-                                  ? { ...x, novoSaldo: e.target.value }
-                                  : x
-                              )
+                              prev.map((x) => {
+                                if (x.produtoId !== r.produtoId) return x;
+                                const novoSaldo = e.target.value;
+                                const d = Number(novoSaldo) - x.saldoAtual;
+                                const n =
+                                  x.controlaSerie &&
+                                  Number.isFinite(d) &&
+                                  d !== 0
+                                    ? Math.min(Math.abs(Math.trunc(d)), 200)
+                                    : 0;
+                                return {
+                                  ...x,
+                                  novoSaldo,
+                                  series: Array.from(
+                                    { length: n },
+                                    (_, i) => x.series[i] || ""
+                                  ),
+                                };
+                              })
                             )
                           }
                         />
@@ -597,21 +611,23 @@ export default function InitEstoquePage() {
                                 </div>
 
                                 {needsSeries ? (
-                                  <SeriesInput
-                                    value={r.series}
-                                    onChange={(series) =>
+                                  <SerieCamposPrefixo
+                                    codigoProduto={r.codigo}
+                                    config={null}
+                                    series={r.series}
+                                    validarNascimento={delta > 0}
+                                    onChangeSerie={(i, full) =>
                                       setRows((prev) =>
-                                        prev.map((x) =>
-                                          x.produtoId === r.produtoId
-                                            ? { ...x, series }
-                                            : x
-                                        )
+                                        prev.map((x) => {
+                                          if (x.produtoId !== r.produtoId)
+                                            return x;
+                                          const series = [...x.series];
+                                          while (series.length < i + 1)
+                                            series.push("");
+                                          series[i] = full;
+                                          return { ...x, series };
+                                        })
                                       )
-                                    }
-                                    label={
-                                      delta > 0
-                                        ? `Séries a incluir (${Math.abs(delta)})`
-                                        : `Séries a baixar (${Math.abs(delta)})`
                                     }
                                   />
                                 ) : null}

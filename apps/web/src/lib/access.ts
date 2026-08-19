@@ -61,6 +61,7 @@ export function homeForUser(user: User): string {
     { href: "/dashboard", key: "dashboard" },
     { href: "/relatorios", key: "relatorios" },
     { href: "/lancamentos/novo", key: "lancamentos" },
+    { href: "/pedidos", key: "pedidos" },
     { href: "/transferencias", key: "transferencias" },
     { href: "/movimentacoes", key: "movimentacoes" },
     { href: "/aprovacoes", key: "aprovacoes" },
@@ -89,6 +90,7 @@ export function userHasAnyOpsAccess(user: User): boolean {
     "aprovacoes",
     "estoque_init",
     "rma",
+    "pedidos",
   ];
   if (keys.some((k) => userHas(user, k))) return true;
   return userHasAnyCadastro(user);
@@ -107,6 +109,7 @@ export function permissoesEditaveisParaPerfil(
       "assistente",
       "relatorios",
       "lancamentos",
+      "pedidos",
       "transferencias",
       "movimentacoes",
       "aprovacoes",
@@ -121,6 +124,7 @@ export function permissoesEditaveisParaPerfil(
     "assistente",
     "relatorios",
     "lancamentos",
+    "pedidos",
     "transferencias",
     "movimentacoes",
     "rma",

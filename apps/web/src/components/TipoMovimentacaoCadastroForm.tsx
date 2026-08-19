@@ -22,6 +22,7 @@ type Tipo = {
   baixaPorArvore?: boolean;
   rmaEntradaEstoque?: boolean;
   rmaSaidaCliente?: boolean;
+  saidaPedidoVenda?: boolean;
   descricao?: string | null;
 };
 
@@ -46,6 +47,7 @@ function createEmptyForm() {
     baixaPorArvore: false,
     rmaEntradaEstoque: false,
     rmaSaidaCliente: false,
+    saidaPedidoVenda: false,
     descricao: "",
   };
 }
@@ -240,6 +242,7 @@ export function TipoMovimentacaoCadastroForm({
           baixaPorArvore: Boolean(t.baixaPorArvore),
           rmaEntradaEstoque: Boolean(t.rmaEntradaEstoque),
           rmaSaidaCliente: Boolean(t.rmaSaidaCliente),
+          saidaPedidoVenda: Boolean(t.saidaPedidoVenda),
           descricao: t.descricao || "",
         });
       })
@@ -277,6 +280,7 @@ export function TipoMovimentacaoCadastroForm({
             rmaEntradaEstoque:
               form.operacao === "ENTRADA" && form.rmaEntradaEstoque,
             rmaSaidaCliente: form.operacao === "SAIDA" && form.rmaSaidaCliente,
+            saidaPedidoVenda: form.operacao === "SAIDA" && form.saidaPedidoVenda,
             requerCliente: precisaCliente,
             descricao: form.descricao.trim() || null,
           }
@@ -296,6 +300,7 @@ export function TipoMovimentacaoCadastroForm({
             rmaEntradaEstoque:
               form.operacao === "ENTRADA" && form.rmaEntradaEstoque,
             rmaSaidaCliente: form.operacao === "SAIDA" && form.rmaSaidaCliente,
+            saidaPedidoVenda: form.operacao === "SAIDA" && form.saidaPedidoVenda,
             descricao: form.descricao.trim() || null,
           };
       if (!editId) {
@@ -339,6 +344,7 @@ export function TipoMovimentacaoCadastroForm({
       rmaEntradaEstoque:
         operacao === "ENTRADA" ? prev.rmaEntradaEstoque : false,
       rmaSaidaCliente: operacao === "SAIDA" ? prev.rmaSaidaCliente : false,
+      saidaPedidoVenda: operacao === "SAIDA" ? prev.saidaPedidoVenda : false,
     }));
   }
 
@@ -562,6 +568,29 @@ export function TipoMovimentacaoCadastroForm({
               }
             />
           </div>
+        </SectionCard>
+
+        <SectionCard
+          title="Pedidos de venda"
+          subtitle="Tipo usado na tela Pedidos (eGestor). O operador não escolhe o tipo na hora de separar."
+          className={emEdicao ? "border-amber-200/80 bg-white/90" : ""}
+        >
+          <ToggleRow
+            checked={form.saidaPedidoVenda}
+            disabled={!isSaida}
+            onChange={(v) =>
+              setForm({
+                ...form,
+                saidaPedidoVenda: v,
+              })
+            }
+            title="Saída de pedido de venda"
+            hint={
+              isSaida
+                ? "Usada na separação de pedidos eGestor. Só um tipo pode ter esta opção."
+                : "Disponível apenas para natureza Saída."
+            }
+          />
         </SectionCard>
 
         <SectionCard

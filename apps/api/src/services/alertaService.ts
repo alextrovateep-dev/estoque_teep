@@ -307,3 +307,29 @@ export function notificarRmaLaudos(opts: {
     forceEmail: true,
   });
 }
+
+export function notificarPedidoSeparado(opts: {
+  pedidoId: string;
+  egestorCodigo: number;
+  clienteNome: string;
+  filialSigla: string;
+  destinatarioIds: string[];
+}): void {
+  const appUrl =
+    process.env.FRONTEND_URL ||
+    process.env.CORS_ORIGIN ||
+    "http://localhost:3000";
+  notifyUsuarios(opts.destinatarioIds, {
+    tipo: "PEDIDO_SEPARADO",
+    titulo: `${ALERTA_EVENTO_LABELS.PEDIDO_SEPARADO} · ${opts.egestorCodigo}`,
+    mensagem: [
+      `Pedido ${opts.egestorCodigo} separado.`,
+      `Cliente: ${opts.clienteNome}`,
+      `Estoque: ${opts.filialSigla}`,
+      `Abrir no sistema: ${appUrl}/pedidos/${opts.pedidoId}`,
+    ].join("\n"),
+    meta: { pedidoId: opts.pedidoId, href: `/pedidos/${opts.pedidoId}` },
+    dedupeKey: `${opts.pedidoId}|SEPARADO`,
+    forceEmail: true,
+  });
+}

@@ -82,6 +82,15 @@ function appErrorFromTipoP2002(e: unknown): AppError | null {
       "Já existe um tipo com «RMA: saída ao devolver/trocar» — atualize a tela"
     );
   }
+  if (
+    alvo.includes("saida_pedido_venda") ||
+    alvo.includes("saidaPedidoVenda")
+  ) {
+    return new AppError(
+      409,
+      "Já existe um tipo com «Saída de pedido de venda» — atualize a tela"
+    );
+  }
   return new AppError(409, "Tipo já existe");
 }
 
@@ -1314,7 +1323,8 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
     const perfil = req.user!.perfil;
     res.json(
       all.filter((t) => {
-        if (t.rmaEntradaEstoque || t.rmaSaidaCliente) return false;
+        if (t.rmaEntradaEstoque || t.rmaSaidaCliente || t.saidaPedidoVenda)
+          return false;
         const permitido =
           perfil === "OPERADOR"
             ? t.permitidoOperador
@@ -1357,6 +1367,8 @@ cadastrosRouter.post(
         req.body.operacao === "ENTRADA" && req.body.rmaEntradaEstoque === true;
       const rmaSaida =
         req.body.operacao === "SAIDA" && req.body.rmaSaidaCliente === true;
+      const saidaPedido =
+        req.body.operacao === "SAIDA" && req.body.saidaPedidoVenda === true;
       const row = await prisma.$transaction(async (tx) => {
         if (rmaEntrada) {
           await tx.tipoMovimentacao.updateMany({
@@ -1368,6 +1380,12 @@ cadastrosRouter.post(
           await tx.tipoMovimentacao.updateMany({
             where: { rmaSaidaCliente: true },
             data: { rmaSaidaCliente: false },
+          });
+        }
+        if (saidaPedido) {
+          await tx.tipoMovimentacao.updateMany({
+            where: { saidaPedidoVenda: true },
+            data: { saidaPedidoVenda: false },
           });
         }
         return tx.tipoMovimentacao.create({
@@ -1387,6 +1405,7 @@ cadastrosRouter.post(
               req.body.baixaPorArvore === true,
             rmaEntradaEstoque: rmaEntrada,
             rmaSaidaCliente: rmaSaida,
+            saidaPedidoVenda: saidaPedido,
             requerCliente:
               req.body.requerCliente === true ||
               req.body.geraAlertaRetorno === true ||
@@ -1465,11 +1484,17 @@ cadastrosRouter.patch(
         data.rmaSaidaCliente !== undefined
           ? data.rmaSaidaCliente === true
           : existing.rmaSaidaCliente;
+      let saidaPedido =
+        data.saidaPedidoVenda !== undefined
+          ? data.saidaPedidoVenda === true
+          : existing.saidaPedidoVenda;
 
       if (operacaoFinal !== "ENTRADA") rmaEntrada = false;
       if (operacaoFinal !== "SAIDA") rmaSaida = false;
+      if (operacaoFinal !== "SAIDA") saidaPedido = false;
       data.rmaEntradaEstoque = rmaEntrada;
       data.rmaSaidaCliente = rmaSaida;
+      data.saidaPedidoVenda = saidaPedido;
 
       if (geraAlerta || ehRetorno || termo || rmaEntrada || rmaSaida) {
         data.requerCliente = true;
@@ -1514,6 +1539,12 @@ cadastrosRouter.patch(
           await tx.tipoMovimentacao.updateMany({
             where: { rmaSaidaCliente: true, id: { not: existing.id } },
             data: { rmaSaidaCliente: false },
+          });
+        }
+        if (saidaPedido) {
+          await tx.tipoMovimentacao.updateMany({
+            where: { saidaPedidoVenda: true, id: { not: existing.id } },
+            data: { saidaPedidoVenda: false },
           });
         }
         return tx.tipoMovimentacao.update({

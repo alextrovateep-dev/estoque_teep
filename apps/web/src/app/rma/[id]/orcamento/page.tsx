@@ -332,10 +332,10 @@ export default function RmaOrcamentoPage() {
       </div>
 
       <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-        Fechar o orçamento libera a etapa para o comercial: gerar PDF, negociar
-        com o cliente, alterar valores e gerar um PDF novo. O RMA só é
-        finalizado depois de aprovado, com a manutenção realizada e o retorno
-        feito.
+        Fechar o orçamento libera a etapa para o comercial: gerar PDF (orçamento
+        + laudo de recebimento), negociar com o cliente, alterar valores e gerar
+        um PDF novo. O RMA só é finalizado depois de aprovado, com a manutenção
+        realizada e o retorno feito.
       </p>
 
       {error ? (
@@ -540,10 +540,11 @@ export default function RmaOrcamentoPage() {
             Orçar com o cliente
           </h2>
           <p className="mt-1 text-xs text-amber-900/80">
-            Gere o PDF e envie por e-mail/WhatsApp. Se o cliente negociar,
-            altere os valores acima, salve e gere o PDF de novo. Quando
-            aceitar, aprove. Reabra só se quiser voltar ao rascunho. Isso ainda
-            não finaliza o RMA.
+            Gere o PDF e envie por e-mail/WhatsApp. O arquivo começa com o
+            orçamento e, na sequência, o laudo de recebimento (checklist, fotos
+            e observações do técnico). Se o cliente negociar, altere os valores
+            acima, salve e gere o PDF de novo. Quando aceitar, aprove. Reabra só
+            se quiser voltar ao rascunho. Isso ainda não finaliza o RMA.
           </p>
           <ul className="mt-3 space-y-3">
             {fechados.map((it) => (

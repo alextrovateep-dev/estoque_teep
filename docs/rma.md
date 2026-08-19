@@ -12,7 +12,7 @@
 2. **Processo = nota** — cliente, NFs, estoque RMA, destinatários, comercial.
 3. **Item = manutenção** — checklist, diagnóstico/plano+peças (com tempo nos serviços), liberação, devolução/troca.
 4. **Laudo no sistema** — diagnóstico + checklist; anexo arquivo `LAUDO` não é mais aceito para novos uploads.
-5. **Orçamento do processo** — formulário/PDF em `/rma/[id]/orcamento` (agrega itens); persistência continua 1 `RmaOrcamento` por item; aprovação por item.
+5. **Orçamento do processo** — formulário/PDF em `/rma/[id]/orcamento` (agrega itens); o PDF é orçamento + laudo de recebimento; persistência continua 1 `RmaOrcamento` por item; aprovação por item.
 6. **Checklist por produto (SKU)** — templates RECEBIMENTO e LIBERACAO.
 7. **Tipos de movimentação por flag** — Admin → Tipos: `rmaEntradaEstoque` e `rmaSaidaCliente`.
 
@@ -35,7 +35,7 @@ Recusa do orçamento → `NAO_APROVADO`. Reabrir (só enquanto fechado, ainda n�
 | Quem | Onde | Faz |
 |------|------|-----|
 | Técnico | Modal do item | Checklist; serviços com **tempo (minutos)**; Salvar / Concluir diagnóstico |
-| Comercial | `/rma/[id]/orcamento` | Preenche **valor** dos serviços; Salvar; **Fechar orçamento** (libera PDF/negociação; valores continuam editáveis); **Gerar PDF**; envia por e-mail/WhatsApp; ajusta e gera PDF de novo; **Aprovar/Recusar**. **Reabrir** volta ao rascunho. |
+| Comercial | `/rma/[id]/orcamento` | Preenche **valor** dos serviços; Salvar; **Fechar orçamento** (libera PDF/negociação; valores continuam editáveis); **Gerar PDF** (orçamento + laudo de recebimento); envia por e-mail/WhatsApp; ajusta e gera PDF de novo; **Aprovar/Recusar**. **Reabrir** volta ao rascunho. |
 
 `RmaOrcamento.status` no banco continua `RASCUNHO | ENVIADO | APROVADO | RECUSADO`. Na tela, `ENVIADO` aparece como **Em negociação**.
 
@@ -58,6 +58,6 @@ Recusa do orçamento → `NAO_APROVADO`. Reabrir (só enquanto fechado, ainda n�
 | PUT | `/rma/:id/orcamento` (lote) |
 | POST | `/rma/:id/orcamento/enviar` `{ itemIds }` (alias: `/fechar`) — fecha rascunhos; status interno `ENVIADO` |
 | POST | `/rma/:id/itens/:itemId/orcamento/reabrir` — só `ENVIADO` + `AGUARDANDO_APROVACAO`; volta a rascunho |
-| GET | `/rma/:id/orcamento.pdf` |
+| GET | `/rma/:id/orcamento.pdf` — orçamento + laudo de recebimento (checklist, fotos, observações) |
 
 Gate de avanço: plano/diagnóstico; checklist de entrada só se o produto tiver template (não anexo de laudo).

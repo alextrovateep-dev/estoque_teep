@@ -203,6 +203,14 @@ function formatApiError(body: unknown, status: number): string {
   if (status === 401) return "Sessão expirada. Entre de novo e tente outra vez.";
   if (status === 403) return "Você não tem permissão para esta ação.";
   if (status === 502 || status === 503) {
+    if (
+      body &&
+      typeof body === "object" &&
+      typeof (body as { error?: unknown }).error === "string" &&
+      (body as { error: string }).error.trim()
+    ) {
+      return (body as { error: string }).error.trim();
+    }
     return "Serviço temporariamente indisponível. Tente de novo em instantes.";
   }
   if (!body || typeof body !== "object") {

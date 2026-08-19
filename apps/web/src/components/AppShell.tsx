@@ -75,6 +75,7 @@ function routeAllowed(pathname: string, user: User): boolean {
     ["/relatorios", "relatorios"],
     ["/dashboard", "dashboard"],
     ["/lancamentos", "lancamentos"],
+    ["/pedidos", "pedidos"],
     ["/transferencias", "transferencias"],
     ["/movimentacoes", "movimentacoes"],
   ];
@@ -242,6 +243,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         section: "ops",
         group: "operacoes",
         perm: "lancamentos",
+      },
+      {
+        href: "/pedidos",
+        label: "Pedidos",
+        section: "ops",
+        group: "operacoes",
+        perm: "pedidos",
       },
       {
         href: "/transferencias",

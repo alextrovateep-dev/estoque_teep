@@ -22,6 +22,11 @@ import {
 } from "../lib/rmaUploads";
 import { htmlToPdf } from "../lib/pdf";
 import { brandAssetDataUri } from "../lib/brandAssets";
+import { mapPdfImageDataUris } from "../lib/pdfImage";
+import {
+  htmlLaudoRecebimento,
+  mapPerguntasLaudo,
+} from "../lib/rmaOrcamentoPdfHtml";
 import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
 import {
   exigirNfRetornoParaLiberacao,
@@ -1273,6 +1278,18 @@ export async function obterOrcamentoAgregadoRma(
           : null,
         linhas,
         total,
+        laudoRecebimento: (() => {
+          const recv = (i.checklistExecucoes || []).find(
+            (e) => e.tipo === "RECEBIMENTO"
+          );
+          if (!recv && !i.diagnostico) return null;
+          return {
+            status: recv?.status ?? null,
+            concluidoEm: recv?.concluidoEm ?? null,
+            preenchidoPorNome: recv?.preenchidoPor?.nome ?? null,
+            perguntas: mapPerguntasLaudo(recv),
+          };
+        })(),
       };
     });
 
@@ -1386,13 +1403,6 @@ export async function exportarOrcamentoRmaPdf(
           <h2>${escHtml(it.produto.codigo)}${sn}</h2>
           <p class="desc">${escHtml(it.produto.descricao)}</p>
           ${
-            it.diagnostico
-              ? `<p class="note"><strong>Diagnóstico:</strong> ${escHtml(
-                  it.diagnostico.resumoProblema
-                )}</p>`
-              : ""
-          }
-          ${
             it.orcamento?.observacaoComercial
               ? `<p class="note"><strong>Obs. comercial:</strong> ${escHtml(
                   it.orcamento.observacaoComercial
@@ -1420,6 +1430,11 @@ export async function exportarOrcamentoRmaPdf(
 
   const totalGeral = itensPdf.reduce((a, i) => a + i.total, 0);
 
+  const fotoUrls = itensPdf.flatMap((it) =>
+    (it.laudoRecebimento?.perguntas ?? []).flatMap((q) => q.fotos)
+  );
+  const fotoUris = await mapPdfImageDataUris(fotoUrls);
+
   const html = `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -1446,6 +1461,28 @@ export async function exportarOrcamentoRmaPdf(
     .total { margin-top: 16px; font-size: 13px; font-weight: 700; text-align: right; color: ${BRAND_COLOR}; }
     .muted { color: #94a3b8; }
     .foot { margin-top: 12px; color: #94a3b8; font-size: 9px; }
+    .part-laudo { page-break-before: always; }
+    .part-laudo h1 { margin: 0 0 4px; font-size: 16px; color: ${BRAND_COLOR}; }
+    .laudo-item { margin-top: 16px; }
+    .laudo-item h2 { margin: 0 0 4px; font-size: 12px; color: ${BRAND_COLOR}; }
+    .diag { margin: 8px 0; padding: 8px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; }
+    .qs { margin: 8px 0 0; padding-left: 18px; }
+    .qs li { margin-bottom: 10px; }
+    .q { margin: 0 0 2px; }
+    .a { margin: 0; }
+    .fotos { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }
+    .foto-frame {
+      width: 280px;
+      height: 210px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+    }
+    .foto-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
   </style>
 </head>
 <body>
@@ -1475,6 +1512,23 @@ export async function exportarOrcamentoRmaPdf(
   ${blocos}
   <p class="total">Total geral: ${moneyBr(totalGeral)}</p>
   <div class="foot">Orçamento de RMA</div>
+  ${htmlLaudoRecebimento(
+    itensPdf.map((it) => ({
+      codigoProduto: it.produto.codigo,
+      descricao: it.produto.descricao,
+      numeroSerie: it.unidadeSerie?.numeroSerie ?? null,
+      diagnostico: it.diagnostico
+        ? {
+            resumoProblema: it.diagnostico.resumoProblema,
+            observacaoTecnica: it.diagnostico.observacaoTecnica,
+          }
+        : null,
+      preenchidoPorNome: it.laudoRecebimento?.preenchidoPorNome ?? null,
+      concluidoEm: it.laudoRecebimento?.concluidoEm ?? null,
+      perguntas: it.laudoRecebimento?.perguntas ?? [],
+    })),
+    (url) => fotoUris.get(url) ?? null
+  )}
 </body>
 </html>`;
 

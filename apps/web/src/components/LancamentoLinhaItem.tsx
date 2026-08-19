@@ -1,8 +1,11 @@
 "use client";
 
-import { SeriesInput } from "@/components/SeriesInput";
 import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import { api } from "@/lib/api";
+import {
+  clampTamanhoSequencial,
+  interpretarEntradaSerie,
+} from "@teep/shared";
 import { useEffect, useRef, useState } from "react";
 
 export type LancamentoProduto = {
@@ -47,13 +50,13 @@ type Props = {
    * qty primeiro → N caixas; séries nascem (não validar no estoque origem).
    */
   modoSerieNascimento?: boolean;
-  /** ENTRADA sem retorno — permite gerar séries */
-  podeGerarAutomatico: boolean;
+  /** @deprecated Geração automática não entra mais no fluxo (só sequência manual). */
+  podeGerarAutomatico?: boolean;
   tipoNome?: string;
   onPatch: (partial: Partial<LancamentoLinha>) => void;
   onRemove: () => void;
   onError: (msg: string) => void;
-  onMsg: (msg: string) => void;
+  onMsg?: (msg: string) => void;
 };
 
 function formatQty(n: number) {
@@ -95,16 +98,11 @@ export function LancamentoLinhaItem({
   filialId,
   validarSerieEstoque,
   modoSerieNascimento = false,
-  podeGerarAutomatico,
-  tipoNome,
   onPatch,
   onRemove,
   onError,
-  onMsg,
 }: Props) {
   const [sugestoes, setSugestoes] = useState<LancamentoProduto[]>([]);
-  const [gerando, setGerando] = useState(false);
-  const [desfazendo, setDesfazendo] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchAbort = useRef<AbortController | null>(null);
   const validTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>(
@@ -244,10 +242,30 @@ export function LancamentoLinhaItem({
     });
   }
 
+  function sequenciaPronta(valor: string, produto: LancamentoProduto): boolean {
+    const tamanho = clampTamanhoSequencial(
+      produto.configuracaoSerie?.tamanhoSequencial
+    );
+    const parsed = interpretarEntradaSerie(valor, {
+      codigoProduto: produto.codigo,
+      formato: produto.configuracaoSerie?.formato,
+      tamanhoSequencial: tamanho,
+      prefixoFixo: produto.configuracaoSerie?.prefixoFixo,
+      sufixoFixo: produto.configuracaoSerie?.sufixoFixo,
+    });
+    return parsed.sequencia.replace(/\D/g, "").length === tamanho;
+  }
+
   async function validarSerieCampo(idx: number, valor: string) {
     const cur = linhaRef.current;
     const numero = valor.trim();
-    if (!validarSerieEstoque || !cur.produto?.id || !filialId || !numero) {
+    if (
+      !validarSerieEstoque ||
+      !cur.produto?.id ||
+      !filialId ||
+      !numero ||
+      !sequenciaPronta(numero, cur.produto)
+    ) {
       const serieStatus = [...cur.serieStatus];
       const serieMsgs = [...cur.serieMsgs];
       serieStatus[idx] = "idle";
@@ -332,15 +350,14 @@ export function LancamentoLinhaItem({
     onPatch({ series, serieStatus, serieMsgs });
     if (!validarSerieEstoque) return;
     if (validTimers.current[idx]) clearTimeout(validTimers.current[idx]);
+    if (!cur.produto || !sequenciaPronta(valor, cur.produto)) return;
     validTimers.current[idx] = setTimeout(() => {
       void validarSerieCampo(idx, valor);
     }, 400);
   }
 
-  const usaCamposSerieNascimento = controlaSerie && modoSerieNascimento;
-  const usaCamposSerieEstoque = controlaSerie && validarSerieEstoque;
-  const usaSeriesInput =
-    controlaSerie && !validarSerieEstoque && !modoSerieNascimento;
+  const usaCamposSeriePrefixo =
+    controlaSerie && (validarSerieEstoque || modoSerieNascimento);
 
   return (
     <div
@@ -432,12 +449,7 @@ export function LancamentoLinhaItem({
             step={controlaSerie ? 1 : "any"}
             required
             disabled={locked && !controlaSerie}
-            value={
-              usaSeriesInput
-                ? linha.series.length || linha.quantidade
-                : linha.quantidade
-            }
-            readOnly={usaSeriesInput}
+            value={linha.quantidade}
             onChange={(e) => onPatch({ quantidade: e.target.value })}
             className="w-full rounded-lg border bg-white px-3 py-2.5 text-sm disabled:bg-slate-50"
           />
@@ -457,7 +469,7 @@ export function LancamentoLinhaItem({
         </div>
       )}
 
-      {usaCamposSerieNascimento && qtdInt > 0 && linha.produto ? (
+      {usaCamposSeriePrefixo && qtdInt > 0 && linha.produto ? (
         <SerieCamposPrefixo
           codigoProduto={linha.produto.codigo}
           produtoId={linha.produto.id}
@@ -465,9 +477,12 @@ export function LancamentoLinhaItem({
           series={linha.series}
           serieStatus={linha.serieStatus}
           serieMsgs={linha.serieMsgs}
-          validarEstoque={false}
-          validarNascimento
+          validarEstoque={validarSerieEstoque}
+          validarNascimento={modoSerieNascimento}
           onChangeSerie={(i, full) => onSerieChange(i, full)}
+          onBlurSerie={(i, full) => {
+            if (validarSerieEstoque) void validarSerieCampo(i, full);
+          }}
           onStatusSerie={(i, status, msg) => {
             const cur = linhaRef.current;
             const serieStatus = [...cur.serieStatus];
@@ -479,165 +494,6 @@ export function LancamentoLinhaItem({
             onPatch({ serieStatus, serieMsgs });
           }}
         />
-      ) : null}
-
-      {usaCamposSerieEstoque && qtdInt > 0 ? (
-        <div className="mt-3 space-y-2">
-          <p className="text-xs font-medium text-slate-600">
-            Números de série ({qtdInt}) — digite o código completo da unidade
-          </p>
-          <div className="grid gap-2 sm:grid-cols-3">
-            {linha.series.map((sn, i) => {
-              const st = linha.serieStatus[i] || "idle";
-              const border =
-                st === "ok"
-                  ? "border-emerald-400 focus:ring-emerald-200"
-                  : st === "err"
-                    ? "border-rose-400 focus:ring-rose-200"
-                    : st === "checking"
-                      ? "border-amber-300"
-                      : "border-slate-200";
-              return (
-                <div key={i}>
-                  <input
-                    value={sn}
-                    onChange={(e) => onSerieChange(i, e.target.value)}
-                    onBlur={() => void validarSerieCampo(i, sn)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        void validarSerieCampo(i, sn);
-                      }
-                    }}
-                    placeholder={`Série ${i + 1}`}
-                    className={`w-full rounded-lg border bg-white px-3 py-2 font-mono text-sm ${border}`}
-                  />
-                  {linha.serieMsgs[i] ? (
-                    <p className="mt-0.5 text-[11px] text-rose-600">
-                      {linha.serieMsgs[i]}
-                    </p>
-                  ) : st === "ok" ? (
-                    <p className="mt-0.5 text-[11px] text-emerald-700">
-                      Disponível no estoque
-                    </p>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : null}
-
-      {usaSeriesInput ? (
-        <div className="mt-3">
-          <SeriesInput
-            key={linha.produto?.id || linha.key}
-            value={linha.series}
-            onChange={(series) =>
-              onPatch({ series, quantidade: String(series.length || 1) })
-            }
-            gerando={gerando}
-            desfazendo={desfazendo}
-            alocacaoPendenteId={linha.alocacaoSerieId}
-            formatoDica={linha.produto?.configuracaoSerie?.formato}
-            podeGerarAutomatico={
-              podeGerarAutomatico &&
-              linha.produto?.configuracaoSerie?.geracaoAutomatica !== false &&
-              !/rma/i.test(tipoNome || "")
-            }
-            onDesfazerAlocacao={async () => {
-              if (!linha.alocacaoSerieId) return;
-              setDesfazendo(true);
-              try {
-                await api("/series/alocar/desfazer", {
-                  method: "POST",
-                  body: JSON.stringify({ alocacaoId: linha.alocacaoSerieId }),
-                });
-                onPatch({ series: [], alocacaoSerieId: null, quantidade: "1" });
-                onMsg("Geração desfeita — números devolvidos ao contador.");
-              } catch (err) {
-                onError(
-                  err instanceof Error
-                    ? err.message
-                    : "Falha ao desfazer geração"
-                );
-              } finally {
-                setDesfazendo(false);
-              }
-            }}
-            onGerarAutomatico={async (quantidade) => {
-              if (!linha.produto?.id) return;
-              if (linha.alocacaoSerieId) {
-                if (
-                  !confirm(
-                    "Há uma geração pendente. Desfazer e gerar de novo?"
-                  )
-                ) {
-                  return;
-                }
-                setDesfazendo(true);
-                try {
-                  await api("/series/alocar/desfazer", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      alocacaoId: linha.alocacaoSerieId,
-                    }),
-                  });
-                  onPatch({ alocacaoSerieId: null, series: [] });
-                } catch (err) {
-                  onError(
-                    err instanceof Error
-                      ? err.message
-                      : "Falha ao desfazer geração anterior"
-                  );
-                  return;
-                } finally {
-                  setDesfazendo(false);
-                }
-              } else if (
-                linha.series.length > 0 &&
-                !confirm(
-                  `Já há ${linha.series.length} série(s). Gerar de novo substitui a lista. Continuar?`
-                )
-              ) {
-                return;
-              }
-              setGerando(true);
-              try {
-                const out = await api<{
-                  series: string[];
-                  alocacaoId?: string;
-                }>("/series/alocar", {
-                  method: "POST",
-                  body: JSON.stringify({
-                    produtoId: linha.produto.id,
-                    quantidade,
-                  }),
-                });
-                const geradas = out.series || [];
-                if (!geradas.length) {
-                  onError("Nenhuma série gerada");
-                  return;
-                }
-                onPatch({
-                  series: geradas,
-                  quantidade: String(geradas.length),
-                  alocacaoSerieId: out.alocacaoId || null,
-                });
-                onMsg(
-                  `${geradas.length} série(s) gerada(s). Confirme o lançamento para entrar no estoque.`
-                );
-              } catch (err) {
-                onError(
-                  err instanceof Error ? err.message : "Falha ao gerar séries"
-                );
-              } finally {
-                setGerando(false);
-              }
-            }}
-            label="Números de série (gerar ou informar)"
-          />
-        </div>
       ) : null}
     </div>
   );

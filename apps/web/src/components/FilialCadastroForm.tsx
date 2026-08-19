@@ -12,6 +12,7 @@ type Filial = {
   cidade?: string | null;
   estado?: string | null;
   ativo: boolean;
+  estoqueAcabados?: boolean;
 };
 
 const emptyForm = {
@@ -19,6 +20,7 @@ const emptyForm = {
   sigla: "",
   cidade: "",
   estado: "",
+  estoqueAcabados: false,
 };
 
 async function refreshTemEstoque() {
@@ -58,6 +60,7 @@ export function FilialCadastroForm({ filialId }: { filialId?: string }) {
           sigla: f.sigla,
           cidade: f.cidade || "",
           estado: f.estado || "",
+          estoqueAcabados: Boolean(f.estoqueAcabados),
         });
       })
       .catch((e) => {
@@ -82,6 +85,7 @@ export function FilialCadastroForm({ filialId }: { filialId?: string }) {
       sigla: form.sigla.toUpperCase().trim(),
       cidade: form.cidade.trim() || null,
       estado: form.estado ? form.estado.toUpperCase().trim() : null,
+      estoqueAcabados: form.estoqueAcabados,
     };
     try {
       if (editId) {
@@ -195,6 +199,24 @@ export function FilialCadastroForm({ filialId }: { filialId?: string }) {
             value={form.estado}
             onChange={(e) => setForm({ ...form, estado: e.target.value })}
           />
+        </label>
+        <label className="flex items-start gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={form.estoqueAcabados}
+            onChange={(e) =>
+              setForm({ ...form, estoqueAcabados: e.target.checked })
+            }
+          />
+          <span>
+            <span className="font-medium text-slate-700">
+              Estoque de acabados
+            </span>
+            <span className="mt-0.5 block text-xs text-slate-500">
+              Pedidos de venda saem daqui. Pode marcar mais de um estoque.
+            </span>
+          </span>
         </label>
         {error && (
           <p className="text-sm text-red-600 sm:col-span-2">{error}</p>

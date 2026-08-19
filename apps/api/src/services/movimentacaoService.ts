@@ -189,6 +189,8 @@ export async function criarMovimentacao(
      * Permite tipos cadastrados com flag RMA (entrada/saída automática).
      */
     usoInternoRma?: boolean;
+    /** Separação de pedido eGestor — tipo com flag saidaPedidoVenda. */
+    usoInternoPedido?: boolean;
     anexos?: Array<{
       tipo: "NOTA_FISCAL" | "TERMO_COMODATO" | "LAUDO" | "OUTRO";
       arquivo: string;
@@ -202,6 +204,8 @@ export async function criarMovimentacao(
   if (!tipo || !tipo.ativo) throw new AppError(400, "Tipo inválido");
   const tipoRma =
     tipo.rmaEntradaEstoque === true || tipo.rmaSaidaCliente === true;
+  const tipoPedido = tipo.saidaPedidoVenda === true;
+  const usoInterno = Boolean(input.usoInternoRma || input.usoInternoPedido);
   if (tipo.sistema && !(input.usoInternoRma && tipoRma)) {
     throw new AppError(
       400,
@@ -211,13 +215,16 @@ export async function criarMovimentacao(
   if (input.usoInternoRma && !tipoRma) {
     throw new AppError(400, "Tipo inválido para operação RMA");
   }
+  if (input.usoInternoPedido && !tipoPedido) {
+    throw new AppError(400, "Tipo inválido para saída de pedido");
+  }
 
-  if (!input.usoInternoRma && !tipoPermitidoParaPerfil(tipo, user.perfil)) {
+  if (!usoInterno && !tipoPermitidoParaPerfil(tipo, user.perfil)) {
     throw new AppError(403, "Perfil não autorizado para este tipo");
   }
 
   if (
-    !input.usoInternoRma &&
+    !usoInterno &&
     (tipo.operacao === "ENTRADA" || tipo.operacao === "SAIDA") &&
     (tipo.requerCliente || tipo.ehRetornoDeId)
   ) {
@@ -515,7 +522,7 @@ export async function criarMovimentacao(
   });
   if (!filial) throw new AppError(400, "Estoque/filial inválido");
 
-  if (tipo.requerCliente && !input.clienteId) {
+  if (tipo.requerCliente && !input.clienteId && !input.usoInternoPedido) {
     throw new AppError(400, "Cliente/fornecedor obrigatório para este tipo");
   }
   if (input.clienteId) {
@@ -531,7 +538,8 @@ export async function criarMovimentacao(
   if (
     tipo.geraAlertaRetorno &&
     alertaEmails.length === 0 &&
-    !input.usoInternoRma
+    !input.usoInternoRma &&
+    !input.usoInternoPedido
   ) {
     throw new AppError(
       400,
@@ -839,7 +847,8 @@ export async function criarMovimentacao(
     if (
       tipo.geraAlertaRetorno &&
       status === "CONCLUIDO" &&
-      !input.usoInternoRma
+      !input.usoInternoRma &&
+      !input.usoInternoPedido
     ) {
       await agendarAlertasRetorno(tx, {
         movimentacaoId: mov.id,
@@ -1041,6 +1050,13 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
     });
   }
 
+  if (result.movimentacao.grupoLancamentoId) {
+    const { syncPedidoAposGrupoLancamento } = await import(
+      "./pedidoVendaService"
+    );
+    await syncPedidoAposGrupoLancamento(result.movimentacao.grupoLancamentoId);
+  }
+
   return {
     movimentacao: result.movimentacao,
     alertaEstoqueMinimo: result.alertaEstoqueMinimo,
@@ -1064,7 +1080,7 @@ export async function rejeitarMovimentacao(
     requireGerenteOuAdmin(user);
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM movimentacoes WHERE id = ${id}::uuid FOR UPDATE`;
     const mov = await tx.movimentacao.findUnique({ where: { id } });
     if (!mov) throw new AppError(404, "Movimentação não encontrada");
@@ -1093,6 +1109,15 @@ export async function rejeitarMovimentacao(
 
     return { movimentacao: updated };
   });
+
+  if (result.movimentacao.grupoLancamentoId) {
+    const { syncPedidoAposGrupoLancamento } = await import(
+      "./pedidoVendaService"
+    );
+    await syncPedidoAposGrupoLancamento(result.movimentacao.grupoLancamentoId);
+  }
+
+  return result;
 }
 
 /** F6: gera movimento inverso CONCLUIDO; original → ESTORNADO */

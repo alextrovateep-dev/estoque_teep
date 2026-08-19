@@ -44,6 +44,7 @@ export async function loadPermissoes(
       rma: false,
       rma_cobranca: false,
       relatorios: false,
+      pedidos: false,
     });
     return req.permissoesResolved;
   }

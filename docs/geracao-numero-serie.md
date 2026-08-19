@@ -34,8 +34,8 @@ Modelo `ConfiguracaoSerie` (defaults no código / shared):
 | `reiniciarAnual` | `true` | Contador por ano; se `false`, ano lógico `0` |
 
 Exemplos (código `TMP-202`, 2026): compacto `TMP202260001` — traços do código **não** entram na série.  
-No lançamento (entrada / transferência com árvore): quantidade primeiro → N caixas; prefixo fixo + só a sequência.  
-Lógica: `packages/shared/src/serieFormat.ts` + `geracaoSerieService.ts`. Máx. **500** séries por lote.
+No lançamento (entrada, saída, transferência e baixa pela árvore): quantidade primeiro → N caixas; o código (sem traço) e o **ano atual** vêm preenchidos — o ano pode ser editado; o operador **só digita o sequencial** (ou cola a série completa).  
+Lógica: `packages/shared/src/serieFormat.ts` + `SerieCamposPrefixo`. Máx. **500** séries por lote.
 
 ---
 

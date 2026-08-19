@@ -14,6 +14,8 @@ model Filial {
   cidade        String?         @db.VarChar(80)
   estado        String?         @db.Char(2)
   ativo         Boolean         @default(true)
+  /// Pedidos de venda (eGestor) saem destes estoques
+  estoqueAcabados Boolean       @default(false) @map("estoque_acabados")
   criadoEm      DateTime        @default(now()) @map("criado_em") @db.Timestamptz
   usuarios      Usuario[]
   usuarioFiliais UsuarioFilial[]
@@ -25,6 +27,7 @@ model Filial {
   transferenciasDestino Transferencia[] @relation("Destino")
   unidadesSerie         UnidadeSerie[]
   rmaProcessos          RmaProcesso[]
+  pedidosVendaAcabado   PedidoVenda[]
 
   @@map("filiais")
 }
@@ -69,6 +72,8 @@ model Usuario {
   rmaOrcamentosAprovados RmaOrcamento[] @relation("RmaOrcamentoAprovadoPor")
   clientesComoComercial Cliente[]
   serieAlocacoes      SerieAlocacao[]
+  pedidosVendaSeparados PedidoVenda[] @relation("PedidoSeparadoPor")
+  pedidosVendaDestinatarios PedidoVendaDestinatario[]
 
   @@map("usuarios")
 }
@@ -136,6 +141,7 @@ model Produto {
   rmaChecklistTemplates RmaChecklistTemplate[]
   rmaManutencaoPecas    RmaManutencaoPeca[]
   rmaOrcamentoLinhas    RmaOrcamentoLinha[]
+  pedidoVendaItens      PedidoVendaItem[]
 
   @@map("produtos")
 }
@@ -193,6 +199,8 @@ model TipoMovimentacao {
   rmaEntradaEstoque  Boolean             @default(false) @map("rma_entrada_estoque")
   /// SAIDA usada pelo RMA em devolver/trocar
   rmaSaidaCliente    Boolean             @default(false) @map("rma_saida_cliente")
+  /// SAIDA usada na separação de pedidos eGestor (no máximo um ativo)
+  saidaPedidoVenda   Boolean             @default(false) @map("saida_pedido_venda")
   descricao          String?             @db.Text
   ativo              Boolean             @default(true)
   movimentacoes      Movimentacao[]
@@ -842,4 +850,63 @@ model RmaOrcamentoLinha {
   @@index([orcamentoId])
   @@index([produtoId])
   @@map("rma_orcamento_linhas")
+}
+
+/// Pedido de venda espelhado do eGestor (somente leitura na origem)
+model PedidoVenda {
+  id                 String   @id @default(uuid()) @db.Uuid
+  egestorCodigo      Int      @unique @map("egestor_codigo")
+  nomeContato        String   @map("nome_contato") @db.VarChar(150)
+  codContato         Int?     @map("cod_contato")
+  dtVenda            DateTime @map("dt_venda") @db.Date
+  situacao           Int
+  situacaoOs         String?  @map("situacao_os") @db.VarChar(40)
+  valorTotal         Decimal  @default(0) @map("valor_total") @db.Decimal(12, 2)
+  /// ABERTO | SEPARADO
+  status             String   @default("ABERTO") @db.VarChar(20)
+  filialAcabadoId    String?  @map("filial_acabado_id") @db.Uuid
+  separadoEm         DateTime? @map("separado_em") @db.Timestamptz
+  separadoPorId      String?  @map("separado_por_id") @db.Uuid
+  grupoLancamentoId  String?  @map("grupo_lancamento_id") @db.Uuid
+  syncedAt           DateTime @default(now()) @map("synced_at") @db.Timestamptz
+  criadoEm           DateTime @default(now()) @map("criado_em") @db.Timestamptz
+  atualizadoEm       DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
+  filialAcabado      Filial?  @relation(fields: [filialAcabadoId], references: [id], onDelete: SetNull)
+  separadoPor        Usuario? @relation("PedidoSeparadoPor", fields: [separadoPorId], references: [id], onDelete: SetNull)
+  itens              PedidoVendaItem[]
+  destinatarios      PedidoVendaDestinatario[]
+
+  @@index([status])
+  @@index([dtVenda])
+  @@index([grupoLancamentoId])
+  @@map("pedidos_venda")
+}
+
+model PedidoVendaItem {
+  id                String      @id @default(uuid()) @db.Uuid
+  pedidoId          String      @map("pedido_id") @db.Uuid
+  egestorItemCodigo Int?        @map("egestor_item_codigo")
+  codigoProprio     String      @map("codigo_proprio") @db.VarChar(80)
+  descricao         String      @db.VarChar(200)
+  quantidade        Decimal     @db.Decimal(12, 4)
+  produtoId         String?     @map("produto_id") @db.Uuid
+  pedido            PedidoVenda @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  produto           Produto?    @relation(fields: [produtoId], references: [id], onDelete: SetNull)
+
+  @@unique([pedidoId, egestorItemCodigo])
+  @@index([pedidoId])
+  @@index([produtoId])
+  @@map("pedido_venda_itens")
+}
+
+model PedidoVendaDestinatario {
+  id        String      @id @default(uuid()) @db.Uuid
+  pedidoId  String      @map("pedido_id") @db.Uuid
+  usuarioId String      @map("usuario_id") @db.Uuid
+  pedido    PedidoVenda @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+  usuario   Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+
+  @@unique([pedidoId, usuarioId])
+  @@index([usuarioId])
+  @@map("pedido_venda_destinatarios")
 }

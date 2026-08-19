@@ -8,7 +8,6 @@ import {
   type LancamentoLinha,
   type LancamentoProduto,
 } from "@/components/LancamentoLinhaItem";
-import { SeriesInput } from "@/components/SeriesInput";
 import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -171,9 +170,6 @@ function NovoLancamentoForm() {
   const [uploadingTransfAnexo, setUploadingTransfAnexo] = useState(false);
   const [quantidade, setQuantidade] = useState("1");
   const [series, setSeries] = useState<string[]>([]);
-  const [gerandoSeries, setGerandoSeries] = useState(false);
-  const [alocacaoSerieId, setAlocacaoSerieId] = useState<string | null>(null);
-  const [desfazendoSeries, setDesfazendoSeries] = useState(false);
   const [linhas, setLinhas] = useState<LancamentoLinha[]>(() => [
     newLancamentoLinha(),
   ]);
@@ -240,7 +236,6 @@ function NovoLancamentoForm() {
     setCodigo("");
     setSugestoes([]);
     setSeries([]);
-    setAlocacaoSerieId(null);
     setSaldoOrigem(null);
     setSaldoDestino(null);
     setLinhas([newLancamentoLinha()]);
@@ -536,13 +531,13 @@ function NovoLancamentoForm() {
 
   useEffect(() => {
     setSeries([]);
-    setAlocacaoSerieId(null);
   }, [produto?.id]);
 
-  /** Qty primeiro → N caixas (entrada / transferência com árvore + série). */
+  /** Qty primeiro → N caixas (entrada, retorno, transferência com árvore). */
   useEffect(() => {
-    if (!produto?.controlaSerie || isRetorno) return;
+    if (!produto?.controlaSerie) return;
     const nascimento =
+      isRetorno ||
       tipo?.operacao === "ENTRADA" ||
       (isBaixaArvore && tipo?.operacao === "TRANSFERENCIA");
     if (!nascimento) return;
@@ -666,7 +661,6 @@ function NovoLancamentoForm() {
     setQuantidade(String(s.qtyRestante ?? s.quantidade));
     setFilialId(s.filial.id);
     setSeries([]);
-    setAlocacaoSerieId(null);
     setSugestoes([]);
   }
 
@@ -955,8 +949,8 @@ function NovoLancamentoForm() {
 
         const usaNascimentoSerie =
           Boolean(prod.controlaSerie) &&
-          !isRetorno &&
-          (tipo?.operacao === "ENTRADA" ||
+          (isRetorno ||
+            tipo?.operacao === "ENTRADA" ||
             (isBaixaArvore && tipo?.operacao === "TRANSFERENCIA"));
 
         const qtdNum = usaNascimentoSerie
@@ -1056,9 +1050,7 @@ function NovoLancamentoForm() {
         body.notaFiscalArquivo = notaFiscalArquivo;
         const saida = saidasAbertas.find((s) => s.id === movimentacaoOrigemId);
         const max = saida?.qtyRestante ?? saida?.quantidade;
-        const qtdEfetiva = produto?.controlaSerie
-          ? series.length
-          : Number(quantidade);
+        const qtdEfetiva = Number(quantidade);
         if (max != null && qtdEfetiva > max + 1e-9) {
           setError(`Quantidade não pode exceder o saldo em aberto (${max})`);
           return;
@@ -1175,7 +1167,6 @@ function NovoLancamentoForm() {
       setAlertaEmailDraft("");
       setMovimentacaoOrigemId("");
       setSeries([]);
-      setAlocacaoSerieId(null);
       setTermoArquivo(null);
       setGuiaTransporte("");
       if (isRetorno && clienteId) {
@@ -2156,28 +2147,19 @@ function NovoLancamentoForm() {
 
             <label className="block">
               <span className="mb-1 block text-sm font-medium">Quantidade</span>
-              {produto?.controlaSerie &&
-              isRetorno ? (
-                <input
-                  type="number"
-                  readOnly
-                  value={series.length || ""}
-                  className="w-full rounded-lg border bg-slate-50 px-3 py-3 text-slate-700"
-                />
-              ) : (
-                <input
-                  type="number"
-                  min={produto?.controlaSerie ? 1 : 0.0001}
-                  step={produto?.controlaSerie ? 1 : "any"}
-                  required
-                  value={quantidade}
-                  onChange={(e) => setQuantidade(e.target.value)}
-                  className="w-full rounded-lg border px-3 py-3"
-                />
-              )}
+              <input
+                type="number"
+                min={produto?.controlaSerie ? 1 : 0.0001}
+                step={produto?.controlaSerie ? 1 : "any"}
+                required
+                value={quantidade}
+                onChange={(e) => setQuantidade(e.target.value)}
+                className="w-full rounded-lg border px-3 py-3"
+              />
               {produto?.controlaSerie && isRetorno ? (
                 <span className="mt-1 block text-xs text-slate-500">
-                  A quantidade segue a contagem dos números de série.
+                  Informe a quantidade — depois só o sequencial de cada série
+                  (código sem traço + ano já aparecem).
                 </span>
               ) : produto?.controlaSerie &&
                 !isRetorno &&
@@ -2196,8 +2178,8 @@ function NovoLancamentoForm() {
             </label>
 
             {produto?.controlaSerie &&
-            !isRetorno &&
-            (tipo?.operacao === "ENTRADA" ||
+            (isRetorno ||
+              tipo?.operacao === "ENTRADA" ||
               (isBaixaArvore && isTransf)) &&
             Number(quantidade) > 0 ? (
               <SerieCamposPrefixo
@@ -2205,7 +2187,7 @@ function NovoLancamentoForm() {
                 produtoId={produto.id}
                 config={produto.configuracaoSerie}
                 series={series}
-                validarNascimento
+                validarNascimento={!isRetorno}
                 onChangeSerie={(i, full) => {
                   setSeries((prev) => {
                     const next = [...prev];
@@ -2214,46 +2196,6 @@ function NovoLancamentoForm() {
                     return next;
                   });
                 }}
-              />
-            ) : null}
-
-            {produto?.controlaSerie && isRetorno ? (
-              <SeriesInput
-                key={produto.id}
-                value={series}
-                onChange={setSeries}
-                gerando={gerandoSeries}
-                desfazendo={desfazendoSeries}
-                alocacaoPendenteId={alocacaoSerieId}
-                formatoDica={produto.configuracaoSerie?.formato}
-                podeGerarAutomatico={false}
-                onDesfazerAlocacao={async () => {
-                  if (!alocacaoSerieId) return;
-                  setDesfazendoSeries(true);
-                  setError("");
-                  setMsg("");
-                  try {
-                    await api("/series/alocar/desfazer", {
-                      method: "POST",
-                      body: JSON.stringify({ alocacaoId: alocacaoSerieId }),
-                    });
-                    setSeries([]);
-                    setAlocacaoSerieId(null);
-                    setMsg(
-                      "Geração desfeita — números devolvidos ao contador."
-                    );
-                  } catch (err) {
-                    setError(
-                      err instanceof Error
-                        ? err.message
-                        : "Falha ao desfazer geração"
-                    );
-                  } finally {
-                    setDesfazendoSeries(false);
-                  }
-                }}
-                onGerarAutomatico={async () => {}}
-                label="Números de série que estão retornando"
               />
             ) : null}
 

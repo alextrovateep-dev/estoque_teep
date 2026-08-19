@@ -151,6 +151,7 @@ export const filialSchema = z.object({
   cidade: z.string().max(80).optional().nullable(),
   estado: z.string().length(2).optional().nullable(),
   ativo: z.boolean().optional(),
+  estoqueAcabados: z.boolean().optional(),
 });
 
 export const categoriaSchema = z.object({
@@ -369,6 +370,8 @@ export const tipoMovimentacaoObjectSchema = z.object({
   rmaEntradaEstoque: z.boolean().optional(),
   /** SAIDA: usada pelo RMA em devolver/trocar */
   rmaSaidaCliente: z.boolean().optional(),
+  /** SAIDA: usada na separação de pedidos eGestor */
+  saidaPedidoVenda: z.boolean().optional(),
   descricao: z.string().optional().nullable(),
   ativo: z.boolean().optional(),
 });
@@ -381,6 +384,7 @@ export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
     const arvore = data.baixaPorArvore === true;
     const rmaEnt = data.rmaEntradaEstoque === true;
     const rmaSai = data.rmaSaidaCliente === true;
+    const saidaPedido = data.saidaPedidoVenda === true;
     if (
       (alerta || retorno || termo || rmaEnt || rmaSai) &&
       data.requerCliente === false
@@ -418,6 +422,13 @@ export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
         code: z.ZodIssueCode.custom,
         message: "Flag RMA de saída só se aplica a tipos SAIDA",
         path: ["rmaSaidaCliente"],
+      });
+    }
+    if (saidaPedido && data.operacao && data.operacao !== "SAIDA") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Flag de saída de pedido só se aplica a tipos SAIDA",
+        path: ["saidaPedidoVenda"],
       });
     }
     if (rmaEnt && rmaSai) {
@@ -750,6 +761,21 @@ export const createRmaProcessoSchema = z
 /** Substitui a lista de destinatários do RMA (processo aberto). */
 export const atualizarRmaDestinatariosSchema = z.object({
   destinatarioIds: z.array(z.string().uuid()).min(1).max(50),
+});
+
+export const separarPedidoSchema = z.object({
+  filialId: z.string().uuid(),
+  destinatarioIds: z.array(z.string().uuid()).min(1).max(50),
+  itens: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        quantidade: z.coerce.number().positive(),
+        series: seriesArraySchema,
+      })
+    )
+    .min(1)
+    .max(50),
 });
 
 /** NFs / observação do processo (cobrança de manutenção é por item). */

@@ -6,6 +6,7 @@ import {
   anoDoisDigitos,
   formatoComTamanho,
   digitosSequenciaLimitados,
+  interpretarEntradaSerie,
   sequenciaNormalizada,
   serieCompletaDeSequencia,
   validarSequenciaSerieTamanho,
@@ -108,5 +109,28 @@ describe("serieFormat", () => {
     assert.equal(validarSequenciaSerieTamanho("0023", 4).ok, true);
     assert.equal(validarSequenciaSerieTamanho("000023", 4).ok, false);
     assert.equal(validarSequenciaSerieTamanho("23", 4).ok, false);
+  });
+
+  it("interpretarEntradaSerie extrai seq de série completa colada", () => {
+    const r = interpretarEntradaSerie("TMP1122W260007", {
+      codigoProduto: "TMP-1122-W",
+      tamanhoSequencial: 4,
+      ano2Atual: 26,
+    });
+    assert.equal(r.ano2, 26);
+    assert.equal(r.sequencia, "0007");
+    assert.equal(r.completa, "TMP1122W260007");
+  });
+
+  it("interpretarEntradaSerie usa ano atual quando só a seq é digitada", () => {
+    const r = interpretarEntradaSerie("7", {
+      codigoProduto: "TMP-1122-W",
+      tamanhoSequencial: 4,
+      ano2Atual: 26,
+      finalizar: true,
+    });
+    assert.equal(r.ano2, 26);
+    assert.equal(r.sequencia, "0007");
+    assert.equal(r.completa, "TMP1122W260007");
   });
 });

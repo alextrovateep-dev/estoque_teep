@@ -155,6 +155,158 @@ export function prefixoSerieProduto(opts: {
   return out;
 }
 
+export function clampAno2(n: number): number {
+  if (!Number.isFinite(n)) return anoDoisDigitos();
+  const i = Math.trunc(n);
+  return ((i % 100) + 100) % 100;
+}
+
+function formatoSemSeq(opts: {
+  codigoProduto: string;
+  tamanhoSequencial?: number;
+  formato?: string | null;
+  prefixoFixo?: string | null;
+}): string {
+  const tamanho = clampTamanhoSequencial(opts.tamanhoSequencial);
+  const codigo = normalizarCodigoProduto(opts.codigoProduto);
+  const prefixo = (opts.prefixoFixo || "").trim();
+  const formatoRaw = (opts.formato || FORMATO_SERIE_PADRAO).trim();
+  const formato = formatoComTamanho(
+    formatoRaw || FORMATO_SERIE_PADRAO,
+    tamanho
+  );
+  const semSeq = formato.replace(/\{seq\d?\}.*$/i, "");
+  let out = semSeq
+    .replace(/\{codigo\}/gi, codigo)
+    .replace(/\{prefixo\}/gi, prefixo)
+    .replace(/\{sufixo\}/gi, "");
+  if (!/\{prefixo\}/i.test(formato) && prefixo) out = `${prefixo}${out}`;
+  return out;
+}
+
+/** Partes visuais: código (sem traço) | ano | resto antes da seq. */
+export function partesPrefixoSerie(opts: {
+  codigoProduto: string;
+  tamanhoSequencial?: number;
+  formato?: string | null;
+  prefixoFixo?: string | null;
+}): { antesAno: string; temAno: boolean; depoisAno: string } {
+  const mold = formatoSemSeq(opts);
+  const idx = mold.toLowerCase().indexOf("{ano2}");
+  if (idx < 0) {
+    return { antesAno: mold, temAno: false, depoisAno: "" };
+  }
+  return {
+    antesAno: mold.slice(0, idx),
+    temAno: true,
+    depoisAno: mold.slice(idx + "{ano2}".length).replace(/\{ano2\}/gi, ""),
+  };
+}
+
+export type InterpretacaoSerie = {
+  ano2: number;
+  sequencia: string;
+  completa: string;
+};
+
+function anosCandidatos(atual: number): number[] {
+  const a = clampAno2(atual);
+  const out = [a];
+  for (let i = 1; i <= 20; i++) out.push(clampAno2(a - i));
+  out.push(clampAno2(a + 1));
+  return out;
+}
+
+/**
+ * Interpreta o que o operador digitou/colou/leu:
+ * série completa, ano+seq, ou só sequencial.
+ */
+export function interpretarEntradaSerie(
+  raw: string,
+  opts: {
+    codigoProduto: string;
+    formato?: string | null;
+    tamanhoSequencial?: number | null;
+    prefixoFixo?: string | null;
+    sufixoFixo?: string | null;
+    ano2Atual?: number;
+    finalizar?: boolean;
+  }
+): InterpretacaoSerie {
+  const tamanho = clampTamanhoSequencial(opts.tamanhoSequencial);
+  const anoPadrao = clampAno2(opts.ano2Atual ?? anoDoisDigitos());
+  const trimmed = String(raw ?? "").trim();
+  const sufixo = opts.sufixoFixo ?? null;
+  const vazio = (): InterpretacaoSerie => ({
+    ano2: anoPadrao,
+    sequencia: "",
+    completa: "",
+  });
+  if (!trimmed) return vazio();
+
+  const compact = trimmed.toUpperCase().replace(/[\s-]/g, "");
+  const pack = (ano2: number, sequenciaRaw: string): InterpretacaoSerie => {
+    const sequencia = opts.finalizar
+      ? sequenciaNormalizada(sequenciaRaw, tamanho)
+      : sequenciaRaw;
+    const prefixo = prefixoSerieProduto({
+      codigoProduto: opts.codigoProduto,
+      ano2,
+      tamanhoSequencial: tamanho,
+      formato: opts.formato,
+      prefixoFixo: opts.prefixoFixo,
+      sufixoFixo: opts.sufixoFixo,
+    });
+    const completa = sequencia
+      ? serieCompletaDeSequencia(prefixo, sequencia, tamanho, sufixo, {
+          finalizar: Boolean(opts.finalizar),
+        })
+      : "";
+    return { ano2, sequencia, completa };
+  };
+  for (const ano2 of anosCandidatos(anoPadrao)) {
+    const prefixo = prefixoSerieProduto({
+      codigoProduto: opts.codigoProduto,
+      ano2,
+      tamanhoSequencial: tamanho,
+      formato: opts.formato,
+      prefixoFixo: opts.prefixoFixo,
+      sufixoFixo: opts.sufixoFixo,
+    });
+    const prefU = prefixo.toUpperCase();
+    const rawU = trimmed.toUpperCase();
+    if (rawU.startsWith(prefU) || compact.startsWith(prefU.replace(/-/g, ""))) {
+      const seq = sequenciaDeSerieCompleta(
+        rawU.startsWith(prefU) ? trimmed : compact,
+        prefixo,
+        sufixo
+      ).replace(/\D/g, "");
+      return pack(ano2, seq.slice(0, tamanho));
+    }
+  }
+
+  const codigo = normalizarCodigoProduto(opts.codigoProduto);
+  if (codigo && compact.startsWith(codigo)) {
+    const rest = compact.slice(codigo.length).replace(/\D/g, "");
+    if (rest.length <= tamanho) {
+      return pack(anoPadrao, rest);
+    }
+    if (rest.length >= tamanho + 2) {
+      const ano2 = clampAno2(Number(rest.slice(0, 2)));
+      return pack(ano2, rest.slice(2, 2 + tamanho));
+    }
+  }
+
+  const onlyDigits = compact.replace(/\D/g, "");
+  if (onlyDigits.length >= tamanho + 2) {
+    const sequencia = onlyDigits.slice(-tamanho);
+    const ano2 = clampAno2(Number(onlyDigits.slice(-tamanho - 2, -tamanho)));
+    return pack(ano2, sequencia);
+  }
+
+  return pack(anoPadrao, digitosSequenciaLimitados(onlyDigits, tamanho));
+}
+
 /**
  * Junta prefixo + sequência digitada (+ sufixo opcional).
  * Enquanto digita (`finalizar=false`): no máx. N dígitos, sem pad.

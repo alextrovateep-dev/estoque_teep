@@ -3,10 +3,12 @@
 import { useRef, useState } from "react";
 import { api } from "@/lib/api";
 import {
+  anoDoisDigitos,
+  clampAno2,
   clampTamanhoSequencial,
-  digitosSequenciaLimitados,
+  interpretarEntradaSerie,
+  partesPrefixoSerie,
   prefixoSerieProduto,
-  sequenciaDeSerieCompleta,
   serieCompletaDeSequencia,
   validarSequenciaSerieTamanho,
 } from "@teep/shared";
@@ -30,11 +32,7 @@ type Props = {
   serieMsgs?: string[];
   onChangeSerie: (index: number, serieCompleta: string) => void;
   onBlurSerie?: (index: number, serieCompleta: string) => void;
-  onStatusSerie?: (
-    index: number,
-    status: Status,
-    msg: string
-  ) => void;
+  onStatusSerie?: (index: number, status: Status, msg: string) => void;
   /** Quando true, mostra feedback de validação no estoque (saída). */
   validarEstoque?: boolean;
   /**
@@ -58,17 +56,56 @@ export function SerieCamposPrefixo({
 }: Props) {
   const tamanho = clampTamanhoSequencial(config?.tamanhoSequencial);
   const sufixo = config?.sufixoFixo ?? null;
-  const prefixo = prefixoSerieProduto({
+  const anoPadrao = anoDoisDigitos();
+  const partes = partesPrefixoSerie({
     codigoProduto,
     formato: config?.formato,
     tamanhoSequencial: tamanho,
     prefixoFixo: config?.prefixoFixo,
-    sufixoFixo: config?.sufixoFixo,
   });
+  const optsSerie = {
+    codigoProduto,
+    formato: config?.formato,
+    tamanhoSequencial: tamanho,
+    prefixoFixo: config?.prefixoFixo,
+    sufixoFixo: sufixo,
+  };
 
+  const [anos, setAnos] = useState<number[]>([]);
   const [localStatus, setLocalStatus] = useState<Status[]>([]);
   const [localMsgs, setLocalMsgs] = useState<string[]>([]);
   const timers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+
+  function anoDaLinha(idx: number, sn: string): number {
+    if (anos[idx] != null) return clampAno2(anos[idx]!);
+    if (sn.trim()) {
+      return interpretarEntradaSerie(sn, {
+        ...optsSerie,
+        ano2Atual: anoPadrao,
+      }).ano2;
+    }
+    return anoPadrao;
+  }
+
+  function setAnoLinha(idx: number, ano2: number) {
+    setAnos((prev) => {
+      const next = [...prev];
+      while (next.length < idx + 1) next.push(anoPadrao);
+      next[idx] = clampAno2(ano2);
+      return next;
+    });
+  }
+
+  function aplicarSerie(idx: number, raw: string, finalizar: boolean) {
+    const parsed = interpretarEntradaSerie(raw, {
+      ...optsSerie,
+      ano2Atual: anoDaLinha(idx, series[idx] || ""),
+      finalizar,
+    });
+    setAnoLinha(idx, parsed.ano2);
+    onChangeSerie(idx, parsed.completa);
+    return parsed;
+  }
 
   const serieStatus = serieStatusProp ?? localStatus;
   const serieMsgs = serieMsgsProp ?? localMsgs;
@@ -94,19 +131,24 @@ export function SerieCamposPrefixo({
 
   async function validarNascimentoCampo(idx: number, full: string) {
     if (!validarNascimento || !produtoId) return;
-    const seq = sequenciaDeSerieCompleta(full, prefixo, sufixo);
-    if (!seq) {
+    const parsed = interpretarEntradaSerie(full, {
+      ...optsSerie,
+      ano2Atual: anoDaLinha(idx, full),
+      finalizar: true,
+    });
+    if (!parsed.sequencia) {
       setStatus(idx, "idle", "");
       return;
     }
-    const tam = validarSequenciaSerieTamanho(seq, tamanho);
+    const tam = validarSequenciaSerieTamanho(parsed.sequencia, tamanho);
     if (!tam.ok) {
       setStatus(idx, "err", tam.motivo);
       return;
     }
+    const numero = parsed.completa || full;
     const dupLocal = series.findIndex(
       (s, i) =>
-        i !== idx && s.trim().toUpperCase() === full.trim().toUpperCase()
+        i !== idx && s.trim().toUpperCase() === numero.trim().toUpperCase()
     );
     if (dupLocal >= 0) {
       setStatus(idx, "err", "Série duplicada neste lançamento");
@@ -120,14 +162,14 @@ export function SerieCamposPrefixo({
         numeroSerie?: string;
       }>("/series/validar-nascimento", {
         method: "POST",
-        body: JSON.stringify({ produtoId, numero: full }),
+        body: JSON.stringify({ produtoId, numero }),
       });
       setStatus(
         idx,
         r.ok ? "ok" : "err",
         r.ok ? "" : r.motivo || "Série já utilizada"
       );
-      if (r.ok && r.numeroSerie && r.numeroSerie !== full) {
+      if (r.ok && r.numeroSerie && r.numeroSerie !== numero) {
         onChangeSerie(idx, r.numeroSerie);
       }
     } catch (e) {
@@ -139,9 +181,13 @@ export function SerieCamposPrefixo({
     }
   }
 
-  function agendarValidacao(idx: number, full: string) {
+  function agendarValidacao(idx: number, full: string, seqLen: number) {
     if (!validarNascimento) return;
     if (timers.current[idx]) clearTimeout(timers.current[idx]);
+    if (seqLen < tamanho) {
+      setStatus(idx, "idle", "");
+      return;
+    }
     timers.current[idx] = setTimeout(() => {
       void validarNascimentoCampo(idx, full);
     }, 400);
@@ -151,22 +197,16 @@ export function SerieCamposPrefixo({
     <div className="mt-3 space-y-2">
       <p className="text-xs font-medium text-slate-600">
         Números de série ({series.length})
-        {prefixo ? (
-          <span className="ml-1 font-normal text-slate-500">
-            — prefixo <span className="font-mono">{prefixo}</span>
-            {sufixo ? (
-              <>
-                {" "}
-                / sufixo <span className="font-mono">{sufixo}</span>
-              </>
-            ) : null}
-            ; digite só a sequência ({tamanho} dígitos)
-          </span>
-        ) : (
-          <span className="ml-1 font-normal text-slate-500">
-            — sequência com {tamanho} dígitos
-          </span>
-        )}
+        <span className="ml-1 font-normal text-slate-500">
+          — o ano vem do ano atual e pode ser editado. Digite só o sequencial (
+          {tamanho} dígitos) ou cole a série completa.
+          {sufixo ? (
+            <>
+              {" "}
+              Sufixo <span className="font-mono">{sufixo}</span>.
+            </>
+          ) : null}
+        </span>
       </p>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {series.map((sn, i) => {
@@ -179,63 +219,82 @@ export function SerieCamposPrefixo({
                 : st === "checking"
                   ? "border-amber-300"
                   : "border-slate-200";
-          const seq = sequenciaDeSerieCompleta(sn, prefixo, sufixo);
+          const parsed = interpretarEntradaSerie(sn, {
+            ...optsSerie,
+            ano2Atual: anoDaLinha(i, sn),
+            finalizar: false,
+          });
+          const ano2 = parsed.ano2;
           return (
             <div key={i}>
               <div
                 className={`flex overflow-hidden rounded-lg border bg-white ${border}`}
               >
-                {prefixo ? (
-                  <span className="flex max-w-[45%] shrink-0 items-center truncate border-r border-slate-200 bg-slate-50 px-2 font-mono text-xs text-slate-600">
-                    {prefixo}
+                {partes.antesAno ? (
+                  <span className="flex max-w-[40%] shrink-0 items-center truncate border-r border-slate-200 bg-slate-50 px-2 font-mono text-xs text-slate-600">
+                    {partes.antesAno}
+                  </span>
+                ) : null}
+                {partes.temAno ? (
+                  <input
+                    value={String(ano2).padStart(2, "0")}
+                    inputMode="numeric"
+                    autoComplete="off"
+                    maxLength={2}
+                    title="Ano (2 dígitos). Preenchido automaticamente; edite se precisar."
+                    aria-label="Ano da série (2 dígitos)"
+                    onFocus={(e) => e.target.select()}
+                    onChange={(e) => {
+                      const d = e.target.value.replace(/\D/g, "").slice(-2);
+                      if (!d) return;
+                      const novoAno = clampAno2(Number(d.padStart(2, "0")));
+                      setAnoLinha(i, novoAno);
+                      const prefixo = prefixoSerieProduto({
+                        ...optsSerie,
+                        ano2: novoAno,
+                      });
+                      const full = serieCompletaDeSequencia(
+                        prefixo,
+                        parsed.sequencia,
+                        tamanho,
+                        sufixo,
+                        { finalizar: false }
+                      );
+                      onChangeSerie(i, full);
+                      setStatus(i, "idle", "");
+                    }}
+                    className="w-10 shrink-0 border-r border-slate-200 bg-slate-50 px-1 py-2 text-center font-mono text-sm outline-none"
+                  />
+                ) : null}
+                {partes.depoisAno ? (
+                  <span className="flex shrink-0 items-center border-r border-slate-200 bg-slate-50 px-1 font-mono text-xs text-slate-600">
+                    {partes.depoisAno}
                   </span>
                 ) : null}
                 <input
-                  value={seq}
+                  value={parsed.sequencia}
                   inputMode="numeric"
                   autoComplete="off"
-                  maxLength={tamanho}
                   onChange={(e) => {
-                    const digits = digitosSequenciaLimitados(
-                      e.target.value,
-                      tamanho
-                    );
-                    const full = serieCompletaDeSequencia(
-                      prefixo,
-                      digits,
-                      tamanho,
-                      sufixo,
-                      { finalizar: false }
-                    );
-                    onChangeSerie(i, full);
+                    const next = aplicarSerie(i, e.target.value, false);
                     setStatus(i, "idle", "");
-                    agendarValidacao(i, full);
+                    agendarValidacao(i, next.completa, next.sequencia.length);
                   }}
                   onBlur={() => {
-                    const full = serieCompletaDeSequencia(
-                      prefixo,
-                      sequenciaDeSerieCompleta(sn, prefixo, sufixo),
-                      tamanho,
-                      sufixo,
-                      { finalizar: true }
-                    );
-                    onChangeSerie(i, full);
-                    onBlurSerie?.(i, full);
-                    void validarNascimentoCampo(i, full);
+                    const next = aplicarSerie(i, parsed.sequencia || sn, true);
+                    onBlurSerie?.(i, next.completa);
+                    if (next.sequencia.length >= tamanho) {
+                      void validarNascimentoCampo(i, next.completa);
+                    }
                   }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.preventDefault();
-                      const full = serieCompletaDeSequencia(
-                        prefixo,
-                        sequenciaDeSerieCompleta(sn, prefixo, sufixo),
-                        tamanho,
-                        sufixo,
-                        { finalizar: true }
-                      );
-                      onChangeSerie(i, full);
-                      onBlurSerie?.(i, full);
-                      void validarNascimentoCampo(i, full);
+                      const next = aplicarSerie(i, parsed.sequencia || sn, true);
+                      onBlurSerie?.(i, next.completa);
+                      if (next.sequencia.length >= tamanho) {
+                        void validarNascimentoCampo(i, next.completa);
+                      }
                     }
                   }}
                   placeholder={"0".repeat(tamanho)}

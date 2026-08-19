@@ -14,6 +14,7 @@ import { ensureRedis } from "./lib/redis";
 import { initRealtime } from "./lib/realtime";
 import { startEmailQueueWorker } from "./lib/emailQueue";
 import { startAlertaRetornoJob } from "./lib/alertaRetornoJob";
+import { startEgestorSyncJob } from "./lib/egestorSyncJob";
 import { ensureUploadDirs, getUploadRoot } from "./lib/uploads";
 import { assertProductionEnv } from "./lib/env";
 import { ensureSystemTipos } from "./lib/ensureSystemTipos";
@@ -31,6 +32,7 @@ import { uploadRouter } from "./routes/upload";
 import { assistenteRouter } from "./routes/assistente";
 import { seriesRouter } from "./routes/series";
 import { rmaRouter } from "./routes/rma";
+import { pedidosRouter } from "./routes/pedidos";
 import { relatoriosRouter } from "./routes/relatorios";
 
 assertProductionEnv();
@@ -110,6 +112,7 @@ app.use(estoqueRouter);
 app.use("/transferencias", transferenciasRouter);
 app.use("/series", seriesRouter);
 app.use("/rma", rmaRouter);
+app.use("/pedidos", pedidosRouter);
 app.use("/relatorios", relatoriosRouter);
 app.use("/notificacoes", notificacoesRouter);
 app.use("/admin/email", emailAdminRouter);
@@ -125,6 +128,7 @@ server.listen(port, () => {
   logger.startup(`Uploads dir: ${path.resolve(getUploadRoot())}`);
   startEmailQueueWorker();
   startAlertaRetornoJob();
+  startEgestorSyncJob();
   ensureSystemTipos()
     .then((n) => logger.startup(`Tipos sistema OK (${n})`))
     .catch((e) =>

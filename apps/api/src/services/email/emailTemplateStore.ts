@@ -207,6 +207,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
     type === "RMA_FINANCEIRO" ||
     type === "RMA_ENCERRADO" ||
     type === "RMA_LAUDO" ||
+    type === "PEDIDO_SEPARADO" ||
     type === "ALERTA_RETORNO_MOVIMENTACAO"
   ) {
     return {

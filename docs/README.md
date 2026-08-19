@@ -9,6 +9,7 @@ Comece por:
    - **[INSTALACAO-TECHCENTER.md](./INSTALACAO-TECHCENTER.md)** — ação futura no servidor TechCenter (porta 80 já ocupada)  
 
 Os demais `.md` por tema descrevem **como o sistema funciona hoje**.  
+Pedidos de venda (eGestor): [pedidos-egestor.md](./pedidos-egestor.md).  
 Backlog próximo: [backlog-impressao-zebra.md](./backlog-impressao-zebra.md).
 
 Dev local (pnpm): ver `README.md` na raiz do repo.

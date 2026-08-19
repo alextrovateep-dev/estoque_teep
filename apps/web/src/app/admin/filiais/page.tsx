@@ -12,6 +12,7 @@ type Filial = {
   cidade?: string | null;
   estado?: string | null;
   ativo: boolean;
+  estoqueAcabados?: boolean;
 };
 
 function localLabel(f: Filial): string | null {
@@ -149,6 +150,7 @@ function FiliaisPageInner() {
                 <div className="text-xs text-slate-500">
                   {local ? `${local} · ` : null}
                   {f.ativo ? "Ativo" : "Inativo"}
+                  {f.estoqueAcabados ? " · Acabados" : ""}
                 </div>
               </div>
               <div className="flex gap-3 text-sm">

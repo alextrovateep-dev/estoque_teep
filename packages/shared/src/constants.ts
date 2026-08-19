@@ -384,6 +384,7 @@ export const ALERTA_EVENTOS = [
   "RMA_FINANCEIRO",
   "RMA_ENCERRADO",
   "RMA_LAUDO",
+  "PEDIDO_SEPARADO",
 ] as const;
 export type AlertaEvento = (typeof ALERTA_EVENTOS)[number];
 
@@ -400,6 +401,7 @@ export const ALERTA_EVENTO_LABELS: Record<AlertaEvento, string> = {
   RMA_FINANCEIRO: "RMA — atualização financeira",
   RMA_ENCERRADO: "RMA encerrado (fechado ou cancelado)",
   RMA_LAUDO: "RMA — laudo(s) anexado(s)",
+  PEDIDO_SEPARADO: "Pedido separado",
 };
 
 export const MOVIMENTACAO_ANEXO_TIPOS = [
@@ -442,6 +444,7 @@ export const PERMISSAO_KEYS = [
   "rma",
   "rma_cobranca",
   "relatorios",
+  "pedidos",
 ] as const;
 export type PermissaoKey = (typeof PERMISSAO_KEYS)[number];
 
@@ -543,6 +546,10 @@ export const PERMISSAO_LABELS: Record<
     label: "Relatórios",
     descricao: "Hub de relatórios (produtos, estoque, árvore) e exportações",
   },
+  pedidos: {
+    label: "Pedidos",
+    descricao: "Fila de pedidos eGestor e separação no estoque de acabados",
+  },
 };
 
 /** Defaults por perfil (antes dos overrides do Admin). */
@@ -570,6 +577,7 @@ export function defaultPermissoes(perfil: Perfil): PermissoesUsuario {
       rma: true,
       rma_cobranca: true,
       relatorios: true,
+      pedidos: true,
     };
   }
   return {
@@ -589,6 +597,7 @@ export function defaultPermissoes(perfil: Perfil): PermissoesUsuario {
     rma: true,
     rma_cobranca: false,
     relatorios: false,
+    pedidos: true,
   };
 }
 

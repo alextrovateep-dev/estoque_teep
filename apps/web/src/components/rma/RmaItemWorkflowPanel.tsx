@@ -630,9 +630,15 @@ export function RmaItemWorkflowPanel({
                               href={href}
                               target="_blank"
                               rel="noreferrer"
-                              className="text-sky-800 underline"
+                              className="block h-28 w-36 overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
+                              title="Abrir foto em tamanho original"
                             >
-                              foto
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={href}
+                                alt=""
+                                className="h-full w-full object-contain"
+                              />
                             </a>
                           ) : null;
                         })}

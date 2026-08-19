@@ -53,23 +53,25 @@ async function main() {
   if (seedDemo) {
     const paulinia = await prisma.filial.upsert({
       where: { sigla: "PLN" },
-      update: {},
+      update: { estoqueAcabados: true },
       create: {
         nome: "Paulínia",
         sigla: "PLN",
         cidade: "Paulínia",
         estado: "SP",
+        estoqueAcabados: true,
       },
     });
 
     const timbo = await prisma.filial.upsert({
       where: { sigla: "TBO" },
-      update: {},
+      update: { estoqueAcabados: true },
       create: {
         nome: "Timbó",
         sigla: "TBO",
         cidade: "Timbó",
         estado: "SC",
+        estoqueAcabados: true,
       },
     });
 
@@ -288,6 +290,17 @@ async function main() {
         descricao:
           "Retorno de equipamento em comodato (vincular à saída aberta)",
       },
+      {
+        nome: "Saída pedido eGestor",
+        operacao: "SAIDA",
+        requerCliente: false,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        saidaPedidoVenda: true,
+        descricao: "Saída automática na separação de pedidos eGestor",
+      },
     ];
 
     const antigoMontagem = await prisma.tipoMovimentacao.findUnique({
@@ -323,6 +336,20 @@ async function main() {
           ...base,
           baixaPorArvore: baixaPorArvore === true,
         },
+      });
+    }
+
+    const saidaPedidoTipo = await prisma.tipoMovimentacao.findUnique({
+      where: { nome: "Saída pedido eGestor" },
+    });
+    if (saidaPedidoTipo) {
+      await prisma.tipoMovimentacao.updateMany({
+        where: { id: { not: saidaPedidoTipo.id } },
+        data: { saidaPedidoVenda: false },
+      });
+      await prisma.tipoMovimentacao.update({
+        where: { id: saidaPedidoTipo.id },
+        data: { saidaPedidoVenda: true, operacao: "SAIDA" },
       });
     }
 
