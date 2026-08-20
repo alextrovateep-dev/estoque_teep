@@ -12,7 +12,7 @@
 2. **Processo = nota** — cliente, NFs, estoque RMA, destinatários, comercial.
 3. **Item = manutenção** — checklist, diagnóstico/plano+peças (com tempo nos serviços), liberação, devolução/troca.
 4. **Laudo no sistema** — diagnóstico + checklist; anexo arquivo `LAUDO` não é mais aceito para novos uploads.
-5. **Orçamento do processo** — formulário/PDF em `/rma/[id]/orcamento` (agrega itens); o PDF é orçamento + laudo de recebimento; persistência continua 1 `RmaOrcamento` por item; aprovação por item.
+5. **Orçamento do processo** — formulário/PDF em `/rma/[id]/orcamento` (agrega itens); o PDF de negociação é orçamento + laudo de recebimento; **Documentos** no detalhe do RMA guarda laudos de entrada/saída e orçamento arquivo (também com RMA fechado); persistência continua 1 `RmaOrcamento` por item; aprovação por item.
 6. **Checklist por produto (SKU)** — templates RECEBIMENTO e LIBERACAO.
 7. **Tipos de movimentação por flag** — Admin → Tipos: `rmaEntradaEstoque` e `rmaSaidaCliente`.
 
@@ -58,6 +58,8 @@ Recusa do orçamento → `NAO_APROVADO`. Reabrir (só enquanto fechado, ainda n�
 | PUT | `/rma/:id/orcamento` (lote) |
 | POST | `/rma/:id/orcamento/enviar` `{ itemIds }` (alias: `/fechar`) — fecha rascunhos; status interno `ENVIADO` |
 | POST | `/rma/:id/itens/:itemId/orcamento/reabrir` — só `ENVIADO` + `AGUARDANDO_APROVACAO`; volta a rascunho |
-| GET | `/rma/:id/orcamento.pdf` — orçamento + laudo de recebimento (checklist, fotos, observações) |
+| GET | `/rma/:id/orcamento.pdf` — orçamento de negociação + laudo de recebimento |
+| GET | `/rma/:id/orcamento/arquivo.pdf` — orçamento histórico (aprovado/recusado; RMA fechado) |
+| GET | `/rma/:id/itens/:itemId/laudo/RECEBIMENTO/pdf` · `…/LIBERACAO/pdf` — laudos de entrada/saída |
 
 Gate de avanço: plano/diagnóstico; checklist de entrada só se o produto tiver template (não anexo de laudo).

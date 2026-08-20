@@ -59,6 +59,8 @@ import {
   enviarOrcamentoRmaItem,
   reabrirOrcamentoRmaItem,
   exportarOrcamentoRmaPdf,
+  exportarOrcamentoRmaArquivoPdf,
+  exportarLaudoRmaItemPdf,
   iniciarOuObterChecklist,
   listarRmaChecklistTemplates,
   obterOrcamentoAgregadoRma,
@@ -555,7 +557,12 @@ rmaRouter.get(
   requirePermissao("rma", "rma_cobranca"),
   async (req: AuthedRequest, res, next) => {
     try {
-      res.json(await obterOrcamentoAgregadoRma(req.user!, req.params.id));
+      const arquivo =
+        String(req.query.arquivo || "").trim() === "1" ||
+        String(req.query.arquivo || "").toLowerCase() === "true";
+      res.json(
+        await obterOrcamentoAgregadoRma(req.user!, req.params.id, { arquivo })
+      );
     } catch (e) {
       next(e);
     }
@@ -604,6 +611,66 @@ rmaRouter.get(
       const { buffer, filename } = await exportarOrcamentoRmaPdf(
         req.user!,
         req.params.id
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** PDF arquivo do orçamento (histórico; funciona com RMA fechado). */
+rmaRouter.get(
+  "/:id/orcamento/arquivo.pdf",
+  requirePermissao("rma", "rma_cobranca"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const itemId = String(req.query.itemId || "").trim() || undefined;
+      const { buffer, filename } = await exportarOrcamentoRmaArquivoPdf(
+        req.user!,
+        req.params.id,
+        itemId
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.get(
+  "/:id/itens/:itemId/laudo/:tipo/pdf",
+  requirePermissao("rma", "rma_cobranca"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const tipoRaw = String(req.params.tipo || "").toUpperCase();
+      const tipo =
+        tipoRaw === "RECEBIMENTO" || tipoRaw === "ENTRADA"
+          ? "RECEBIMENTO"
+          : tipoRaw === "LIBERACAO" || tipoRaw === "SAIDA"
+            ? "LIBERACAO"
+            : null;
+      if (!tipo) {
+        res.status(400).json({
+          error: "Tipo de laudo inválido (use RECEBIMENTO ou LIBERACAO)",
+        });
+        return;
+      }
+      const { buffer, filename } = await exportarLaudoRmaItemPdf(
+        req.user!,
+        req.params.id,
+        req.params.itemId,
+        tipo
       );
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(

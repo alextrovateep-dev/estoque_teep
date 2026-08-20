@@ -117,11 +117,23 @@ export type ItemLaudoPdf = {
   perguntas: PerguntaLaudoPdf[];
 };
 
-export function htmlLaudoRecebimento(
+export function htmlLaudoChecklist(
   itens: ItemLaudoPdf[],
-  imageDataUri: (url: string) => string | null
+  imageDataUri: (url: string) => string | null,
+  opts: {
+    titulo: string;
+    subtitulo: string;
+    /** Prefixo do meta: "Recebido por" | "Liberado por" */
+    papelPor?: string;
+    /** Se true, inclui bloco de diagnóstico (entrada). */
+    incluirDiagnostico?: boolean;
+    emptyChecklistMsg?: string;
+  }
 ): string {
   if (!itens.length) return "";
+  const papel = opts.papelPor || "Preenchido por";
+  const emptyMsg =
+    opts.emptyChecklistMsg || "Não há checklist registrado para este item.";
   const blocos = itens
     .map((it) => {
       const sn = it.numeroSerie
@@ -129,7 +141,7 @@ export function htmlLaudoRecebimento(
         : "";
       const meta = [
         it.preenchidoPorNome
-          ? `Recebido por ${escHtmlPdf(it.preenchidoPorNome)}`
+          ? `${papel} ${escHtmlPdf(it.preenchidoPorNome)}`
           : "",
         stampLaudo(it.concluidoEm)
           ? `em ${escHtmlPdf(stampLaudo(it.concluidoEm))}`
@@ -154,9 +166,10 @@ export function htmlLaudoRecebimento(
               </li>`;
             })
             .join("")}</ol>`
-        : `<p class="muted">Não há checklist de recebimento para este item.</p>`;
-      const diag = it.diagnostico
-        ? `<div class="diag">
+        : `<p class="muted">${escHtmlPdf(emptyMsg)}</p>`;
+      const diag =
+        opts.incluirDiagnostico && it.diagnostico
+          ? `<div class="diag">
             <p><strong>Diagnóstico:</strong> ${escHtmlPdf(
               it.diagnostico.resumoProblema
             )}</p>
@@ -168,7 +181,7 @@ export function htmlLaudoRecebimento(
                 : ""
             }
           </div>`
-        : "";
+          : "";
       return `<section class="laudo-item">
         <h2>${escHtmlPdf(it.codigoProduto)}${sn}</h2>
         <p class="desc">${escHtmlPdf(it.descricao)}</p>
@@ -180,8 +193,38 @@ export function htmlLaudoRecebimento(
     .join("");
 
   return `<section class="part-laudo">
-    <h1>Laudo de recebimento</h1>
-    <p class="muted">Checklist, fotos e observações registrados na entrada do equipamento.</p>
+    <h1>${escHtmlPdf(opts.titulo)}</h1>
+    <p class="muted">${escHtmlPdf(opts.subtitulo)}</p>
     ${blocos}
   </section>`;
+}
+
+/** Laudo de entrada (recebimento + diagnóstico). */
+export function htmlLaudoRecebimento(
+  itens: ItemLaudoPdf[],
+  imageDataUri: (url: string) => string | null
+): string {
+  return htmlLaudoChecklist(itens, imageDataUri, {
+    titulo: "Laudo de recebimento",
+    subtitulo:
+      "Checklist, fotos e observações registrados na entrada do equipamento.",
+    papelPor: "Recebido por",
+    incluirDiagnostico: true,
+    emptyChecklistMsg: "Não há checklist de recebimento para este item.",
+  });
+}
+
+/** Laudo de saída (liberação). */
+export function htmlLaudoLiberacao(
+  itens: ItemLaudoPdf[],
+  imageDataUri: (url: string) => string | null
+): string {
+  return htmlLaudoChecklist(itens, imageDataUri, {
+    titulo: "Laudo de liberação",
+    subtitulo:
+      "Checklist e fotos registrados antes da devolução ou troca do equipamento.",
+    papelPor: "Liberado por",
+    incluirDiagnostico: false,
+    emptyChecklistMsg: "Não há checklist de liberação para este item.",
+  });
 }

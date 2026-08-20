@@ -90,6 +90,8 @@ Body de separar: `filialId`, `destinatarioIds` (mín. 1), `itens: [{ id, quantid
 | `EGESTOR_SYNC_INTERVAL_MS` | Padrão 5 min |
 | `EGESTOR_SYNC_DT_INI` | Padrão `2026-08-01` — lê só pedidos com `dtCad` ou `dtVenda` a partir desta data |
 
+Em Docker de produção (`docker-compose.prod.yml`), essas variáveis precisam estar no `.env.production` **e** no bloco `api.environment` do compose (já listadas). Só colocar no arquivo env sem recriar o container da API não basta: `--env-file` alimenta a interpolação do Compose; o processo Node só vê o que está em `environment:`.
+
 Token vazio: job no-op (log). Rate limit eGestor: **60 req/min**; páginas de 50. O cliente serializa as chamadas, respeita ~1,1 s entre elas e, em HTTP 429, espera e tenta de novo (até 8 vezes). Clique em Atualizar enquanto o job roda reaproveita o sync em andamento (não dispara outra varredura).
 
 Job no boot (`setInterval`), mesmo padrão dos alertas de retorno.

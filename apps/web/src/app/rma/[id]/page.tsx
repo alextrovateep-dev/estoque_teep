@@ -5,6 +5,7 @@ import {
   RmaItemWorkflowPanel,
   type RmaItemWorkflowData,
 } from "@/components/rma/RmaItemWorkflowPanel";
+import { RmaDocumentosSection } from "@/components/rma/RmaDocumentosSection";
 import { api, apiUpload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
@@ -1821,6 +1822,12 @@ export default function RmaDetalhePage() {
         )}
       </section>
 
+      <RmaDocumentosSection
+        processoId={id}
+        itens={row.itens}
+        processoAberto={processoAberto}
+      />
+
       <section className="mt-3 rounded-xl border bg-white p-3 sm:p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -1829,19 +1836,18 @@ export default function RmaDetalhePage() {
               ({itensAtivos.length})
             </span>
           </h3>
-          {processoAberto &&
-            itensAtivos.some(
-              (i) =>
-                i.etapa === "AGUARDANDO_ORCAMENTO" ||
-                i.etapa === "AGUARDANDO_APROVACAO" ||
-                Boolean(i.orcamento) ||
-                Boolean(i.diagnostico)
-            ) && (
+          {itensAtivos.some(
+            (i) =>
+              Boolean(i.orcamento) ||
+              Boolean(i.diagnostico) ||
+              i.etapa === "AGUARDANDO_ORCAMENTO" ||
+              i.etapa === "AGUARDANDO_APROVACAO"
+          ) && (
               <Link
                 href={`/rma/${id}/orcamento`}
                 className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800"
               >
-                {ctaOrcamento}
+                {processoAberto ? ctaOrcamento : "Ver orçamento"}
               </Link>
             )}
         </div>

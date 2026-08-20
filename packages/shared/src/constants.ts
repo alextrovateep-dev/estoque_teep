@@ -345,6 +345,13 @@ export function rmaItemEntraNoPdfOrcamento(opts: {
   );
 }
 
+/** PDF arquivo (histórico): qualquer item com orçamento salvo, inclusive aprovado/recusado. */
+export function rmaItemEntraNoPdfOrcamentoArquivo(opts: {
+  orcamentoStatus?: string | null;
+}): boolean {
+  return Boolean(opts.orcamentoStatus);
+}
+
 /**
  * Reabrir só com orçamento fechado (ENVIADO) na etapa de aprovação.
  * Depois de aprovado/recusado não volta a rascunho.

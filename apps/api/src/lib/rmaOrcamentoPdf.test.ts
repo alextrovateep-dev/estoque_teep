@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { rmaItemEntraNoPdfOrcamento } from "@teep/shared";
+import { rmaItemEntraNoPdfOrcamento, rmaItemEntraNoPdfOrcamentoArquivo } from "@teep/shared";
 import {
   formatarRespostaChecklistCampo,
   htmlLaudoRecebimento,
@@ -45,6 +45,21 @@ describe("rmaItemEntraNoPdfOrcamento", () => {
         etapa: "AGUARDANDO_ENVIO",
         orcamentoStatus: "ENVIADO",
       }),
+      false
+    );
+  });
+
+  it("arquivo inclui qualquer orçamento salvo", () => {
+    assert.equal(
+      rmaItemEntraNoPdfOrcamentoArquivo({ orcamentoStatus: "APROVADO" }),
+      true
+    );
+    assert.equal(
+      rmaItemEntraNoPdfOrcamentoArquivo({ orcamentoStatus: "RECUSADO" }),
+      true
+    );
+    assert.equal(
+      rmaItemEntraNoPdfOrcamentoArquivo({ orcamentoStatus: null }),
       false
     );
   });

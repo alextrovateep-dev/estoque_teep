@@ -8,6 +8,7 @@ import {
   rmaEtapaEmRecebimento,
   rmaOrcamentoPodeEditar,
   rmaItemEntraNoPdfOrcamento,
+  rmaItemEntraNoPdfOrcamentoArquivo,
   type RmaChecklistTipo,
 } from "@teep/shared";
 import { AppError } from "../middleware/error";
@@ -24,6 +25,7 @@ import { htmlToPdf } from "../lib/pdf";
 import { brandAssetDataUri } from "../lib/brandAssets";
 import { mapPdfImageDataUris } from "../lib/pdfImage";
 import {
+  htmlLaudoLiberacao,
   htmlLaudoRecebimento,
   mapPerguntasLaudo,
 } from "../lib/rmaOrcamentoPdfHtml";
@@ -87,6 +89,9 @@ async function loadItemNoProcesso(processoId: string, itemId: string) {
           descricao: true,
           precoUnitario: true,
         },
+      },
+      unidadeSerie: {
+        select: { id: true, numeroSerie: true },
       },
       checklistExecucoes: {
         include: {
@@ -1201,21 +1206,30 @@ function escHtml(s: string) {
 /** Visão agregada do orçamento do processo (comercial). */
 export async function obterOrcamentoAgregadoRma(
   user: AuthUser,
-  processoId: string
+  processoId: string,
+  opts?: { arquivo?: boolean }
 ) {
+  const arquivo = Boolean(opts?.arquivo);
   const proc = await obterRma(user, processoId);
   const itens = (proc.itens || [])
-    .filter(
-      (i) =>
+    .filter((i) => {
+      if (i.status === "CANCELADO") return false;
+      if (arquivo) {
+        return Boolean(i.orcamento);
+      }
+      return (
         ["EM_ESTOQUE", "SEM_MANUTENCAO"].includes(i.status) &&
         (ETAPAS_ORCAMENTO_PAGE.has(i.etapa || "") || Boolean(i.orcamento))
-    )
-    .filter(
-      (i) =>
+      );
+    })
+    .filter((i) => {
+      if (arquivo) return true;
+      return (
         Boolean(i.diagnostico) ||
         Boolean(i.manutencaoPlano) ||
         Boolean(i.orcamento)
-    )
+      );
+    })
     .map((i) => {
       const sugeridas =
         i.manutencaoPlano && (!i.orcamento || i.orcamento.linhas.length === 0)
@@ -1350,97 +1364,8 @@ export async function enviarOrcamentoAgregadoRma(
   return obterOrcamentoAgregadoRma(user, processoId);
 }
 
-export async function exportarOrcamentoRmaPdf(
-  user: AuthUser,
-  processoId: string
-) {
-  const data = await obterOrcamentoAgregadoRma(user, processoId);
-  const p = data.processo;
-  const short = p.id.slice(0, 8);
-  const geradoEm = stampSaoPaulo();
-  const logoUri = brandAssetDataUri("logo-teep.png");
-  const brandMark = logoUri
-    ? `<img src="${logoUri}" alt="TEEP" />`
-    : `<h1>TEEP</h1>`;
-
-  const itensPdf = data.itens.filter((it) =>
-    rmaItemEntraNoPdfOrcamento({
-      etapa: it.etapa,
-      orcamentoStatus: it.orcamento?.status,
-    })
-  );
-  if (itensPdf.length === 0) {
-    throw new AppError(
-      400,
-      "Não há item em orçamento para o PDF. Feche o orçamento (ou gere com itens em rascunho). Itens já aprovados ou recusados não entram."
-    );
-  }
-
-  const blocos = itensPdf
-    .map((it) => {
-      const sn = it.unidadeSerie?.numeroSerie
-        ? ` · N/S ${escHtml(it.unidadeSerie.numeroSerie)}`
-        : "";
-      const linhasHtml = (it.linhas || [])
-        .map((l) => {
-          const sub = Number(l.quantidade) * Number(l.valorUnitario);
-          return `<tr>
-            <td>${escHtml(l.descricao)}${
-              l.origem === "SERVICO"
-                ? ` <span class="muted">(${formatTempoMinutos(
-                    l.tempoMinutos
-                  )})</span>`
-                : ""
-            }</td>
-            <td class="num">${l.quantidade}</td>
-            <td class="num">${moneyBr(Number(l.valorUnitario))}</td>
-            <td class="num">${moneyBr(sub)}</td>
-          </tr>`;
-        })
-        .join("");
-      return `
-        <section class="item">
-          <h2>${escHtml(it.produto.codigo)}${sn}</h2>
-          <p class="desc">${escHtml(it.produto.descricao)}</p>
-          ${
-            it.orcamento?.observacaoComercial
-              ? `<p class="note"><strong>Obs. comercial:</strong> ${escHtml(
-                  it.orcamento.observacaoComercial
-                )}</p>`
-              : ""
-          }
-          <table>
-            <thead>
-              <tr>
-                <th>Descrição</th>
-                <th class="num">Qtd</th>
-                <th class="num">Valor</th>
-                <th class="num">Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>${
-              linhasHtml ||
-              `<tr><td colspan="4" class="muted">Sem linhas</td></tr>`
-            }</tbody>
-          </table>
-          <p class="item-total">Total item: ${moneyBr(it.total)}</p>
-        </section>`;
-    })
-    .join("");
-
-  const totalGeral = itensPdf.reduce((a, i) => a + i.total, 0);
-
-  const fotoUrls = itensPdf.flatMap((it) =>
-    (it.laudoRecebimento?.perguntas ?? []).flatMap((q) => q.fotos)
-  );
-  const fotoUris = await mapPdfImageDataUris(fotoUrls);
-
-  const html = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <title>Orçamento RMA ${escHtml(short)}</title>
-  <style>
+function cssPdfRmaComum(): string {
+  return `
     * { box-sizing: border-box; }
     body { font-family: "Segoe UI", system-ui, sans-serif; color: #0f172a; margin: 0; font-size: 10px; }
     .brand { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 3px solid ${BRAND_COLOR}; padding-bottom: 8px; margin-bottom: 12px; }
@@ -1483,14 +1408,131 @@ export async function exportarOrcamentoRmaPdf(
       border: 1px solid #cbd5e1;
     }
     .foto-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  </style>
+  `;
+}
+
+function brandMarkHtml(): string {
+  const logoUri = brandAssetDataUri("logo-teep.png");
+  return logoUri ? `<img src="${logoUri}" alt="TEEP" />` : `<h1>TEEP</h1>`;
+}
+
+type ItemOrcPdf = Awaited<
+  ReturnType<typeof obterOrcamentoAgregadoRma>
+>["itens"][number];
+
+async function montarPdfOrcamentoRma(opts: {
+  user: AuthUser;
+  processo: Awaited<ReturnType<typeof obterOrcamentoAgregadoRma>>["processo"];
+  itensPdf: ItemOrcPdf[];
+  tituloDoc: string;
+  filename: string;
+  incluirLaudoRecebimento: boolean;
+  emptyError: string;
+}) {
+  const { user, processo: p, itensPdf } = opts;
+  if (itensPdf.length === 0) {
+    throw new AppError(400, opts.emptyError);
+  }
+  const short = p.id.slice(0, 8);
+  const geradoEm = stampSaoPaulo();
+
+  const blocos = itensPdf
+    .map((it) => {
+      const sn = it.unidadeSerie?.numeroSerie
+        ? ` · N/S ${escHtml(it.unidadeSerie.numeroSerie)}`
+        : "";
+      const stLabel = it.orcamento?.status
+        ? ` <span class="muted">(${escHtml(it.orcamento.status)})</span>`
+        : "";
+      const linhasHtml = (it.linhas || [])
+        .map((l) => {
+          const sub = Number(l.quantidade) * Number(l.valorUnitario);
+          return `<tr>
+            <td>${escHtml(l.descricao)}${
+              l.origem === "SERVICO"
+                ? ` <span class="muted">(${formatTempoMinutos(
+                    l.tempoMinutos
+                  )})</span>`
+                : ""
+            }</td>
+            <td class="num">${l.quantidade}</td>
+            <td class="num">${moneyBr(Number(l.valorUnitario))}</td>
+            <td class="num">${moneyBr(sub)}</td>
+          </tr>`;
+        })
+        .join("");
+      return `
+        <section class="item">
+          <h2>${escHtml(it.produto.codigo)}${sn}${stLabel}</h2>
+          <p class="desc">${escHtml(it.produto.descricao)}</p>
+          ${
+            it.orcamento?.observacaoComercial
+              ? `<p class="note"><strong>Obs. comercial:</strong> ${escHtml(
+                  it.orcamento.observacaoComercial
+                )}</p>`
+              : ""
+          }
+          <table>
+            <thead>
+              <tr>
+                <th>Descrição</th>
+                <th class="num">Qtd</th>
+                <th class="num">Valor</th>
+                <th class="num">Subtotal</th>
+              </tr>
+            </thead>
+            <tbody>${
+              linhasHtml ||
+              `<tr><td colspan="4" class="muted">Sem linhas</td></tr>`
+            }</tbody>
+          </table>
+          <p class="item-total">Total item: ${moneyBr(it.total)}</p>
+        </section>`;
+    })
+    .join("");
+
+  const totalGeral = itensPdf.reduce((a, i) => a + i.total, 0);
+
+  const fotoUrls = opts.incluirLaudoRecebimento
+    ? itensPdf.flatMap((it) =>
+        (it.laudoRecebimento?.perguntas ?? []).flatMap((q) => q.fotos)
+      )
+    : [];
+  const fotoUris = await mapPdfImageDataUris(fotoUrls);
+
+  const laudoHtml = opts.incluirLaudoRecebimento
+    ? htmlLaudoRecebimento(
+        itensPdf.map((it) => ({
+          codigoProduto: it.produto.codigo,
+          descricao: it.produto.descricao,
+          numeroSerie: it.unidadeSerie?.numeroSerie ?? null,
+          diagnostico: it.diagnostico
+            ? {
+                resumoProblema: it.diagnostico.resumoProblema,
+                observacaoTecnica: it.diagnostico.observacaoTecnica,
+              }
+            : null,
+          preenchidoPorNome: it.laudoRecebimento?.preenchidoPorNome ?? null,
+          concluidoEm: it.laudoRecebimento?.concluidoEm ?? null,
+          perguntas: it.laudoRecebimento?.perguntas ?? [],
+        })),
+        (url) => fotoUris.get(url) ?? null
+      )
+    : "";
+
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>${escHtml(opts.tituloDoc)} ${escHtml(short)}</title>
+  <style>${cssPdfRmaComum()}</style>
 </head>
 <body>
   <div class="brand">
     <div class="brand-left">
-      ${brandMark}
+      ${brandMarkHtml()}
       <div>
-        <div style="font-size:12px;font-weight:600;">Orçamento RMA</div>
+        <div style="font-size:12px;font-weight:600;">${escHtml(opts.tituloDoc)}</div>
       </div>
     </div>
     <div class="sub">
@@ -1511,29 +1553,165 @@ export async function exportarOrcamentoRmaPdf(
   </div>
   ${blocos}
   <p class="total">Total geral: ${moneyBr(totalGeral)}</p>
-  <div class="foot">Orçamento de RMA</div>
-  ${htmlLaudoRecebimento(
-    itensPdf.map((it) => ({
-      codigoProduto: it.produto.codigo,
-      descricao: it.produto.descricao,
-      numeroSerie: it.unidadeSerie?.numeroSerie ?? null,
-      diagnostico: it.diagnostico
-        ? {
-            resumoProblema: it.diagnostico.resumoProblema,
-            observacaoTecnica: it.diagnostico.observacaoTecnica,
-          }
-        : null,
-      preenchidoPorNome: it.laudoRecebimento?.preenchidoPorNome ?? null,
-      concluidoEm: it.laudoRecebimento?.concluidoEm ?? null,
-      perguntas: it.laudoRecebimento?.perguntas ?? [],
-    })),
-    (url) => fotoUris.get(url) ?? null
-  )}
+  <div class="foot">${escHtml(opts.tituloDoc)}</div>
+  ${laudoHtml}
 </body>
 </html>`;
 
   const buffer = await htmlToPdf(html);
-  const filename = `orcamento-rma-${short}.pdf`;
-  return { buffer, filename };
+  return { buffer, filename: opts.filename };
+}
+
+/** PDF de negociação: só rascunho / em aprovação (+ laudo de entrada). */
+export async function exportarOrcamentoRmaPdf(
+  user: AuthUser,
+  processoId: string
+) {
+  const data = await obterOrcamentoAgregadoRma(user, processoId);
+  const short = data.processo.id.slice(0, 8);
+  const itensPdf = data.itens.filter((it) =>
+    rmaItemEntraNoPdfOrcamento({
+      etapa: it.etapa,
+      orcamentoStatus: it.orcamento?.status,
+    })
+  );
+  return montarPdfOrcamentoRma({
+    user,
+    processo: data.processo,
+    itensPdf,
+    tituloDoc: "Orçamento RMA",
+    filename: `orcamento-rma-${short}.pdf`,
+    incluirLaudoRecebimento: true,
+    emptyError:
+      "Não há item em orçamento para o PDF. Feche o orçamento (ou gere com itens em rascunho). Itens já aprovados ou recusados não entram. Use o PDF arquivo na seção Documentos para histórico.",
+  });
+}
+
+/**
+ * PDF arquivo do orçamento (histórico): inclui aprovado/recusado e itens já
+ * devolvidos. Funciona com RMA aberto ou fechado.
+ */
+export async function exportarOrcamentoRmaArquivoPdf(
+  user: AuthUser,
+  processoId: string,
+  itemId?: string
+) {
+  const data = await obterOrcamentoAgregadoRma(user, processoId, {
+    arquivo: true,
+  });
+  const short = data.processo.id.slice(0, 8);
+  let itensPdf = data.itens.filter((it) =>
+    rmaItemEntraNoPdfOrcamentoArquivo({
+      orcamentoStatus: it.orcamento?.status,
+    })
+  );
+  if (itemId) {
+    itensPdf = itensPdf.filter((it) => it.id === itemId);
+  }
+  return montarPdfOrcamentoRma({
+    user,
+    processo: data.processo,
+    itensPdf,
+    tituloDoc: "Orçamento RMA (arquivo)",
+    filename: itemId
+      ? `orcamento-rma-${short}-${itemId.slice(0, 8)}.pdf`
+      : `orcamento-rma-arquivo-${short}.pdf`,
+    incluirLaudoRecebimento: false,
+    emptyError: itemId
+      ? "Este item não tem orçamento salvo para arquivo."
+      : "Não há orçamento salvo neste RMA para gerar o PDF arquivo.",
+  });
+}
+
+/** PDF de laudo de entrada ou liberação de um item (aberto ou fechado). */
+export async function exportarLaudoRmaItemPdf(
+  user: AuthUser,
+  processoId: string,
+  itemId: string,
+  tipo: "RECEBIMENTO" | "LIBERACAO"
+) {
+  const proc = await obterRma(user, processoId);
+  const item = await loadItemNoProcesso(processoId, itemId);
+  const short = processoId.slice(0, 8);
+  const exec = (item.checklistExecucoes || []).find((e) => e.tipo === tipo);
+  const temDiag = Boolean(item.diagnostico);
+  if (tipo === "RECEBIMENTO") {
+    if (!exec && !temDiag) {
+      throw new AppError(
+        400,
+        "Laudo de entrada ainda não registrado neste item"
+      );
+    }
+  } else if (!exec || exec.status !== "CONCLUIDO") {
+    throw new AppError(
+      400,
+      "Laudo de liberação ainda não concluído neste item"
+    );
+  }
+
+  const perguntas = mapPerguntasLaudo(exec);
+  const fotoUrls = perguntas.flatMap((q) => q.fotos);
+  const fotoUris = await mapPdfImageDataUris(fotoUrls);
+  const laudoItem = {
+    codigoProduto: item.produto.codigo,
+    descricao: item.produto.descricao,
+    numeroSerie: item.unidadeSerie?.numeroSerie ?? null,
+    diagnostico:
+      tipo === "RECEBIMENTO" && item.diagnostico
+        ? {
+            resumoProblema: item.diagnostico.resumoProblema,
+            observacaoTecnica: item.diagnostico.observacaoTecnica,
+          }
+        : null,
+    preenchidoPorNome: exec?.preenchidoPor?.nome ?? null,
+    concluidoEm: exec?.concluidoEm ?? null,
+    perguntas,
+  };
+  const corpo =
+    tipo === "RECEBIMENTO"
+      ? htmlLaudoRecebimento([laudoItem], (url) => fotoUris.get(url) ?? null)
+      : htmlLaudoLiberacao([laudoItem], (url) => fotoUris.get(url) ?? null);
+
+  const titulo =
+    tipo === "RECEBIMENTO" ? "Laudo de recebimento" : "Laudo de liberação";
+  const geradoEm = stampSaoPaulo();
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>${escHtml(titulo)} RMA ${escHtml(short)}</title>
+  <style>${cssPdfRmaComum()}
+    .part-laudo { page-break-before: auto; }
+  </style>
+</head>
+<body>
+  <div class="brand">
+    <div class="brand-left">
+      ${brandMarkHtml()}
+      <div>
+        <div style="font-size:12px;font-weight:600;">${escHtml(titulo)}</div>
+      </div>
+    </div>
+    <div class="sub">
+      Gerado em ${escHtml(geradoEm)} (America/Sao_Paulo)<br/>
+      ${escHtml(user.nome)} · ${escHtml(user.perfil)}
+    </div>
+  </div>
+  <div class="meta">
+    <div><strong>Cliente:</strong> ${escHtml(proc.cliente.nome)}${
+      proc.cliente.documento ? ` · ${escHtml(proc.cliente.documento)}` : ""
+    }</div>
+    <div><strong>Processo:</strong> RMA ${escHtml(short)}</div>
+  </div>
+  ${corpo}
+</body>
+</html>`;
+
+  const buffer = await htmlToPdf(html);
+  const slug = tipo === "RECEBIMENTO" ? "entrada" : "liberacao";
+  return {
+    buffer,
+    filename: `laudo-${slug}-rma-${short}-${itemId.slice(0, 8)}.pdf`,
+  };
 }
 

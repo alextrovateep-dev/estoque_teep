@@ -94,7 +94,12 @@ export default function RmaOrcamentoPage() {
       user?.id === data.processo.responsavelComercial.id);
 
   const load = useCallback(async () => {
-    const row = await api<OrcPayload>(`/rma/${id}/orcamento`);
+    // Negociação (aberto) ou arquivo (fechado / itens já devolvidos)
+    let row = await api<OrcPayload>(`/rma/${id}/orcamento`);
+    if (row.itens.length === 0 || row.processo.status !== "ABERTO") {
+      const arquivo = await api<OrcPayload>(`/rma/${id}/orcamento?arquivo=1`);
+      if (arquivo.itens.length > 0) row = arquivo;
+    }
     setData(row);
     const next: typeof drafts = {};
     for (const it of row.itens) {
@@ -234,7 +239,11 @@ export default function RmaOrcamentoPage() {
     setBusy(true);
     setError("");
     try {
-      const { blob, filename } = await apiDownload(`/rma/${id}/orcamento.pdf`, {
+      const path =
+        data?.processo.status === "ABERTO"
+          ? `/rma/${id}/orcamento.pdf`
+          : `/rma/${id}/orcamento/arquivo.pdf`;
+      const { blob, filename } = await apiDownload(path, {
         fallbackFilename: `orcamento-rma-${id.slice(0, 8)}.pdf`,
       });
       const url = URL.createObjectURL(blob);
@@ -332,10 +341,9 @@ export default function RmaOrcamentoPage() {
       </div>
 
       <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-        Fechar o orçamento libera a etapa para o comercial: gerar PDF (orçamento
-        + laudo de recebimento), negociar com o cliente, alterar valores e gerar
-        um PDF novo. O RMA só é finalizado depois de aprovado, com a manutenção
-        realizada e o retorno feito.
+        {p.status === "ABERTO"
+          ? "Fechar o orçamento libera a etapa para o comercial: gerar PDF (orçamento + laudo de recebimento), negociar com o cliente, alterar valores e gerar um PDF novo. O RMA só é finalizado depois de aprovado, com a manutenção realizada e o retorno feito."
+          : "Processo fechado — visualização do orçamento em arquivo. Use a seção Documentos no RMA para baixar PDFs de laudos e orçamento."}
       </p>
 
       {error ? (
