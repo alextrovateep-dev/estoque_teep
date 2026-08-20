@@ -38,6 +38,8 @@ O dump `openapi-egestor.yaml` do repo diverge da [documentação oficial](https:
 
 Match de SKU: `codigoProprio` da linha eGestor = `Produto.codigo` no TEEP. Linha sem match aparece na tela e **impede** concluir a separação.
 
+Match de cliente: CNPJ do contato no eGestor (`/v1/contatos/{codContato}` ou `/v1/vendas/{codigo}/contato`) = `Cliente.documento` no TEEP. Sem CNPJ válido no eGestor, ou sem cliente ativo com o mesmo CNPJ no TEEP, a separação fica **bloqueada**. CPF não é aceito.
+
 ---
 
 ## Telas
@@ -56,12 +58,13 @@ Operador só separa em acabados aos quais está vinculado. Gerente/Admin: qualqu
 ## Separação
 
 1. Pedido `ABERTO`; todos os itens com produto TEEP; quantidades iguais às do eGestor.
-2. Escolhe o acabado; informa série quando o produto controla série (`POST /series/validar-saida`).
-3. Marca usuários que recebem e-mail (IDs do cadastro, não lista livre).
-4. API chama `criarMovimentacao` (SAÍDA padrão: saldo + séries), sempre com `grupoLancamentoId` (também em pedido de 1 SKU). Linhas do mesmo produto são agrupadas.
-5. Status TEEP `ABERTO` → `SEPARADO`. eGestor **não** muda.
+2. Contato com **CNPJ** no eGestor e **Cliente** ativo no TEEP com o mesmo CNPJ (a saída grava esse `clienteId`).
+3. Escolhe o acabado; informa série quando o produto controla série (`POST /series/validar-saida`).
+4. Marca usuários que recebem e-mail (IDs do cadastro, não lista livre). O e-mail é enviado quando o pedido fica `SEPARADO`.
+5. API chama `criarMovimentacao` (SAÍDA: saldo + séries + cliente), sempre com `grupoLancamentoId` (também em pedido de 1 SKU). Linhas do mesmo produto são agrupadas. A separação **conclui na hora** — não entra na fila de Aprovações (a flag «Requer aprovação» do tipo é ignorada / forçada off no tipo de saída de pedido).
+6. Status TEEP `ABERTO` → `SEPARADO`. eGestor **não** muda.
 
-Se o tipo de saída **exige aprovação** e quem separa é Operador, a movimentação fica `PENDENTE`. O pedido **só** vai para Separado quando a saída for aprovada. Rejeição libera o pedido para separar de novo.
+Pedidos antigos que tenham ficado com saída `PENDENTE` (tipo com aprovação ligada no passado) continuam aparecendo como aguardando em Aprovações até alguém aprovar ou rejeitar.
 
 ---
 

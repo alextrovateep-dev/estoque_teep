@@ -6,6 +6,7 @@ import {
   newLancamentoLinha,
   type LancamentoLinha,
 } from "@/components/LancamentoLinhaItem";
+import { formatCnpj } from "@teep/shared";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -28,15 +29,26 @@ type Item = {
 
 type Dest = { id: string; nome: string; email: string };
 
+type Cliente = {
+  id: string;
+  nome: string;
+  documento: string | null;
+  ativo?: boolean;
+};
+
 type Pedido = {
   id: string;
   egestorCodigo: number;
   nomeContato: string;
+  documentoContato: string | null;
+  clienteId: string | null;
+  cliente?: Cliente | null;
   dtVenda: string;
   situacao: number;
   situacaoOs: string | null;
   status: string;
   grupoLancamentoId: string | null;
+  aguardandoAprovacao?: boolean;
   filialAcabado?: { id: string; sigla: string; nome: string } | null;
   itens: Item[];
   destinatarios?: Array<{ usuario: Dest }>;
@@ -108,11 +120,20 @@ export default function PedidoDetalhePage() {
     () => (row?.itens || []).some((i) => !i.produtoId),
     [row]
   );
-  const aguardaAprovacao = Boolean(
-    row?.status === "ABERTO" && row.grupoLancamentoId
-  );
+  const bloqueadoCliente = useMemo(() => {
+    if (!row || row.status !== "ABERTO") return false;
+    return !row.clienteId || !row.documentoContato;
+  }, [row]);
+  const aguardaAprovacao = Boolean(row?.aguardandoAprovacao);
   const podeSeparar =
-    row?.status === "ABERTO" && !bloqueadoSku && !aguardaAprovacao;
+    row?.status === "ABERTO" &&
+    !bloqueadoSku &&
+    !bloqueadoCliente &&
+    !aguardaAprovacao;
+
+  const cnpjLabel = row?.documentoContato
+    ? formatCnpj(row.documentoContato)
+    : null;
 
   function patchLinha(key: string, partial: Partial<LancamentoLinha>) {
     setLinhas((prev) =>
@@ -174,7 +195,8 @@ export default function PedidoDetalhePage() {
             Pedido #{row.egestorCodigo}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {row.nomeContato} ·{" "}
+            {row.cliente?.nome || row.nomeContato}
+            {cnpjLabel ? ` · ${cnpjLabel}` : ""} ·{" "}
             {row.situacao === 10 ? "Orçamento" : row.situacaoOs || "Em espera"} ·{" "}
             {row.status === "SEPARADO" ? "Separado" : "Em aberto"}
           </p>
@@ -198,10 +220,24 @@ export default function PedidoDetalhePage() {
           para separar.
         </p>
       )}
+      {bloqueadoCliente && (
+        <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {!row.documentoContato
+            ? "Contato do eGestor sem CNPJ válido. Corrija o contato no eGestor e use Atualizar do eGestor."
+            : `Cliente com CNPJ ${cnpjLabel} não encontrado (ou inativo) no cadastro TEEP. Cadastre o cliente com o mesmo CNPJ para separar.`}
+        </p>
+      )}
+      {!bloqueadoCliente && row.cliente && row.status === "ABERTO" && (
+        <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          Cliente TEEP: {row.cliente.nome}
+          {row.cliente.documento ? ` · ${formatCnpj(row.cliente.documento)}` : ""}
+        </p>
+      )}
       {aguardaAprovacao && (
         <p className="mt-4 rounded-lg bg-sky-50 px-3 py-2 text-sm text-sky-900">
-          Separação lançada e aguardando aprovação. O pedido só vai para
-          Separados quando a saída for aprovada.
+          Há saída deste pedido ainda pendente em Aprovações. Conclua ou
+          rejeite lá para liberar o pedido. Separações novas já baixam o
+          estoque na hora (sem essa fila).
         </p>
       )}
 
@@ -258,7 +294,8 @@ export default function PedidoDetalhePage() {
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <p className="text-sm font-medium">Avisar por e-mail</p>
             <p className="mt-1 text-xs text-slate-500">
-              Escolha ao menos um usuário cadastrado.
+              Escolha ao menos um usuário cadastrado. O e-mail é enviado quando
+              a separação concluir (estoque baixado).
             </p>
             <ul className="mt-3 max-h-48 space-y-1 overflow-auto text-sm">
               {destTodos.map((u) => (

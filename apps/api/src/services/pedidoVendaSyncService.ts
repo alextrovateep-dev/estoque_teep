@@ -4,6 +4,8 @@ import {
   egestorConfigured,
   egestorSyncDesde,
   listarVendasParaSync,
+  obterContatoEgestor,
+  obterContatoVendaEgestor,
   obterVendaEgestor,
 } from "../lib/egestorClient";
 import {
@@ -13,6 +15,11 @@ import {
   pedidoEgestorQualifica,
   pedidoTemProdutoEgestor,
 } from "../lib/egestorPedidoRules";
+import {
+  clienteIdPorDocumento,
+  indexClientesPorCnpj,
+  interpretarDocumentoContatoEgestor,
+} from "../lib/pedidoClienteMatch";
 
 function parseDate(v: string | undefined): Date {
   const s = String(v || "").slice(0, 10);
@@ -64,6 +71,32 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
     produtos.map((p) => [p.codigo.trim().toLowerCase(), p.id])
   );
 
+  const clientes = await prisma.cliente.findMany({
+    where: { ativo: true, documento: { not: null } },
+    select: { id: true, documento: true, ativo: true },
+  });
+  const clienteByCnpj = indexClientesPorCnpj(clientes);
+
+  /** Cache: codContato eGestor → CNPJ normalizado (ou null). */
+  const contatoDocCache = new Map<number, string | null>();
+
+  async function resolverDocumentoContato(
+    codContato: number | null,
+    codigoVenda: number
+  ): Promise<string | null> {
+    if (codContato && contatoDocCache.has(codContato)) {
+      return contatoDocCache.get(codContato) ?? null;
+    }
+    const contato = codContato
+      ? await obterContatoEgestor(codContato)
+      : await obterContatoVendaEgestor(codigoVenda);
+    const { documentoContato } = interpretarDocumentoContatoEgestor(
+      contato?.cpfcnpj
+    );
+    if (codContato) contatoDocCache.set(codContato, documentoContato);
+    return documentoContato;
+  }
+
   const keepProductCodes = new Set<number>();
 
   for (const summary of candidatos) {
@@ -108,6 +141,12 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
     const codContato =
       detalhe.summary.codContato ?? summary.codContato ?? null;
 
+    const documentoContato = await resolverDocumentoContato(
+      codContato != null ? Number(codContato) : null,
+      codigo
+    );
+    const clienteId = clienteIdPorDocumento(clienteByCnpj, documentoContato);
+
     const existing = await prisma.pedidoVenda.findUnique({
       where: { egestorCodigo: codigo },
     });
@@ -120,6 +159,8 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
         egestorCodigo: codigo,
         nomeContato,
         codContato,
+        documentoContato,
+        clienteId,
         dtVenda,
         situacao,
         situacaoOs,
@@ -130,6 +171,8 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
       update: {
         nomeContato,
         codContato,
+        documentoContato,
+        clienteId,
         dtVenda,
         situacao,
         situacaoOs,

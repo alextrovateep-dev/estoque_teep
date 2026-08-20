@@ -191,6 +191,8 @@ export async function criarMovimentacao(
     usoInternoRma?: boolean;
     /** Separação de pedido eGestor — tipo com flag saidaPedidoVenda. */
     usoInternoPedido?: boolean;
+    /** Grupo multi-SKU: não chama syncPedido até o fim do lote. */
+    adiarSyncPedido?: boolean;
     anexos?: Array<{
       tipo: "NOTA_FISCAL" | "TERMO_COMODATO" | "LAUDO" | "OUTRO";
       arquivo: string;
@@ -452,6 +454,8 @@ export async function criarMovimentacao(
           series: item.series,
           itens: undefined,
           grupoLancamentoId: grupoId,
+          // Evita marcar pedido SEPARADO no meio do grupo multi-SKU
+          adiarSyncPedido: true,
           // NF/termo: só na 1ª linha evita anexos duplicados idênticos
           anexos: i === 0 ? input.anexos : [],
           notaFiscalArquivo: i === 0 ? input.notaFiscalArquivo : null,
@@ -473,6 +477,14 @@ export async function criarMovimentacao(
         }
         throw e;
       }
+    }
+
+    // Sync do pedido só no fim do grupo (filhos usam adiarSyncPedido)
+    {
+      const { syncPedidoAposGrupoLancamento } = await import(
+        "./pedidoVendaService"
+      );
+      await syncPedidoAposGrupoLancamento(grupoId);
     }
 
     const movs = resultados
@@ -609,8 +621,12 @@ export async function criarMovimentacao(
       ? input.precoUnitario
       : Number(produto.precoUnitario);
 
+  // Separação de pedido conclui na hora (fluxo próprio + e-mail aos destinatários).
+  // Não herda "requer aprovação" do tipo — evita PENDENTE indevido na tela Pedidos.
   const pendente =
-    user.perfil === "OPERADOR" && tipo.requerAprovacao === true;
+    !input.usoInternoPedido &&
+    user.perfil === "OPERADOR" &&
+    tipo.requerAprovacao === true;
   if (tipo.baixaPorArvore && pendente) {
     throw new AppError(
       400,
@@ -885,6 +901,13 @@ export async function criarMovimentacao(
       filialNome: result.movimentacao.filial.nome,
       saldoAtual: result.saldoAtual,
     });
+  }
+
+  if (result.movimentacao.grupoLancamentoId && !input.adiarSyncPedido) {
+    const { syncPedidoAposGrupoLancamento } = await import(
+      "./pedidoVendaService"
+    );
+    await syncPedidoAposGrupoLancamento(result.movimentacao.grupoLancamentoId);
   }
 
   return {

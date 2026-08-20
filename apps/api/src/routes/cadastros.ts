@@ -1392,7 +1392,9 @@ cadastrosRouter.post(
           data: {
             nome: req.body.nome,
             operacao: req.body.operacao,
-            requerAprovacao: req.body.requerAprovacao ?? false,
+            requerAprovacao: saidaPedido
+              ? false
+              : (req.body.requerAprovacao ?? false),
             permitidoOperador: req.body.permitidoOperador ?? false,
             permitidoGerente: req.body.permitidoGerente ?? true,
             geraAlertaRetorno: req.body.geraAlertaRetorno ?? false,
@@ -1518,9 +1520,14 @@ cadastrosRouter.patch(
           ? data.baixaPorArvore === true
           : existing.baixaPorArvore;
       const requerAprov =
-        data.requerAprovacao !== undefined
-          ? data.requerAprovacao === true
-          : existing.requerAprovacao;
+        saidaPedido
+          ? false
+          : data.requerAprovacao !== undefined
+            ? data.requerAprovacao === true
+            : existing.requerAprovacao;
+      if (saidaPedido) {
+        data.requerAprovacao = false;
+      }
       if (baixaArvore && requerAprov) {
         throw new AppError(
           400,

@@ -349,7 +349,11 @@ async function main() {
       });
       await prisma.tipoMovimentacao.update({
         where: { id: saidaPedidoTipo.id },
-        data: { saidaPedidoVenda: true, operacao: "SAIDA" },
+        data: {
+          saidaPedidoVenda: true,
+          operacao: "SAIDA",
+          requerAprovacao: false,
+        },
       });
     }
 

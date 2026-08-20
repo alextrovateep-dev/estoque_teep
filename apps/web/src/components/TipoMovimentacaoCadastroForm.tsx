@@ -511,15 +511,19 @@ export function TipoMovimentacaoCadastroForm({
             />
             <ToggleRow
               checked={form.requerAprovacao}
-              disabled={soRmaFlags || form.baixaPorArvore}
+              disabled={
+                soRmaFlags || form.baixaPorArvore || form.saidaPedidoVenda
+              }
               onChange={(v) => setForm({ ...form, requerAprovacao: v })}
               title="Requer aprovação"
               hint={
-                form.baixaPorArvore
-                  ? "Indisponível com baixa pela árvore (a operação conclui na hora)."
-                  : form.operacao === "TRANSFERENCIA"
-                    ? "Operador cria carga PENDENTE; Gerente/Admin aprovam antes de sair o estoque."
-                    : "Operador gera PENDENTE; Gerente/Admin aprovam."
+                form.saidaPedidoVenda
+                  ? "Indisponível na saída de pedido de venda (a separação conclui na hora)."
+                  : form.baixaPorArvore
+                    ? "Indisponível com baixa pela árvore (a operação conclui na hora)."
+                    : form.operacao === "TRANSFERENCIA"
+                      ? "Operador cria carga PENDENTE; Gerente/Admin aprovam antes de sair o estoque."
+                      : "Operador gera PENDENTE; Gerente/Admin aprovam."
               }
             />
           </div>
@@ -582,15 +586,23 @@ export function TipoMovimentacaoCadastroForm({
               setForm({
                 ...form,
                 saidaPedidoVenda: v,
+                // Separação de pedido conclui na hora — sem fila de aprovação
+                requerAprovacao: v ? false : form.requerAprovacao,
               })
             }
             title="Saída de pedido de venda"
             hint={
               isSaida
-                ? "Usada na separação de pedidos eGestor. Só um tipo pode ter esta opção."
+                ? "Usada na separação de pedidos eGestor. Conclui a saída na hora (sem aprovação). Só um tipo pode ter esta opção."
                 : "Disponível apenas para natureza Saída."
             }
           />
+          {form.saidaPedidoVenda ? (
+            <p className="mt-2 text-xs text-slate-500">
+              Com esta flag, «Requer aprovação» fica desligado — a separação na
+              tela Pedidos baixa o estoque imediatamente.
+            </p>
+          ) : null}
         </SectionCard>
 
         <SectionCard

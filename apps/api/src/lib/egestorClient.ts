@@ -251,3 +251,53 @@ export async function obterVendaEgestor(codigo: number): Promise<{
     produtos: extrairProdutos(json),
   };
 }
+
+export type EgestorContato = {
+  codigo?: number;
+  nome?: string;
+  nomeContato?: string;
+  cpfcnpj?: string;
+};
+
+function extrairContato(json: unknown): EgestorContato | null {
+  if (!json || typeof json !== "object") return null;
+  const raw = json as Record<string, unknown>;
+  const nested =
+    raw.data && typeof raw.data === "object"
+      ? (raw.data as Record<string, unknown>)
+      : raw;
+  if (!nested || typeof nested !== "object") return null;
+  return nested as EgestorContato;
+}
+
+/** Detalhe do contato pelo código (cacheável entre pedidos). */
+export async function obterContatoEgestor(
+  codigo: number
+): Promise<EgestorContato | null> {
+  try {
+    return extrairContato(await egestorGet(`/v1/contatos/${codigo}`));
+  } catch (e) {
+    console.warn(
+      `[egestor] contato ${codigo}:`,
+      e instanceof Error ? e.message : e
+    );
+    return null;
+  }
+}
+
+/** Contato vinculado à venda (fallback se não houver codContato). */
+export async function obterContatoVendaEgestor(
+  codigoVenda: number
+): Promise<EgestorContato | null> {
+  try {
+    return extrairContato(
+      await egestorGet(`/v1/vendas/${codigoVenda}/contato`)
+    );
+  } catch (e) {
+    console.warn(
+      `[egestor] contato da venda ${codigoVenda}:`,
+      e instanceof Error ? e.message : e
+    );
+    return null;
+  }
+}

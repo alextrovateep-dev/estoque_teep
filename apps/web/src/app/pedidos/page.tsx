@@ -9,6 +9,9 @@ type Row = {
   id: string;
   egestorCodigo: number;
   nomeContato: string;
+  documentoContato?: string | null;
+  clienteId?: string | null;
+  cliente?: { id: string; nome: string; documento: string | null } | null;
   dtVenda: string;
   situacao: number;
   situacaoOs: string | null;
@@ -139,11 +142,14 @@ function PedidosInner() {
                 <div className="font-medium">
                   #{p.egestorCodigo}
                   <span className="text-slate-400"> — </span>
-                  {p.nomeContato}
+                  {p.cliente?.nome || p.nomeContato}
                 </div>
                 <div className="text-xs text-slate-500">
                   {situacaoLabel(p)} · {p._count.itens} item(ns)
                   {p.filialAcabado ? ` · ${p.filialAcabado.sigla}` : ""}
+                  {tab === "ABERTO" && !p.clienteId
+                    ? " · Pendente cliente (CNPJ)"
+                    : ""}
                 </div>
               </div>
               <span className="text-sm text-brand">Abrir</span>

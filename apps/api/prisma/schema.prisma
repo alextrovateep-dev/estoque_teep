@@ -168,6 +168,7 @@ model Cliente {
   movimentacoes           Movimentacao[]
   unidadesSerie           UnidadeSerie[]
   rmaProcessos            RmaProcesso[]
+  pedidosVenda            PedidoVenda[]
 
   @@index([responsavelComercialId])
   @@map("clientes")
@@ -858,6 +859,9 @@ model PedidoVenda {
   egestorCodigo      Int      @unique @map("egestor_codigo")
   nomeContato        String   @map("nome_contato") @db.VarChar(150)
   codContato         Int?     @map("cod_contato")
+  /// CNPJ do contato no eGestor (normalizado). Separação exige match com Cliente.
+  documentoContato   String?  @map("documento_contato") @db.VarChar(20)
+  clienteId          String?  @map("cliente_id") @db.Uuid
   dtVenda            DateTime @map("dt_venda") @db.Date
   situacao           Int
   situacaoOs         String?  @map("situacao_os") @db.VarChar(40)
@@ -873,12 +877,14 @@ model PedidoVenda {
   atualizadoEm       DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
   filialAcabado      Filial?  @relation(fields: [filialAcabadoId], references: [id], onDelete: SetNull)
   separadoPor        Usuario? @relation("PedidoSeparadoPor", fields: [separadoPorId], references: [id], onDelete: SetNull)
+  cliente            Cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
   itens              PedidoVendaItem[]
   destinatarios      PedidoVendaDestinatario[]
 
   @@index([status])
   @@index([dtVenda])
   @@index([grupoLancamentoId])
+  @@index([clienteId])
   @@map("pedidos_venda")
 }
 
