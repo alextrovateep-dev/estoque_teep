@@ -408,6 +408,19 @@ export function RmaItemWorkflowPanel({
     }
   }
 
+  function removerFoto(templateItemId: string, url: string) {
+    setRespMap((prev) => {
+      const atual = prev[templateItemId] || { fotos: [] as string[] };
+      return {
+        ...prev,
+        [templateItemId]: {
+          ...atual,
+          fotos: (atual.fotos || []).filter((f) => f !== url),
+        },
+      };
+    });
+  }
+
   async function salvarPlano(concluir: boolean): Promise<boolean> {
     if (!resumo.trim()) {
       reportError("Informe o resumo do problema");
@@ -624,23 +637,40 @@ export function RmaItemWorkflowPanel({
                       <div className="flex flex-wrap gap-2">
                         {(r.fotos || []).map((f) => {
                           const href = resolveAssetUrl(f);
-                          return href ? (
-                            <a
+                          if (!href) return null;
+                          return (
+                            <div
                               key={f}
-                              href={href}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="block h-28 w-36 overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
-                              title="Abrir foto em tamanho original"
+                              className="relative h-28 w-36 overflow-hidden rounded-lg border border-slate-200 bg-slate-50"
                             >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={href}
-                                alt=""
-                                className="h-full w-full object-contain"
-                              />
-                            </a>
-                          ) : null;
+                              <a
+                                href={href}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block h-full w-full"
+                                title="Abrir foto em tamanho original"
+                              >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={href}
+                                  alt=""
+                                  className="h-full w-full object-contain"
+                                />
+                              </a>
+                              {!readOnly ? (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  title="Excluir foto"
+                                  aria-label="Excluir foto"
+                                  className="absolute right-1 top-1 flex h-6 w-6 items-center justify-center rounded-full border border-slate-300 bg-white/95 text-sm leading-none text-slate-700 shadow-sm hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                                  onClick={() => removerFoto(ti.id, f)}
+                                >
+                                  ×
+                                </button>
+                              ) : null}
+                            </div>
+                          );
                         })}
                       </div>
                       {!readOnly ? (

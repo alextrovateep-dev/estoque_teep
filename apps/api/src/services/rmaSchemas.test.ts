@@ -5,6 +5,7 @@ import {
   createRmaProcessoSchema,
   mensagemBloqueioDiagnostico,
   mensagemBloqueioNfRetorno,
+  mensagemBloqueioNfRetornoSemEntrada,
   mensagemBloqueioReabrirOrcamento,
   checklistFotoExigida,
   checklistMostrarCampoFoto,
@@ -349,6 +350,44 @@ describe("mensagemBloqueioNfRetorno", () => {
       mensagemBloqueioNfRetorno({
         nfSaidaNumero: "4040",
         temArquivoNfSaida: true,
+      }),
+      null
+    );
+  });
+});
+
+describe("mensagemBloqueioNfRetornoSemEntrada", () => {
+  it("bloqueia sem número da NF de entrada", () => {
+    const msg = mensagemBloqueioNfRetornoSemEntrada({
+      nfEntradaNumero: "  ",
+    });
+    assert.match(String(msg), /NF de entrada/i);
+  });
+
+  it("libera número da retorno com entrada informada", () => {
+    assert.equal(
+      mensagemBloqueioNfRetornoSemEntrada({
+        nfEntradaNumero: "1234",
+      }),
+      null
+    );
+  });
+
+  it("bloqueia anexo de retorno sem arquivo de entrada", () => {
+    const msg = mensagemBloqueioNfRetornoSemEntrada({
+      nfEntradaNumero: "1234",
+      temArquivoNfEntrada: false,
+      exigeArquivoEntrada: true,
+    });
+    assert.match(String(msg), /arquivo da NF de entrada/i);
+  });
+
+  it("libera anexo de retorno com número e arquivo de entrada", () => {
+    assert.equal(
+      mensagemBloqueioNfRetornoSemEntrada({
+        nfEntradaNumero: "1234",
+        temArquivoNfEntrada: true,
+        exigeArquivoEntrada: true,
       }),
       null
     );

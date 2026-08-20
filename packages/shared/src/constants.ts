@@ -119,6 +119,24 @@ export function mensagemBloqueioNfRetorno(opts: {
   return null;
 }
 
+/**
+ * NF de retorno (número/arquivo) só depois da NF de entrada.
+ * `exigeArquivoEntrada`: true ao anexar/trocar o PDF de retorno.
+ */
+export function mensagemBloqueioNfRetornoSemEntrada(opts: {
+  nfEntradaNumero?: string | null;
+  temArquivoNfEntrada?: boolean;
+  exigeArquivoEntrada?: boolean;
+}): string | null {
+  if (!opts.nfEntradaNumero?.trim()) {
+    return "Informe e salve a NF de entrada antes da NF de retorno";
+  }
+  if (opts.exigeArquivoEntrada && !opts.temArquivoNfEntrada) {
+    return "Anexe o arquivo da NF de entrada antes da NF de retorno";
+  }
+  return null;
+}
+
 /** E-mails únicos de usuários ativos (destinatários do RMA, comercial, operador). */
 export function emailsAlertaDeUsuariosRma(
   pessoas: Array<

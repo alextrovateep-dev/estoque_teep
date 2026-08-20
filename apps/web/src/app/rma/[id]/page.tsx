@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS, mensagemBloqueioNfRetorno, formatYmdBr, ymdFromApi, ymdVencido } from "@teep/shared";
+import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS, mensagemBloqueioNfRetorno, mensagemBloqueioNfRetornoSemEntrada, formatYmdBr, ymdFromApi, ymdVencido } from "@teep/shared";
 
 type RmaAnexo = {
   id: string;
@@ -296,6 +296,15 @@ export default function RmaDetalhePage() {
       );
       return;
     }
+    if (nfSai.trim()) {
+      const bloqueio = mensagemBloqueioNfRetornoSemEntrada({
+        nfEntradaNumero: nfEnt,
+      });
+      if (bloqueio) {
+        setError(bloqueio);
+        return;
+      }
+    }
     actingRef.current = true;
     setActing(true);
     setError("");
@@ -394,6 +403,19 @@ export default function RmaDetalhePage() {
 
   async function uploadAnexo(tipo: string, file: File, itemId?: string) {
     if (actingRef.current) return;
+    if (tipo === "NF_SAIDA") {
+      const bloqueio = mensagemBloqueioNfRetornoSemEntrada({
+        nfEntradaNumero: row?.nfEntradaNumero || nfEnt,
+        temArquivoNfEntrada: Boolean(
+          anexoAtivoPorTipo(row?.anexos || [], "NF_ENTRADA")
+        ),
+        exigeArquivoEntrada: true,
+      });
+      if (bloqueio) {
+        setError(bloqueio);
+        return;
+      }
+    }
     if (tipo === "LAUDO" && !itemId) {
       setError("Selecione o item (produto/série) para anexar o laudo");
       return;
@@ -403,9 +425,14 @@ export default function RmaDetalhePage() {
       setError("Processo cancelado — não é possível anexar");
       return;
     }
-    if (status === "FECHADO" && tipo !== "NF_COBRANCA") {
+    if (
+      status === "FECHADO" &&
+      tipo !== "NF_COBRANCA" &&
+      tipo !== "NF_ENTRADA" &&
+      tipo !== "NF_SAIDA"
+    ) {
       setError(
-        "Processo fechado — só a NF de cobrança pode ser anexada pelo financeiro"
+        "Processo fechado — só as NFs (entrada, retorno e cobrança) podem ser trocadas"
       );
       return;
     }
@@ -934,20 +961,40 @@ export default function RmaDetalhePage() {
   const itensAtivos = row.itens.filter((i) => i.status !== "CANCELADO");
   const itensRemovidos = row.itens.filter((i) => i.status === "CANCELADO");
   const processoAberto = row.status === "ABERTO";
+  /** NF entrada/retorno: dá para corrigir número/arquivo (mesmo após fechar). */
+  const canEditNfsProcesso = row.status !== "CANCELADO";
+  const canEditCobrancaItem = canFin && row.status !== "CANCELADO";
+  const temNfEntradaArquivo = Boolean(
+    anexoAtivoPorTipo(row.anexos, "NF_ENTRADA")
+  );
   const temNfRetornoArquivo = Boolean(
     anexoAtivoPorTipo(row.anexos, "NF_SAIDA")
   );
+  const bloqueioNfRetornoSemEntrada = mensagemBloqueioNfRetornoSemEntrada({
+    nfEntradaNumero: nfEnt,
+  });
+  const bloqueioAnexarNfRetorno = mensagemBloqueioNfRetornoSemEntrada({
+    nfEntradaNumero: nfEnt.trim() || row.nfEntradaNumero,
+    temArquivoNfEntrada: temNfEntradaArquivo,
+    exigeArquivoEntrada: true,
+  });
+  const podeEditarNfRetorno =
+    canEditNfsProcesso && !bloqueioNfRetornoSemEntrada;
+  const podeAnexarNfRetorno =
+    canEditNfsProcesso && !bloqueioAnexarNfRetorno;
   const bloqueioNfRetorno = mensagemBloqueioNfRetorno({
     nfSaidaNumero: row.nfSaidaNumero,
     temArquivoNfSaida: temNfRetornoArquivo,
   });
   const faltaDocsRetorno = !nfEnt.trim()
     ? "Informe o número da NF de entrada"
-    : !nfSai.trim()
-      ? "Informe o número da NF de retorno"
-      : !temNfRetornoArquivo
-        ? "Anexe o arquivo da NF de retorno"
-        : "";
+    : !temNfEntradaArquivo
+      ? "Anexe o arquivo da NF de entrada"
+      : !nfSai.trim()
+        ? "Informe o número da NF de retorno"
+        : !temNfRetornoArquivo
+          ? "Anexe o arquivo da NF de retorno"
+          : "";
   const itensAguardandoAprovacao = itensAtivos.filter(
     (i) => i.etapa === "AGUARDANDO_APROVACAO"
   );
@@ -972,9 +1019,6 @@ export default function RmaDetalhePage() {
         "AGUARDANDO_LAUDO",
       ].includes(i.etapa || "")
     );
-  /** NF entrada/retorno: dá para corrigir número/arquivo (mesmo após fechar). Cobrança por item: financeiro. */
-  const canEditNfsProcesso = row.status !== "CANCELADO";
-  const canEditCobrancaItem = canFin && row.status !== "CANCELADO";
   const resumoEtapas = (() => {
     const counts = new Map<string, number>();
     for (const i of itensAtivos) {
@@ -1438,11 +1482,17 @@ export default function RmaDetalhePage() {
               NF retorno *
             </span>
             <input
-              disabled={!canEditNfsProcesso || acting}
+              disabled={!podeEditarNfRetorno || acting}
+              title={bloqueioNfRetornoSemEntrada || undefined}
               className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
               value={nfSai}
               onChange={(e) => setNfSai(e.target.value)}
             />
+            {bloqueioNfRetornoSemEntrada ? (
+              <p className="mt-0.5 text-[11px] text-amber-800">
+                {bloqueioNfRetornoSemEntrada}
+              </p>
+            ) : null}
           </label>
           <label className="block text-xs sm:col-span-2 lg:col-span-3">
             <span className="mb-0.5 block font-medium text-slate-600">
@@ -1481,7 +1531,9 @@ export default function RmaDetalhePage() {
               const podeAnexar =
                 regra === "financeiro"
                   ? canEditCobrancaItem
-                  : canEditNfsProcesso;
+                  : tipo === "NF_SAIDA"
+                    ? podeAnexarNfRetorno
+                    : canEditNfsProcesso;
               return (
                 <div
                   key={tipo}
@@ -1507,6 +1559,17 @@ export default function RmaDetalhePage() {
                         />
                       </label>
                     )}
+                    {!podeAnexar &&
+                    tipo === "NF_SAIDA" &&
+                    canEditNfsProcesso &&
+                    bloqueioAnexarNfRetorno ? (
+                      <span
+                        className="shrink-0 text-[10px] text-amber-800"
+                        title={bloqueioAnexarNfRetorno}
+                      >
+                        Pendente entrada
+                      </span>
+                    ) : null}
                   </div>
                   {atual ? (
                     <a
@@ -2118,11 +2181,13 @@ export default function RmaDetalhePage() {
                               Valor *
                             </span>
                             <input
+                              required
                               className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1.5 text-[11px]"
                               value={itemValor}
                               onChange={(e) => setItemValor(e.target.value)}
                               disabled={acting}
                               placeholder="0,00"
+                              inputMode="decimal"
                             />
                           </label>
                           <label className="block min-w-0">
@@ -2130,6 +2195,7 @@ export default function RmaDetalhePage() {
                               NF *
                             </span>
                             <input
+                              required
                               className="mt-0.5 w-full rounded border border-slate-200 px-2 py-1.5 text-[11px]"
                               value={itemNfCob}
                               onChange={(e) => setItemNfCob(e.target.value)}
@@ -2142,7 +2208,19 @@ export default function RmaDetalhePage() {
                       <div className="flex flex-wrap gap-2 pt-0.5">
                         <button
                           type="button"
-                          disabled={acting}
+                          disabled={
+                            acting ||
+                            (itemCobrou === "true" &&
+                              (!(Number(itemValor.replace(",", ".")) > 0) ||
+                                !itemNfCob.trim()))
+                          }
+                          title={
+                            itemCobrou === "true" &&
+                            (!(Number(itemValor.replace(",", ".")) > 0) ||
+                              !itemNfCob.trim())
+                              ? "Preencha Valor e NF (obrigatórios)"
+                              : undefined
+                          }
                           className="rounded bg-brand px-2.5 py-1.5 text-[11px] font-medium text-white disabled:opacity-50"
                           onClick={() => void salvarItemFinanceiro(i.id)}
                         >

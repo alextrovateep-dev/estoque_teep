@@ -4,6 +4,7 @@ import {
   SIGLA_ESTOQUE_RMA,
   emailsAlertaDeUsuariosRma,
   mensagemBloqueioNfRetorno,
+  mensagemBloqueioNfRetornoSemEntrada,
   parseYmd,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
@@ -1565,12 +1566,22 @@ export async function atualizarRmaFinanceiro(
   }
   if (input.nfSaidaNumero !== undefined) {
     const nf = input.nfSaidaNumero?.trim() || null;
-    if (nf && !mesmaNotaFiscalNumero(nf, proc.nfSaidaNumero)) {
-      await assertNotaFiscalNumeroLivre({
-        numero: nf,
-        operacao: "SAIDA",
-        exclude: { rmaProcessoId: id },
+    const entradaFinal =
+      input.nfEntradaNumero !== undefined
+        ? input.nfEntradaNumero?.trim() || null
+        : proc.nfEntradaNumero;
+    if (nf) {
+      const bloqueioEntrada = mensagemBloqueioNfRetornoSemEntrada({
+        nfEntradaNumero: entradaFinal,
       });
+      if (bloqueioEntrada) throw new AppError(400, bloqueioEntrada);
+      if (!mesmaNotaFiscalNumero(nf, proc.nfSaidaNumero)) {
+        await assertNotaFiscalNumeroLivre({
+          numero: nf,
+          operacao: "SAIDA",
+          exclude: { rmaProcessoId: id },
+        });
+      }
     }
     data.nfSaidaNumero = nf;
   }
@@ -1673,6 +1684,18 @@ export async function anexarRma(
       403,
       "NF de cobrança exige permissão RMA financeiro"
     );
+  }
+
+  if (tipo === "NF_SAIDA") {
+    const temArquivoEntrada = Boolean(
+      await arquivoAnexoAtivo(id, "NF_ENTRADA")
+    );
+    const bloqueio = mensagemBloqueioNfRetornoSemEntrada({
+      nfEntradaNumero: proc.nfEntradaNumero,
+      temArquivoNfEntrada: temArquivoEntrada,
+      exigeArquivoEntrada: true,
+    });
+    if (bloqueio) throw new AppError(400, bloqueio);
   }
 
   if (!isValidRmaTmpPath(input.arquivo, user.id)) {
