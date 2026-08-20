@@ -7,6 +7,7 @@ import { ReactNode, Suspense, useEffect, useState } from "react";
 
 type Tipo = {
   id: string;
+  codigo?: string;
   nome: string;
   operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
   sistema: boolean;
@@ -22,6 +23,11 @@ type Tipo = {
   baixaPorArvore?: boolean;
   rmaEntradaEstoque?: boolean;
   rmaSaidaCliente?: boolean;
+  saidaPedidoVenda?: boolean;
+  filialId?: string | null;
+  filialDestinoId?: string | null;
+  filial?: { sigla: string; nome: string } | null;
+  filialDestino?: { sigla: string; nome: string } | null;
   descricao?: string | null;
 };
 
@@ -119,9 +125,9 @@ function TiposPageInner() {
             Tipos de Movimentação
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Cadastre Compra, Venda e demais operações. Para RMA, marque a flag
-            «entrada automática» ou «saída ao devolver/trocar» em um tipo que
-            você cadastrou.
+            Cadastre operações com código e estoque(s) fixos. No lançamento só se
+            escolhe o tipo. Para RMA, marque a flag «entrada automática» ou «saída
+            ao devolver/trocar».
           </p>
         </div>
         <Link
@@ -155,8 +161,10 @@ function TiposPageInner() {
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
+                <th className="px-3 py-2.5 font-medium">Código</th>
                 <th className="px-3 py-2.5 font-medium">Nome</th>
                 <th className="px-3 py-2.5 font-medium">Natureza</th>
+                <th className="px-3 py-2.5 font-medium">Estoque</th>
                 <th className="px-3 py-2.5 font-medium">Flags</th>
                 <th className="px-3 py-2.5 font-medium">Status</th>
                 <th className="px-3 py-2.5 font-medium" />
@@ -180,6 +188,9 @@ function TiposPageInner() {
                       !t.ativo ? "opacity-60" : ""
                     }`}
                   >
+                    <td className="px-3 py-3 align-top font-mono text-xs text-slate-700">
+                      {t.codigo || "—"}
+                    </td>
                     <td className="px-3 py-3 align-top">
                       <div className="font-medium text-slate-800">{t.nome}</div>
                       {t.sistema && (
@@ -197,6 +208,19 @@ function TiposPageInner() {
                       <FlagChip tone={opTone}>
                         {operacaoLabel(t.operacao)}
                       </FlagChip>
+                    </td>
+                    <td className="px-3 py-3 align-top text-xs text-slate-600">
+                      {t.filial
+                        ? t.operacao === "TRANSFERENCIA" && t.filialDestino
+                          ? `${t.filial.sigla} → ${t.filialDestino.sigla}`
+                          : t.filial.sigla
+                        : t.rmaEntradaEstoque ||
+                            t.rmaSaidaCliente ||
+                            t.saidaPedidoVenda
+                          ? "—"
+                          : (
+                              <span className="text-amber-700">Pendente</span>
+                            )}
                     </td>
                     <td className="px-3 py-3 align-top">
                       <div className="flex flex-wrap gap-1">

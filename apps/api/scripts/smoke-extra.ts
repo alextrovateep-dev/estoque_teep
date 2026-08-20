@@ -24,14 +24,24 @@ async function main() {
     "Content-Type": "application/json",
   };
 
-  const tipos = (await json<Array<{ id: string; nome: string; sistema: boolean }>>(
-    "/tipos-movimentacao",
-    { headers: h }
-  )).data;
+  const tipos = (await json<
+    Array<{
+      id: string;
+      nome: string;
+      sistema: boolean;
+      operacao?: string;
+      filialId?: string | null;
+      filialDestinoId?: string | null;
+    }>
+  >("/tipos-movimentacao", { headers: h })).data;
   const tipoT = tipos.find(
-    (t) => t.nome === "Transferência entre estoques" && !t.sistema
+    (t) =>
+      t.operacao === "TRANSFERENCIA" &&
+      !t.sistema &&
+      Boolean(t.filialId) &&
+      Boolean(t.filialDestinoId)
   );
-  if (!tipoT) throw new Error("tipo Transferência entre estoques ausente");
+  if (!tipoT) throw new Error("tipo Transferência com estoques ausente — SEED_DEMO=1");
 
   const filiais = (
     await json<Array<{ id: string; sigla: string }>>("/filiais", { headers: h })

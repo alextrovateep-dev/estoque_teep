@@ -107,6 +107,7 @@ async function ensureRmaTipos(token: string, suf: string) {
       method: "POST",
       token,
       body: {
+        codigo: `RMA-ENT-${suf}`.slice(0, 30),
         nome: `Smoke entrada RMA ${suf}`,
         operacao: "ENTRADA",
         requerCliente: true,
@@ -124,6 +125,7 @@ async function ensureRmaTipos(token: string, suf: string) {
       method: "POST",
       token,
       body: {
+        codigo: `RMA-SAI-${suf}`.slice(0, 30),
         nome: `Smoke saída RMA ${suf}`,
         operacao: "SAIDA",
         requerCliente: true,

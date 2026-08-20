@@ -49,7 +49,7 @@ Auth / 1º acesso: [senha-provisoria.md](./senha-provisoria.md) · `/login` · `
 | Tela | Rota | Doc |
 |------|------|-----|
 | Usuários e Perfis | `/admin/usuarios` | [senha provisória](./senha-provisoria.md) · permissões em `PERMISSAO_KEYS` |
-| Tipos de Movimentação | `/admin/tipos` | Flags: aprovação, retorno, termo, `baixaPorArvore`, cliente, RMA, **saída pedido eGestor**… |
+| Tipos de Movimentação | `/admin/tipos` | Código; estoque(s) fixos por natureza; flags: aprovação, retorno, termo, `baixaPorArvore`, cliente, RMA, **saída pedido eGestor**… |
 | E-mails do sistema | `/admin/email` | [alertas / e-mail](./alertas-email.md) |
 
 Sino no header: [alertas / e-mail](./alertas-email.md).
@@ -85,7 +85,7 @@ Dashboard continua com saldos/KPIs do dia; Relatórios é a área de listagens +
 - **Produto:** código único, preço, min/máx, `controlaSerie` + config de geração, fotos após existir id.
 - **Cliente:** tipos CLIENTE / FORNECEDOR / AMBOS; lookup CNPJ/CEP na API.
 - **Estoque (Filial):** sigla única; Operador exige ≥1 vínculo.
-- **Tipo:** `operacao` ENTRADA/SAIDA/TRANSFERENCIA; tipos `sistema` limitados no PATCH.
+- **Tipo:** `codigo` único; `operacao` ENTRADA/SAIDA/TRANSFERENCIA; estoque(s) fixos no cadastro (lançamento só escolhe o tipo); tipos `sistema` limitados no PATCH.
 
 Não há docs longos separados para cada CRUD — o comportamento está nas telas e em `packages/shared` / rotas `cadastros`.
 

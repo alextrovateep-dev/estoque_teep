@@ -99,15 +99,26 @@ async function main() {
   if (!cat) fail("Nenhuma categoria — rode db:seed");
 
   const tipos = await req<
-    Array<{ id: string; nome: string; sistema: boolean; operacao?: string }>
+    Array<{
+      id: string;
+      nome: string;
+      sistema: boolean;
+      operacao?: string;
+      filialId?: string | null;
+      filialDestinoId?: string | null;
+    }>
   >("/tipos-movimentacao", { token });
   const tipoCompra = tipos.find((t) => t.nome === "Compra");
   const tipoVenda = tipos.find((t) => t.nome === "Venda / Entrega");
   const tipoTransf = tipos.find(
-    (t) => t.nome === "Transferência entre estoques" && !t.sistema
+    (t) =>
+      t.operacao === "TRANSFERENCIA" &&
+      !t.sistema &&
+      Boolean(t.filialId) &&
+      Boolean(t.filialDestinoId)
   );
   if (!tipoCompra || !tipoVenda) fail("Tipos Compra/Venda ausentes");
-  if (!tipoTransf) fail("Tipo Transferência entre estoques ausente — rode db:seed");
+  if (!tipoTransf) fail("Tipo Transferência com estoques ausente — rode db:seed com SEED_DEMO=1");
 
   const codigo = `SMOKE-${Date.now().toString(36).toUpperCase()}`;
   const produto = await req<{ id: string; codigo: string }>("/produtos", {

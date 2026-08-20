@@ -181,6 +181,7 @@ async function main() {
     }
 
     type TipoSeed = {
+      codigo: string;
       nome: string;
       operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
       requerCliente: boolean;
@@ -190,10 +191,15 @@ async function main() {
       sistema: boolean;
       descricao: string;
       baixaPorArvore?: boolean;
+      saidaPedidoVenda?: boolean;
+      /** Sigla do estoque (PLN/TBO…); omitido em pedido eGestor */
+      filialSigla?: string;
+      filialDestinoSigla?: string;
     };
 
     const tiposHomolog: TipoSeed[] = [
       {
+        codigo: "ENT-COMPRA",
         nome: "Compra",
         operacao: "ENTRADA",
         requerCliente: true,
@@ -201,9 +207,11 @@ async function main() {
         permitidoOperador: true,
         permitidoGerente: true,
         sistema: false,
-        descricao: "Recebimento no estoque da filial informada",
+        filialSigla: "PLN",
+        descricao: "Recebimento no estoque amarrado ao tipo",
       },
       {
+        codigo: "ENT-DEV-CLI",
         nome: "Devolução de Cliente",
         operacao: "ENTRADA",
         requerCliente: true,
@@ -211,10 +219,12 @@ async function main() {
         permitidoOperador: true,
         permitidoGerente: true,
         sistema: false,
+        filialSigla: "PLN",
         descricao:
-          "Entra no estoque da filial — Operador gera PENDENTE (F6 aprovação)",
+          "Entra no estoque do tipo — Operador gera PENDENTE (F6 aprovação)",
       },
       {
+        codigo: "SAI-VENDA",
         nome: "Venda / Entrega",
         operacao: "SAIDA",
         requerCliente: true,
@@ -222,9 +232,11 @@ async function main() {
         permitidoOperador: true,
         permitidoGerente: true,
         sistema: false,
-        descricao: "Sai do estoque da filial informada",
+        filialSigla: "PLN",
+        descricao: "Sai do estoque amarrado ao tipo",
       },
       {
+        codigo: "SAI-ARVORE",
         nome: "Saída com árvore",
         operacao: "SAIDA",
         requerCliente: false,
@@ -233,10 +245,12 @@ async function main() {
         permitidoGerente: true,
         sistema: false,
         baixaPorArvore: true,
+        filialSigla: "PLN",
         descricao:
           "Na saída, baixa os componentes da árvore deste produto no mesmo estoque",
       },
       {
+        codigo: "SAI-PERDA",
         nome: "Perda / Avaria",
         operacao: "SAIDA",
         requerCliente: false,
@@ -244,9 +258,11 @@ async function main() {
         permitidoOperador: false,
         permitidoGerente: true,
         sistema: false,
-        descricao: "Sai do estoque da filial informada (perda)",
+        filialSigla: "PLN",
+        descricao: "Sai do estoque do tipo (perda)",
       },
       {
+        codigo: "SAI-DEMO",
         nome: "Saída Demonstração",
         operacao: "SAIDA",
         requerCliente: true,
@@ -254,10 +270,12 @@ async function main() {
         permitidoOperador: true,
         permitidoGerente: true,
         sistema: false,
+        filialSigla: "PLN",
         descricao:
           "Equipamento enviado para demonstração — alertas de retorno 15/30/45/60 dias",
       },
       {
+        codigo: "ENT-DEMO",
         nome: "Retorno Demonstração",
         operacao: "ENTRADA",
         requerCliente: true,
@@ -265,10 +283,12 @@ async function main() {
         permitidoOperador: true,
         permitidoGerente: true,
         sistema: false,
+        filialSigla: "PLN",
         descricao:
           "Retorno de equipamento de demonstração (vincular à saída aberta)",
       },
       {
+        codigo: "SAI-COMODATO",
         nome: "Saída Comodato",
         operacao: "SAIDA",
         requerCliente: true,
@@ -276,10 +296,12 @@ async function main() {
         permitidoOperador: true,
         permitidoGerente: true,
         sistema: false,
+        filialSigla: "PLN",
         descricao:
           "Equipamento em comodato — alertas de retorno; anexe o termo assinado",
       },
       {
+        codigo: "ENT-COMODATO",
         nome: "Retorno Comodato",
         operacao: "ENTRADA",
         requerCliente: true,
@@ -287,10 +309,25 @@ async function main() {
         permitidoOperador: true,
         permitidoGerente: true,
         sistema: false,
+        filialSigla: "PLN",
         descricao:
           "Retorno de equipamento em comodato (vincular à saída aberta)",
       },
       {
+        codigo: "TR-PLN-TBO",
+        nome: "Transferência PLN → TBO",
+        operacao: "TRANSFERENCIA",
+        requerCliente: false,
+        requerAprovacao: false,
+        permitidoOperador: true,
+        permitidoGerente: true,
+        sistema: false,
+        filialSigla: "PLN",
+        filialDestinoSigla: "TBO",
+        descricao: "Transferência fixa Paulínia → Timbó (homolog)",
+      },
+      {
+        codigo: "SAI-PEDIDO",
         nome: "Saída pedido eGestor",
         operacao: "SAIDA",
         requerCliente: false,
@@ -323,18 +360,38 @@ async function main() {
       }
     }
 
+    const filialBySigla = async (sigla?: string) => {
+      if (!sigla) return null;
+      const f = await prisma.filial.findUnique({ where: { sigla } });
+      return f?.id ?? null;
+    };
+
     for (const t of tiposHomolog) {
-      const { baixaPorArvore, ...base } = t;
+      const {
+        baixaPorArvore,
+        saidaPedidoVenda,
+        filialSigla,
+        filialDestinoSigla,
+        ...base
+      } = t;
+      const filialId = await filialBySigla(filialSigla);
+      const filialDestinoId = await filialBySigla(filialDestinoSigla);
       await prisma.tipoMovimentacao.upsert({
         where: { nome: t.nome },
         update: {
           ...base,
           baixaPorArvore: baixaPorArvore === true,
+          saidaPedidoVenda: saidaPedidoVenda === true,
+          filialId,
+          filialDestinoId,
           ativo: true,
         },
         create: {
           ...base,
           baixaPorArvore: baixaPorArvore === true,
+          saidaPedidoVenda: saidaPedidoVenda === true,
+          filialId,
+          filialDestinoId,
         },
       });
     }

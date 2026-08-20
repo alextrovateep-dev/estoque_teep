@@ -1,6 +1,6 @@
 "use client";
 
-import { api, apiUpload, getStoredUser, User, userFilialIds } from "@/lib/api";
+import { api, apiUpload, getStoredUser, userFilialIds } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
 import {
   LancamentoLinhaItem,
@@ -19,6 +19,7 @@ const MAX_LINHAS = 20;
 
 type Tipo = {
   id: string;
+  codigo?: string;
   nome: string;
   operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
   requerCliente: boolean;
@@ -26,6 +27,10 @@ type Tipo = {
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
   baixaPorArvore?: boolean;
+  filialId?: string | null;
+  filialDestinoId?: string | null;
+  filial?: { id: string; nome: string; sigla: string } | null;
+  filialDestino?: { id: string; nome: string; sigla: string } | null;
 };
 
 type SaidaAberta = {
@@ -72,10 +77,10 @@ function badgeClass(op: string) {
 }
 
 function badgeLabel(op: string) {
-  if (op === "ENTRADA") return "ENTRADA — entra no estoque selecionado";
+  if (op === "ENTRADA") return "ENTRADA — entra no estoque do tipo";
   if (op === "TRANSFERENCIA")
-    return "TRANSFERÊNCIA — sai da origem e vai para o destino";
-  return "SAÍDA — sai do estoque selecionado";
+    return "TRANSFERÊNCIA — origem e destino fixos no tipo";
+  return "SAÍDA — sai do estoque do tipo";
 }
 
 function formatQty(n: number) {
@@ -127,7 +132,6 @@ function NovoLancamentoForm() {
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchAbort = useRef<AbortController | null>(null);
   const skipTipoClearRef = useRef(false);
-  const [user, setUser] = useState<User | null>(null);
   const [tipos, setTipos] = useState<Tipo[]>([]);
   const [filiais, setFiliais] = useState<Filial[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -199,8 +203,19 @@ function NovoLancamentoForm() {
     precisaTermo;
   /** Atalho ?retornoDe= trava tipo/cliente/saída. */
   const camposTravados = retornoPrefill;
-  /** Produto/filial vêm da saída vinculada — não podem divergir. */
+  /** Produto vem da saída vinculada — não pode divergir. */
   const travaProdutoFilial = retornoPrefill || Boolean(movimentacaoOrigemId);
+
+  /** Estoques do lançamento vêm do tipo (cadastro); UI só exibe. */
+  useEffect(() => {
+    if (!tipo) return;
+    if (tipo.filialId) setFilialId(tipo.filialId);
+    if (tipo.operacao === "TRANSFERENCIA") {
+      setFilialDestinoId(tipo.filialDestinoId || "");
+    } else {
+      setFilialDestinoId("");
+    }
+  }, [tipo]);
   /** Retorno (demo/comodato): NF número + anexo obrigatórios antes de salvar. */
   const nfRetornoOk =
     !isRetorno ||
@@ -242,8 +257,6 @@ function NovoLancamentoForm() {
   }, [tipoId, retornoPrefill, transferPrefill]);
 
   useEffect(() => {
-    const u = getStoredUser();
-    setUser(u);
     Promise.all([
       api<Tipo[]>("/tipos-movimentacao?paraLancamento=1"),
       api<Filial[]>("/filiais"),
@@ -253,16 +266,7 @@ function NovoLancamentoForm() {
         setTipos(t);
         setFiliais(f);
         setClientes(c);
-        const opIds =
-          u?.perfil === "OPERADOR" ? userFilialIds(u) : [];
-        const origemPadrao =
-          u?.perfil === "OPERADOR"
-            ? opIds[0] || ""
-            : f[0]?.id || "";
-        if (origemPadrao) setFilialId(origemPadrao);
         if (!retornoDeId && !wantsTransf && t[0]) setTipoId(t[0].id);
-        const dest = f.find((x) => x.id !== origemPadrao);
-        if (dest && !wantsTransf) setFilialDestinoId(dest.id);
       })
       .catch((e) => {
         setError(
@@ -374,20 +378,6 @@ function NovoLancamentoForm() {
 
     void (async () => {
       try {
-        const tipoTransf =
-          tipos.find(
-            (t) =>
-              t.operacao === "TRANSFERENCIA" &&
-              /transferência entre estoques/i.test(t.nome)
-          ) || tipos.find((t) => t.operacao === "TRANSFERENCIA");
-        if (!tipoTransf) {
-          if (!cancelled) {
-            setError("Não há tipo de Transferência disponível para lançamento");
-            setPrefillLoading(false);
-          }
-          return;
-        }
-
         const matchFilial = (q: string) => {
           const n = q.trim().toLowerCase();
           return (
@@ -396,31 +386,64 @@ function NovoLancamentoForm() {
             filiais.find((f) => f.nome.toLowerCase().includes(n))
           );
         };
-        const origem = matchFilial(qOrigem);
-        const destino = matchFilial(qDestino);
-        if (!origem || !destino) {
+        const origem = qOrigem ? matchFilial(qOrigem) : null;
+        const destino = qDestino ? matchFilial(qDestino) : null;
+        if (qOrigem && !origem) {
+          if (!cancelled) {
+            setError(`Filial de origem não encontrada: “${qOrigem}”`);
+            setPrefillLoading(false);
+          }
+          return;
+        }
+        if (qDestino && !destino) {
+          if (!cancelled) {
+            setError(`Filial de destino não encontrada: “${qDestino}”`);
+            setPrefillLoading(false);
+          }
+          return;
+        }
+
+        const tiposTransf = tipos.filter(
+          (t) =>
+            t.operacao === "TRANSFERENCIA" &&
+            Boolean(t.filialId) &&
+            Boolean(t.filialDestinoId)
+        );
+        let tipoTransf: Tipo | undefined;
+        if (origem && destino) {
+          tipoTransf = tiposTransf.find(
+            (t) =>
+              t.filialId === origem.id && t.filialDestinoId === destino.id
+          );
+          if (!tipoTransf) {
+            if (!cancelled) {
+              setError(
+                `Nenhum tipo de transferência configurado para ${origem.sigla} → ${destino.sigla}`
+              );
+              setPrefillLoading(false);
+            }
+            return;
+          }
+        } else {
+          tipoTransf = tiposTransf[0];
+        }
+        if (!tipoTransf) {
           if (!cancelled) {
             setError(
-              `Filial não encontrada (origem “${qOrigem}”, destino “${qDestino}”)`
+              "Não há tipo de Transferência com estoques configurados — cadastre em Admin → Tipos"
             );
             setPrefillLoading(false);
           }
           return;
         }
-        if (origem.id === destino.id) {
-          if (!cancelled) {
-            setError("Origem e destino devem ser diferentes");
-            setPrefillLoading(false);
-          }
-          return;
-        }
+
         const u = getStoredUser();
-        if (u?.perfil === "OPERADOR") {
+        if (u?.perfil === "OPERADOR" && tipoTransf.filialId) {
           const opIds = userFilialIds(u);
-          if (!opIds.includes(origem.id)) {
+          if (!opIds.includes(tipoTransf.filialId)) {
             if (!cancelled) {
               setError(
-                `Operador sem acesso à filial de origem ${origem.sigla}`
+                `Operador sem acesso à filial de origem do tipo ${tipoTransf.codigo || tipoTransf.nome}`
               );
               setPrefillLoading(false);
             }
@@ -454,8 +477,8 @@ function NovoLancamentoForm() {
         skipTipoClearRef.current = true;
         setTransferPrefill(true);
         setTipoId(tipoTransf.id);
-        setFilialId(origem.id);
-        setFilialDestinoId(destino.id);
+        setFilialId(tipoTransf.filialId || "");
+        setFilialDestinoId(tipoTransf.filialDestinoId || "");
         setLinhas([
           newLancamentoLinha({
             codigo: prod.codigo,
@@ -483,14 +506,6 @@ function NovoLancamentoForm() {
       cancelled = true;
     };
   }, [wantsTransf, tipos, filiais, qOrigem, qDestino, qCodigo, qQtd]);
-
-  useEffect(() => {
-    if (!isTransf || !filialId) return;
-    if (filialDestinoId === filialId) {
-      const dest = filiais.find((f) => f.id !== filialId);
-      setFilialDestinoId(dest?.id || "");
-    }
-  }, [isTransf, filialId, filiais, filialDestinoId]);
 
   useEffect(() => {
     // Em multi-SKU o saldo fica por linha (LancamentoLinhaItem)
@@ -659,7 +674,6 @@ function NovoLancamentoForm() {
     });
     setCodigo(s.produto.codigo);
     setQuantidade(String(s.qtyRestante ?? s.quantidade));
-    setFilialId(s.filial.id);
     setSeries([]);
     setSugestoes([]);
   }
@@ -751,17 +765,26 @@ function NovoLancamentoForm() {
         setError("Selecione o cliente / fornecedor");
         return;
       }
+      if (!filialId) {
+        setError(
+          "Tipo sem estoque configurado — edite o tipo em Admin → Tipos"
+        );
+        return;
+      }
       if (isTransf && !filialDestinoId) {
-        setError("Selecione a filial de destino");
+        setError(
+          "Tipo de transferência sem estoque de destino — edite o tipo em Admin → Tipos"
+        );
         return;
       }
       if (isTransf && filialDestinoId === filialId) {
-        setError("Origem e destino devem ser diferentes");
+        setError("Origem e destino do tipo devem ser estoques diferentes");
         return;
       }
 
       const body: Record<string, unknown> = {
         tipoId,
+        // API sobrescreve com as filiais do tipo; enviamos para clareza no payload.
         filialId,
         clienteId: precisaCliente ? clienteId || null : null,
         observacao: observacao.trim() || null,
@@ -1184,17 +1207,10 @@ function NovoLancamentoForm() {
     }
   }
 
-  const operadorFilialIdsList =
-    user?.perfil === "OPERADOR" ? userFilialIds(user) : [];
-  const filiaisOrigem =
-    user?.perfil === "OPERADOR"
-      ? filiais.filter((f) => operadorFilialIdsList.includes(f.id))
-      : filiais;
-  const operadorMultiFilial =
-    user?.perfil === "OPERADOR" && filiaisOrigem.length > 1;
-
-  const filialOrigemLabel = filiais.find((f) => f.id === filialId);
-  const filialDestinoLabel = filiais.find((f) => f.id === filialDestinoId);
+  const filialOrigemLabel =
+    tipo?.filial || filiais.find((f) => f.id === filialId);
+  const filialDestinoLabel =
+    tipo?.filialDestino || filiais.find((f) => f.id === filialDestinoId);
   const saidaVinculada = saidasAbertas.find(
     (s) => s.id === movimentacaoOrigemId
   );
@@ -1233,6 +1249,7 @@ function NovoLancamentoForm() {
       >
         {tipos.map((t) => (
           <option key={t.id} value={t.id}>
+            {t.codigo ? `${t.codigo} — ` : ""}
             {t.nome} ({t.operacao === "TRANSFERENCIA" ? "A→B" : t.operacao})
           </option>
         ))}
@@ -1240,120 +1257,38 @@ function NovoLancamentoForm() {
     </label>
   );
 
-  const estoqueHint = (
-    <span className="mt-1 block text-xs leading-4 text-slate-500">
-      Filial onde o saldo muda
-    </span>
-  );
-
-  const estoqueSelectOptions = (
-    user?.perfil === "OPERADOR" ? filiaisOrigem : filiais
-  ).map((f) => (
-    <option key={f.id} value={f.id}>
-      {f.sigla} — {f.nome}
-    </option>
-  ));
-
-  const estoqueField =
-    user?.perfil === "OPERADOR" && !operadorMultiFilial ? (
-      <div className="flex min-w-0 flex-col">
-        <span className="mb-1 block h-5 text-sm font-medium leading-5">
-          Estoque
-        </span>
-        <div className="flex h-12 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600">
-          {filialOrigemLabel
-            ? `${filialOrigemLabel.sigla} — ${filialOrigemLabel.nome}`
-            : "Filial do operador"}
-        </div>
-        {estoqueHint}
-      </div>
-    ) : (
-      <label className="flex min-w-0 flex-col">
-        <span className="mb-1 block h-5 text-sm font-medium leading-5">
-          Estoque
-        </span>
-        <select
-          className="h-12 w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
-          value={filialId}
-          disabled={travaProdutoFilial}
-          onChange={(e) => setFilialId(e.target.value)}
-          required
-        >
-          {estoqueSelectOptions}
-        </select>
-        {estoqueHint}
-      </label>
-    );
-
-  const origemDestinoFields = (
-    <div className="grid gap-3 sm:grid-cols-2">
-      {user?.perfil === "OPERADOR" ? (
-        operadorMultiFilial ? (
-          <label className="block">
-            <span className="mb-1 block text-sm font-medium">
-              Filial de origem
+  const estoqueDoTipoField = (
+    <div className="flex min-w-0 flex-col">
+      <span className="mb-1 block h-5 text-sm font-medium leading-5">
+        {isTransf ? "Estoques do tipo" : "Estoque do tipo"}
+      </span>
+      <div className="flex min-h-12 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+        {isTransf ? (
+          filialOrigemLabel && filialDestinoLabel ? (
+            <span>
+              {filialOrigemLabel.sigla} → {filialDestinoLabel.sigla}
+              <span className="mt-0.5 block text-xs text-slate-500">
+                {filialOrigemLabel.nome} → {filialDestinoLabel.nome}
+              </span>
             </span>
-            <select
-              className="w-full rounded-lg border px-3 py-3"
-              value={filialId}
-              onChange={(e) => setFilialId(e.target.value)}
-              required
-            >
-              {filiaisOrigem.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.sigla} — {f.nome}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm">
-            <div className="font-medium text-slate-700">Filial de origem</div>
-            <div className="mt-1 text-slate-600">
-              {filialOrigemLabel
-                ? `${filialOrigemLabel.sigla} — ${filialOrigemLabel.nome}`
-                : "Filial do operador"}
-            </div>
-          </div>
-        )
-      ) : (
-        <label className="block">
-          <span className="mb-1 block text-sm font-medium">
-            Filial de origem
+          ) : (
+            <span className="text-amber-700">
+              Tipo sem origem/destino — configure em Admin → Tipos
+            </span>
+          )
+        ) : filialOrigemLabel ? (
+          <span>
+            {filialOrigemLabel.sigla} — {filialOrigemLabel.nome}
           </span>
-          <select
-            className="w-full rounded-lg border px-3 py-3"
-            value={filialId}
-            onChange={(e) => setFilialId(e.target.value)}
-            required
-          >
-            {filiais.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.sigla} — {f.nome}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      <label className="block">
-        <span className="mb-1 block text-sm font-medium">
-          Filial de destino
-        </span>
-        <select
-          className="w-full rounded-lg border px-3 py-3"
-          value={filialDestinoId}
-          onChange={(e) => setFilialDestinoId(e.target.value)}
-          required
-        >
-          {filiais
-            .filter((f) => f.id !== filialId)
-            .map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.sigla} — {f.nome}
-              </option>
-            ))}
-        </select>
-      </label>
+        ) : (
+          <span className="text-amber-700">
+            Tipo sem estoque — configure em Admin → Tipos
+          </span>
+        )}
+      </div>
+      <span className="mt-1 block text-xs leading-4 text-slate-500">
+        Definido no cadastro do tipo (não editável aqui)
+      </span>
     </div>
   );
 
@@ -1382,8 +1317,8 @@ function NovoLancamentoForm() {
             <strong className="font-medium text-slate-700">
               nada é gravado até você confirmar
             </strong>
-            . Revise origem, destino, produto e quantidade, depois confirme a
-            transferência.
+            . Revise tipo (estoques fixos), produto e quantidade, depois confirme
+            a transferência.
           </>
         ) : (
           <>
@@ -1458,17 +1393,10 @@ function NovoLancamentoForm() {
           </div>
         )}
 
-        {isTransf ? (
-          <div className="space-y-3">
-            {tipoSelect}
-            {origemDestinoFields}
-          </div>
-        ) : (
-          <div className="grid items-start gap-3 sm:grid-cols-2">
-            {tipoSelect}
-            {estoqueField}
-          </div>
-        )}
+        <div className="grid items-start gap-3 sm:grid-cols-2">
+          {tipoSelect}
+          {estoqueDoTipoField}
+        </div>
 
         {isTransf && (
           <fieldset className="rounded-lg border border-amber-200 bg-amber-50/50 p-3">

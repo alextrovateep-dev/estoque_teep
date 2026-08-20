@@ -11,6 +11,7 @@ import {
   updateClienteSchema,
   tipoMovimentacaoSchema,
   tipoMovimentacaoObjectSchema,
+  validateTipoMovimentacaoMerged,
   putProdutoComponentesSchema,
   normalizeDocumento,
   onlyDigits,
@@ -18,7 +19,6 @@ import {
   isValidCnpj,
   tipoExigeCnpj,
   MSG_CNPJ_OBRIGATORIO,
-  TIPO_TRANSF_ENTRE_ESTOQUES,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { upsertConfiguracaoSerie } from "../services/geracaoSerieService";
@@ -40,7 +40,10 @@ import {
 import { generateProvisionalPassword } from "../lib/provisionalPassword";
 import { enqueueSenhaProvisoriaEmail } from "../services/acessoContaService";
 import { resolvePermissoes, type Perfil } from "@teep/shared";
-import { normalizeFilialIdsInput } from "../lib/filialScope";
+import {
+  normalizeFilialIdsInput,
+  operadorFilialIds,
+} from "../lib/filialScope";
 import {
   relacionamentosDoCliente,
   relacionamentosDoProduto,
@@ -91,7 +94,131 @@ function appErrorFromTipoP2002(e: unknown): AppError | null {
       "Já existe um tipo com «Saída de pedido de venda» — atualize a tela"
     );
   }
+  if (alvo.includes("codigo")) {
+    return new AppError(409, "Já existe um tipo com este código");
+  }
+  if (alvo.includes("nome")) {
+    return new AppError(409, "Já existe um tipo com este nome");
+  }
   return new AppError(409, "Tipo já existe");
+}
+
+const tipoIncludeFiliais = {
+  filial: { select: { id: true, nome: true, sigla: true, ativo: true } },
+  filialDestino: {
+    select: { id: true, nome: true, sigla: true, ativo: true },
+  },
+} as const;
+
+/** Estoques fixos do tipo operacional (não sistema / RMA / pedido). */
+async function resolveFiliaisTipoCadastro(opts: {
+  operacao: string;
+  sistema?: boolean;
+  rmaEntrada: boolean;
+  rmaSaida: boolean;
+  saidaPedido: boolean;
+  filialId?: string | null;
+  filialDestinoId?: string | null;
+  /**
+   * PATCH / cutover: permite manter tipo sem estoque (não entra em paraLancamento).
+   * CREATE continua exigindo estoque.
+   */
+  allowIncomplete?: boolean;
+}): Promise<{ filialId: string | null; filialDestinoId: string | null }> {
+  const skip =
+    opts.sistema || opts.rmaEntrada || opts.rmaSaida || opts.saidaPedido;
+  if (skip) {
+    return { filialId: null, filialDestinoId: null };
+  }
+  if (!opts.filialId) {
+    if (opts.allowIncomplete) {
+      return { filialId: null, filialDestinoId: null };
+    }
+    throw new AppError(
+      400,
+      opts.operacao === "ENTRADA"
+        ? "Informe o estoque de entrada"
+        : opts.operacao === "SAIDA"
+          ? "Informe o estoque de saída"
+          : "Informe o estoque de origem"
+    );
+  }
+  const origem = await prisma.filial.findFirst({
+    where: { id: opts.filialId, ativo: true },
+    select: { id: true },
+  });
+  if (!origem) throw new AppError(400, "Estoque de origem inválido ou inativo");
+
+  if (opts.operacao === "TRANSFERENCIA") {
+    if (!opts.filialDestinoId) {
+      if (opts.allowIncomplete) {
+        // Origem preenchida sem destino = incompleto (não lança até completar)
+        return { filialId: origem.id, filialDestinoId: null };
+      }
+      throw new AppError(400, "Informe o estoque de destino");
+    }
+    if (opts.filialDestinoId === opts.filialId) {
+      throw new AppError(
+        400,
+        "Origem e destino devem ser estoques diferentes"
+      );
+    }
+    const dest = await prisma.filial.findFirst({
+      where: { id: opts.filialDestinoId, ativo: true },
+      select: { id: true },
+    });
+    if (!dest) throw new AppError(400, "Estoque de destino inválido ou inativo");
+    return { filialId: origem.id, filialDestinoId: dest.id };
+  }
+  return { filialId: origem.id, filialDestinoId: null };
+}
+
+/** Retorno ENTRADA deve usar o mesmo estoque do tipo SAIDA vinculado. */
+async function assertRetornoMesmaFilialDoTipoOrigem(opts: {
+  ehRetornoDeId: string | null | undefined;
+  filialId: string | null;
+  /** PATCH cutover: permite tipo de retorno ainda sem estoque. */
+  allowIncomplete?: boolean;
+}) {
+  if (!opts.ehRetornoDeId) return;
+  const origem = await prisma.tipoMovimentacao.findUnique({
+    where: { id: opts.ehRetornoDeId },
+    select: {
+      id: true,
+      nome: true,
+      operacao: true,
+      ativo: true,
+      filialId: true,
+    },
+  });
+  if (!origem || !origem.ativo) {
+    throw new AppError(400, "Tipo de saída vinculada inválido ou inativo");
+  }
+  if (origem.operacao !== "SAIDA") {
+    throw new AppError(
+      400,
+      "ehRetornoDe deve apontar para um tipo de Saída"
+    );
+  }
+  if (!origem.filialId) {
+    throw new AppError(
+      400,
+      `Tipo de saída “${origem.nome}” sem estoque configurado — complete o cadastro antes de vincular o retorno`
+    );
+  }
+  if (!opts.filialId) {
+    if (opts.allowIncomplete) return;
+    throw new AppError(
+      400,
+      "Informe o estoque do retorno (deve ser o mesmo da saída vinculada)"
+    );
+  }
+  if (opts.filialId !== origem.filialId) {
+    throw new AppError(
+      400,
+      "Estoque do retorno deve ser o mesmo do tipo de saída vinculada"
+    );
+  }
 }
 
 type BomItemInput = {
@@ -1293,6 +1420,7 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
       return res.json(
         await prisma.tipoMovimentacao.findMany({
           where: { ativo: true },
+          include: tipoIncludeFiliais,
           orderBy: { nome: "asc" },
         })
       );
@@ -1301,9 +1429,9 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
     if (!paraLancamento && req.user?.perfil === "ADMIN") {
       const incluirSistema = req.query.incluirSistema === "1";
       const all = await prisma.tipoMovimentacao.findMany({
+        include: tipoIncludeFiliais,
         orderBy: { nome: "asc" },
       });
-      // Cadastro: só tipos de negócio (sistema fica oculto).
       return res.json(
         incluirSistema ? all : all.filter((t) => !t.sistema)
       );
@@ -1311,6 +1439,7 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
 
     const all = await prisma.tipoMovimentacao.findMany({
       where: { ativo: true },
+      include: tipoIncludeFiliais,
       orderBy: { nome: "asc" },
     });
 
@@ -1318,13 +1447,17 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
       return res.json(all.filter((t) => !t.sistema));
     }
 
-    // Lançamento: filtra por flags de perfil (cadastro), não por lista fixa de nomes.
-    // Tipos sistema e tipos exclusivos do RMA ficam ocultos (exceto Transferência entre estoques).
+    // Lançamento: tipos de negócio com estoque fixo configurado
     const perfil = req.user!.perfil;
+    const opFiliais =
+      perfil === "OPERADOR" ? new Set(operadorFilialIds(req.user!)) : null;
     res.json(
       all.filter((t) => {
+        if (t.sistema) return false;
         if (t.rmaEntradaEstoque || t.rmaSaidaCliente || t.saidaPedidoVenda)
           return false;
+        if (!t.filialId) return false;
+        if (t.operacao === "TRANSFERENCIA" && !t.filialDestinoId) return false;
         const permitido =
           perfil === "OPERADOR"
             ? t.permitidoOperador
@@ -1332,7 +1465,7 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
               ? t.permitidoGerente
               : false;
         if (!permitido) return false;
-        if (t.sistema) return t.nome === TIPO_TRANSF_ENTRE_ESTOQUES;
+        if (opFiliais && !opFiliais.has(t.filialId)) return false;
         return true;
       })
     );
@@ -1348,6 +1481,7 @@ cadastrosRouter.get(
     try {
       const row = await prisma.tipoMovimentacao.findUnique({
         where: { id: req.params.id },
+        include: tipoIncludeFiliais,
       });
       if (!row) throw new AppError(404, "Tipo não encontrado");
       res.json(row);
@@ -1369,6 +1503,18 @@ cadastrosRouter.post(
         req.body.operacao === "SAIDA" && req.body.rmaSaidaCliente === true;
       const saidaPedido =
         req.body.operacao === "SAIDA" && req.body.saidaPedidoVenda === true;
+      const filiais = await resolveFiliaisTipoCadastro({
+        operacao: req.body.operacao,
+        rmaEntrada,
+        rmaSaida,
+        saidaPedido,
+        filialId: req.body.filialId,
+        filialDestinoId: req.body.filialDestinoId,
+      });
+      await assertRetornoMesmaFilialDoTipoOrigem({
+        ehRetornoDeId: req.body.ehRetornoDeId,
+        filialId: filiais.filialId,
+      });
       const row = await prisma.$transaction(async (tx) => {
         if (rmaEntrada) {
           await tx.tipoMovimentacao.updateMany({
@@ -1390,6 +1536,7 @@ cadastrosRouter.post(
         }
         return tx.tipoMovimentacao.create({
           data: {
+            codigo: String(req.body.codigo).trim().toUpperCase(),
             nome: req.body.nome,
             operacao: req.body.operacao,
             requerAprovacao: saidaPedido
@@ -1408,6 +1555,8 @@ cadastrosRouter.post(
             rmaEntradaEstoque: rmaEntrada,
             rmaSaidaCliente: rmaSaida,
             saidaPedidoVenda: saidaPedido,
+            filialId: filiais.filialId,
+            filialDestinoId: filiais.filialDestinoId,
             requerCliente:
               req.body.requerCliente === true ||
               req.body.geraAlertaRetorno === true ||
@@ -1418,6 +1567,7 @@ cadastrosRouter.post(
             descricao: req.body.descricao ?? null,
             sistema: false,
           },
+          include: tipoIncludeFiliais,
         });
       });
       res.status(201).json(row);
@@ -1535,6 +1685,90 @@ cadastrosRouter.patch(
         );
       }
 
+      if (!existing.sistema) {
+        const filiais = await resolveFiliaisTipoCadastro({
+          operacao: operacaoFinal,
+          rmaEntrada,
+          rmaSaida,
+          saidaPedido,
+          filialId:
+            data.filialId !== undefined
+              ? (data.filialId as string | null)
+              : existing.filialId,
+          filialDestinoId:
+            data.filialDestinoId !== undefined
+              ? (data.filialDestinoId as string | null)
+              : existing.filialDestinoId,
+          allowIncomplete: true,
+        });
+        data.filialId = filiais.filialId;
+        data.filialDestinoId = filiais.filialDestinoId;
+        await assertRetornoMesmaFilialDoTipoOrigem({
+          ehRetornoDeId: ehRetorno as string | null | undefined,
+          filialId: filiais.filialId,
+          allowIncomplete: true,
+        });
+      } else {
+        delete data.filialId;
+        delete data.filialDestinoId;
+        delete data.codigo;
+      }
+
+      if (typeof data.codigo === "string") {
+        data.codigo = data.codigo.trim().toUpperCase();
+      }
+
+      if (!existing.sistema) {
+        const mergedCheck = validateTipoMovimentacaoMerged(
+          {
+            codigo: (data.codigo as string | undefined) ?? existing.codigo,
+            nome: (data.nome as string | undefined) ?? existing.nome,
+            operacao: operacaoFinal,
+            requerCliente:
+              data.requerCliente !== undefined
+                ? data.requerCliente === true
+                : existing.requerCliente,
+            requerAprovacao: requerAprov,
+            permitidoOperador:
+              data.permitidoOperador !== undefined
+                ? data.permitidoOperador === true
+                : existing.permitidoOperador,
+            permitidoGerente:
+              data.permitidoGerente !== undefined
+                ? data.permitidoGerente === true
+                : existing.permitidoGerente,
+            geraAlertaRetorno: geraAlerta,
+            diasAlerta:
+              data.diasAlerta !== undefined
+                ? data.diasAlerta
+                : existing.diasAlerta,
+            ehRetornoDeId: ehRetorno,
+            requerTermoComodato: termo,
+            baixaPorArvore: baixaArvore,
+            rmaEntradaEstoque: rmaEntrada,
+            rmaSaidaCliente: rmaSaida,
+            saidaPedidoVenda: saidaPedido,
+            filialId: data.filialId as string | null | undefined,
+            filialDestinoId: data.filialDestinoId as string | null | undefined,
+            descricao:
+              data.descricao !== undefined
+                ? data.descricao
+                : existing.descricao,
+            ativo:
+              data.ativo !== undefined ? data.ativo === true : existing.ativo,
+            sistema: false,
+          },
+          { requireEstoqueFixo: false }
+        );
+        if (!mergedCheck.success) {
+          const issue = mergedCheck.error.issues[0];
+          throw new AppError(
+            400,
+            issue?.message || "Dados do tipo inválidos"
+          );
+        }
+      }
+
       const row = await prisma.$transaction(async (tx) => {
         if (rmaEntrada) {
           await tx.tipoMovimentacao.updateMany({
@@ -1557,6 +1791,7 @@ cadastrosRouter.patch(
         return tx.tipoMovimentacao.update({
           where: { id: existing.id },
           data,
+          include: tipoIncludeFiliais,
         });
       });
       res.json(row);

@@ -7,6 +7,7 @@ import { FormEvent, ReactNode, useEffect, useState } from "react";
 
 type Tipo = {
   id: string;
+  codigo: string;
   nome: string;
   operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
   sistema: boolean;
@@ -23,8 +24,14 @@ type Tipo = {
   rmaEntradaEstoque?: boolean;
   rmaSaidaCliente?: boolean;
   saidaPedidoVenda?: boolean;
+  filialId?: string | null;
+  filialDestinoId?: string | null;
+  filial?: { id: string; nome: string; sigla: string } | null;
+  filialDestino?: { id: string; nome: string; sigla: string } | null;
   descricao?: string | null;
 };
+
+type FilialOpt = { id: string; nome: string; sigla: string; ativo: boolean };
 
 const MAX_CICLOS_ALERTA = 12;
 const DIAS_ALERTA_OPCOES = [
@@ -34,6 +41,7 @@ const DIAS_ALERTA_PADRAO = [15, 30, 45, 60] as const;
 
 function createEmptyForm() {
   return {
+    codigo: "",
     nome: "",
     operacao: "" as "" | Tipo["operacao"],
     requerCliente: false,
@@ -48,6 +56,8 @@ function createEmptyForm() {
     rmaEntradaEstoque: false,
     rmaSaidaCliente: false,
     saidaPedidoVenda: false,
+    filialId: "",
+    filialDestinoId: "",
     descricao: "",
   };
 }
@@ -195,6 +205,7 @@ export function TipoMovimentacaoCadastroForm({
   const editId = tipoId || null;
   const [form, setForm] = useState(createEmptyForm);
   const [lista, setLista] = useState<Tipo[]>([]);
+  const [filiais, setFiliais] = useState<FilialOpt[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(Boolean(editId));
   const [loadFailed, setLoadFailed] = useState(false);
@@ -205,8 +216,14 @@ export function TipoMovimentacaoCadastroForm({
 
     async function loadLista() {
       try {
-        const tipos = await api<Tipo[]>("/tipos-movimentacao");
-        if (!cancelled) setLista(tipos);
+        const [tipos, fils] = await Promise.all([
+          api<Tipo[]>("/tipos-movimentacao"),
+          api<FilialOpt[]>("/filiais"),
+        ]);
+        if (!cancelled) {
+          setLista(tipos);
+          setFiliais(fils.filter((f) => f.ativo !== false));
+        }
       } catch {
         /* lista auxiliar — falha no GET por id trata o erro principal */
       }
@@ -229,6 +246,7 @@ export function TipoMovimentacaoCadastroForm({
         if (cancelled) return;
         setSistemaLocked(Boolean(t.sistema));
         setForm({
+          codigo: t.codigo || "",
           nome: t.nome,
           operacao: t.operacao,
           requerCliente: t.requerCliente,
@@ -243,6 +261,8 @@ export function TipoMovimentacaoCadastroForm({
           rmaEntradaEstoque: Boolean(t.rmaEntradaEstoque),
           rmaSaidaCliente: Boolean(t.rmaSaidaCliente),
           saidaPedidoVenda: Boolean(t.saidaPedidoVenda),
+          filialId: t.filialId || "",
+          filialDestinoId: t.filialDestinoId || "",
           descricao: t.descricao || "",
         });
       })
@@ -267,6 +287,42 @@ export function TipoMovimentacaoCadastroForm({
       setError("Selecione a natureza (Entrada, Saída ou Transferência)");
       return;
     }
+    const skipEstoque =
+      sistemaLocked ||
+      form.rmaEntradaEstoque ||
+      form.rmaSaidaCliente ||
+      form.saidaPedidoVenda;
+    if (!sistemaLocked && !form.codigo.trim()) {
+      setError("Informe o código do tipo");
+      return;
+    }
+    if (!skipEstoque && !form.filialId) {
+      setError(
+        form.operacao === "ENTRADA"
+          ? "Informe o estoque de entrada"
+          : form.operacao === "SAIDA"
+            ? "Informe o estoque de saída"
+            : "Informe o estoque de origem"
+      );
+      return;
+    }
+    if (
+      !skipEstoque &&
+      form.operacao === "TRANSFERENCIA" &&
+      !form.filialDestinoId
+    ) {
+      setError("Informe o estoque de destino");
+      return;
+    }
+    if (
+      !skipEstoque &&
+      form.operacao === "TRANSFERENCIA" &&
+      form.filialId &&
+      form.filialId === form.filialDestinoId
+    ) {
+      setError("Origem e destino devem ser estoques diferentes");
+      return;
+    }
     try {
       const precisaCliente =
         form.requerCliente ||
@@ -285,6 +341,7 @@ export function TipoMovimentacaoCadastroForm({
             descricao: form.descricao.trim() || null,
           }
         : {
+            codigo: form.codigo.trim().toUpperCase(),
             nome: form.nome.trim(),
             requerCliente: precisaCliente,
             requerAprovacao: form.requerAprovacao,
@@ -301,6 +358,11 @@ export function TipoMovimentacaoCadastroForm({
               form.operacao === "ENTRADA" && form.rmaEntradaEstoque,
             rmaSaidaCliente: form.operacao === "SAIDA" && form.rmaSaidaCliente,
             saidaPedidoVenda: form.operacao === "SAIDA" && form.saidaPedidoVenda,
+            filialId: skipEstoque ? null : form.filialId || null,
+            filialDestinoId:
+              skipEstoque || form.operacao !== "TRANSFERENCIA"
+                ? null
+                : form.filialDestinoId || null,
             descricao: form.descricao.trim() || null,
           };
       if (!editId) {
@@ -345,6 +407,8 @@ export function TipoMovimentacaoCadastroForm({
         operacao === "ENTRADA" ? prev.rmaEntradaEstoque : false,
       rmaSaidaCliente: operacao === "SAIDA" ? prev.rmaSaidaCliente : false,
       saidaPedidoVenda: operacao === "SAIDA" ? prev.saidaPedidoVenda : false,
+      filialDestinoId:
+        operacao === "TRANSFERENCIA" ? prev.filialDestinoId : "",
     }));
   }
 
@@ -358,8 +422,15 @@ export function TipoMovimentacaoCadastroForm({
 
   const isSaida = form.operacao === "SAIDA";
   const isEntrada = form.operacao === "ENTRADA";
+  const isTransf = form.operacao === "TRANSFERENCIA";
   const emEdicao = Boolean(editId);
   const soRmaFlags = sistemaLocked;
+  const mostrarEstoques =
+    Boolean(form.operacao) &&
+    !soRmaFlags &&
+    !form.rmaEntradaEstoque &&
+    !form.rmaSaidaCliente &&
+    !form.saidaPedidoVenda;
 
   if (loading) {
     return <p className="mt-4 text-sm text-slate-500">Carregando…</p>;
@@ -425,33 +496,47 @@ export function TipoMovimentacaoCadastroForm({
           className={emEdicao ? "border-amber-200/80 bg-white/90" : ""}
         >
           <div className="space-y-2.5">
-            <div className="grid gap-2.5 sm:grid-cols-2">
+            <div className="grid gap-2.5 sm:grid-cols-3">
               <label className="block min-w-0">
-                <span className="mb-1 block text-sm font-medium">Nome</span>
+                <span className="mb-1 block text-sm font-medium">Código *</span>
+                <input
+                  required
+                  disabled={soRmaFlags}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm uppercase outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 disabled:bg-slate-50"
+                  value={form.codigo}
+                  onChange={(e) =>
+                    setForm({ ...form, codigo: e.target.value.toUpperCase() })
+                  }
+                  placeholder="Ex: SAI-PLN"
+                  maxLength={30}
+                />
+              </label>
+              <label className="block min-w-0 sm:col-span-2">
+                <span className="mb-1 block text-sm font-medium">Nome *</span>
                 <input
                   required
                   disabled={soRmaFlags}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 disabled:bg-slate-50"
                   value={form.nome}
                   onChange={(e) => setForm({ ...form, nome: e.target.value })}
-                  placeholder="Ex: Saída Demonstração"
-                />
-              </label>
-              <label className="block min-w-0">
-                <span className="mb-1 block text-sm font-medium">
-                  Descrição{" "}
-                  <span className="font-normal text-slate-400">(opcional)</span>
-                </span>
-                <input
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
-                  value={form.descricao}
-                  onChange={(e) =>
-                    setForm({ ...form, descricao: e.target.value })
-                  }
-                  placeholder="Como este tipo aparece para a equipe"
+                  placeholder="Ex: Saída Demonstração PLN"
                 />
               </label>
             </div>
+            <label className="block min-w-0">
+              <span className="mb-1 block text-sm font-medium">
+                Descrição{" "}
+                <span className="font-normal text-slate-400">(opcional)</span>
+              </span>
+              <input
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                value={form.descricao}
+                onChange={(e) =>
+                  setForm({ ...form, descricao: e.target.value })
+                }
+                placeholder="Como este tipo aparece para a equipe"
+              />
+            </label>
 
             <div>
               <span className="mb-1.5 block text-sm font-medium">
@@ -495,6 +580,70 @@ export function TipoMovimentacaoCadastroForm({
             </div>
           </div>
         </SectionCard>
+
+        {mostrarEstoques && (
+          <SectionCard
+            title="Estoques da operação"
+            subtitle="Fixos neste tipo — no lançamento o operador só escolhe o tipo."
+            className={emEdicao ? "border-amber-200/80 bg-white/90" : ""}
+          >
+            <div className="grid gap-2.5 sm:grid-cols-2">
+              <label className="block min-w-0">
+                <span className="mb-1 block text-sm font-medium">
+                  {isEntrada
+                    ? "Estoque de entrada *"
+                    : isSaida
+                      ? "Estoque de saída *"
+                      : "Estoque de origem *"}
+                </span>
+                <select
+                  required
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                  value={form.filialId}
+                  onChange={(e) =>
+                    setForm({ ...form, filialId: e.target.value })
+                  }
+                >
+                  <option value="">Selecione…</option>
+                  {filiais.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.sigla} — {f.nome}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {isTransf && (
+                <label className="block min-w-0">
+                  <span className="mb-1 block text-sm font-medium">
+                    Estoque de destino *
+                  </span>
+                  <select
+                    required
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+                    value={form.filialDestinoId}
+                    onChange={(e) =>
+                      setForm({ ...form, filialDestinoId: e.target.value })
+                    }
+                  >
+                    <option value="">Selecione…</option>
+                    {filiais
+                      .filter((f) => f.id !== form.filialId)
+                      .map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.sigla} — {f.nome}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+              )}
+            </div>
+            {filiais.length === 0 && (
+              <p className="mt-2 text-xs text-rose-600">
+                Nenhum estoque ativo. Cadastre em Admin → Estoques.
+              </p>
+            )}
+          </SectionCard>
+        )}
 
         <SectionCard
           title="Regras do lançamento"

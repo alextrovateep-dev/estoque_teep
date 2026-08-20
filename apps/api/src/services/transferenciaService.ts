@@ -2,7 +2,6 @@ import {
   TIPO_ESTORNO,
   TIPO_TRANSF_ENVIADA,
   TIPO_TRANSF_RECEBIDA,
-  TIPO_TRANSF_ENTRE_ESTOQUES,
   TRANSFERENCIA_STATUS,
   type TransferenciaStatus,
 } from "@teep/shared";
@@ -1802,8 +1801,8 @@ export async function reverterTransferenciaImediata(
 }
 
 /**
- * API legada POST /transferencias — respeita requerAprovacao do tipo
- * "Transferência entre estoques" (mesmo critério do Novo Lançamento).
+ * API legada POST /transferencias — aprovação pelo tipo de negócio
+ * TRANSFERENCIA com a mesma rota (origem→destino), como no Novo Lançamento.
  */
 export async function criarTransferenciaViaApiLegada(
   user: AuthUser,
@@ -1817,13 +1816,27 @@ export async function criarTransferenciaViaApiLegada(
   }
 ) {
   const credito = input.creditoDestino || "AGUARDAR_RECEBIMENTO";
-  const tipoLancamento = await prisma.tipoMovimentacao.findUnique({
-    where: { nome: TIPO_TRANSF_ENTRE_ESTOQUES },
-  });
+  const origemFilialId =
+    user.perfil === "OPERADOR"
+      ? resolveOperadorFilialId(user, input.origemFilialId)
+      : input.origemFilialId;
+
+  const tipoLancamento =
+    origemFilialId
+      ? await prisma.tipoMovimentacao.findFirst({
+          where: {
+            operacao: "TRANSFERENCIA",
+            sistema: false,
+            ativo: true,
+            filialId: origemFilialId,
+            filialDestinoId: input.destinoFilialId,
+          },
+          select: { requerAprovacao: true },
+        })
+      : null;
+
   const precisaAprovacao =
-    user.perfil === "OPERADOR" &&
-    tipoLancamento?.requerAprovacao === true &&
-    tipoLancamento.ativo;
+    user.perfil === "OPERADOR" && tipoLancamento?.requerAprovacao === true;
 
   if (precisaAprovacao) {
     return criarTransferenciaPendenteAprovacao(user, input, credito);

@@ -348,6 +348,14 @@ export const updateClienteSchema = clienteObjectSchema
   });
 
 export const tipoMovimentacaoObjectSchema = z.object({
+  codigo: z
+    .string()
+    .trim()
+    .min(1)
+    .max(30)
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, {
+      message: "Código: use letras, números, ponto, hífen ou underscore",
+    }),
   nome: z.string().min(1).max(50),
   /** ENTRADA = entra em 1 estoque; SAIDA = sai de 1 estoque; TRANSFERENCIA = sai de A e entra em B */
   operacao: z.enum(OPERACOES),
@@ -372,94 +380,195 @@ export const tipoMovimentacaoObjectSchema = z.object({
   rmaSaidaCliente: z.boolean().optional(),
   /** SAIDA: usada na separação de pedidos eGestor */
   saidaPedidoVenda: z.boolean().optional(),
+  /** Estoque afetado (ENTRADA/SAIDA) ou origem (TRANSFERENCIA). Obrigatório se não for sistema/RMA-pedido. */
+  filialId: z.string().uuid().optional().nullable(),
+  /** Destino — obrigatório em TRANSFERENCIA */
+  filialDestinoId: z.string().uuid().optional().nullable(),
   descricao: z.string().optional().nullable(),
   ativo: z.boolean().optional(),
+  /** Só API interna / seed — cadastro admin não envia */
+  sistema: z.boolean().optional(),
 });
 
-export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
-  (data, ctx) => {
-    const alerta = data.geraAlertaRetorno === true;
-    const retorno = Boolean(data.ehRetornoDeId);
-    const termo = data.requerTermoComodato === true;
-    const arvore = data.baixaPorArvore === true;
-    const rmaEnt = data.rmaEntradaEstoque === true;
-    const rmaSai = data.rmaSaidaCliente === true;
-    const saidaPedido = data.saidaPedidoVenda === true;
-    if (
-      (alerta || retorno || termo || rmaEnt || rmaSai) &&
-      data.requerCliente === false
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "Tipos com alerta de retorno, vínculo de retorno, termo de comodato ou flag RMA devem exigir cliente",
-        path: ["requerCliente"],
-      });
-    }
-    if (alerta && data.operacao && data.operacao !== "SAIDA") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Alertas de retorno só se aplicam a tipos SAIDA",
-        path: ["geraAlertaRetorno"],
-      });
-    }
-    if (retorno && data.operacao && data.operacao !== "ENTRADA") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Vínculo ehRetornoDe só se aplica a tipos ENTRADA",
-        path: ["ehRetornoDeId"],
-      });
-    }
-    if (rmaEnt && data.operacao && data.operacao !== "ENTRADA") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Flag RMA de entrada só se aplica a tipos ENTRADA",
-        path: ["rmaEntradaEstoque"],
-      });
-    }
-    if (rmaSai && data.operacao && data.operacao !== "SAIDA") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Flag RMA de saída só se aplica a tipos SAIDA",
-        path: ["rmaSaidaCliente"],
-      });
-    }
-    if (saidaPedido && data.operacao && data.operacao !== "SAIDA") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Flag de saída de pedido só se aplica a tipos SAIDA",
-        path: ["saidaPedidoVenda"],
-      });
-    }
-    if (rmaEnt && rmaSai) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Um tipo não pode ser entrada e saída RMA ao mesmo tempo",
-        path: ["rmaEntradaEstoque"],
-      });
-    }
-    if (
-      arvore &&
-      data.operacao &&
-      data.operacao !== "SAIDA" &&
-      data.operacao !== "TRANSFERENCIA"
-    ) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Baixa pela árvore só se aplica a tipos de Saída ou Transferência",
-        path: ["baixaPorArvore"],
-      });
-    }
-    if (arvore && data.requerAprovacao === true) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "Tipo com baixa pela árvore não pode exigir aprovação (a baixa conclui na hora)",
-        path: ["requerAprovacao"],
-      });
-    }
+type TipoMovimentacaoShape = z.infer<typeof tipoMovimentacaoObjectSchema>;
+
+/** Regras de negócio do tipo — usadas no create e no merge do PATCH. */
+export function refineTipoMovimentacao(
+  data: TipoMovimentacaoShape,
+  ctx: z.RefinementCtx,
+  opts?: { requireEstoqueFixo?: boolean }
+) {
+  const requireEstoqueFixo = opts?.requireEstoqueFixo !== false;
+  const alerta = data.geraAlertaRetorno === true;
+  const retorno = Boolean(data.ehRetornoDeId);
+  const termo = data.requerTermoComodato === true;
+  const arvore = data.baixaPorArvore === true;
+  const rmaEnt = data.rmaEntradaEstoque === true;
+  const rmaSai = data.rmaSaidaCliente === true;
+  const saidaPedido = data.saidaPedidoVenda === true;
+  const sistema = data.sistema === true;
+  if (
+    (alerta || retorno || termo || rmaEnt || rmaSai) &&
+    data.requerCliente === false
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Tipos com alerta de retorno, vínculo de retorno, termo de comodato ou flag RMA devem exigir cliente",
+      path: ["requerCliente"],
+    });
   }
+  if (alerta && data.operacao && data.operacao !== "SAIDA") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Alertas de retorno só se aplicam a tipos SAIDA",
+      path: ["geraAlertaRetorno"],
+    });
+  }
+  if (retorno && data.operacao && data.operacao !== "ENTRADA") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Vínculo ehRetornoDe só se aplica a tipos ENTRADA",
+      path: ["ehRetornoDeId"],
+    });
+  }
+  if (rmaEnt && data.operacao && data.operacao !== "ENTRADA") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Flag RMA de entrada só se aplica a tipos ENTRADA",
+      path: ["rmaEntradaEstoque"],
+    });
+  }
+  if (rmaSai && data.operacao && data.operacao !== "SAIDA") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Flag RMA de saída só se aplica a tipos SAIDA",
+      path: ["rmaSaidaCliente"],
+    });
+  }
+  if (saidaPedido && data.operacao && data.operacao !== "SAIDA") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Flag de saída de pedido só se aplica a tipos SAIDA",
+      path: ["saidaPedidoVenda"],
+    });
+  }
+  if (rmaEnt && rmaSai) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Um tipo não pode ser entrada e saída RMA ao mesmo tempo",
+      path: ["rmaEntradaEstoque"],
+    });
+  }
+  if (
+    arvore &&
+    data.operacao &&
+    data.operacao !== "SAIDA" &&
+    data.operacao !== "TRANSFERENCIA"
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Baixa pela árvore só se aplica a tipos de Saída ou Transferência",
+      path: ["baixaPorArvore"],
+    });
+  }
+  if (arvore && data.requerAprovacao === true) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Tipo com baixa pela árvore não pode exigir aprovação (a baixa conclui na hora)",
+      path: ["requerAprovacao"],
+    });
+  }
+
+  // Estoque fixo: obrigatório no create; no PATCH merge pode ficar incompleto (cutover)
+  const exigeEstoqueFixo =
+    !sistema && !rmaEnt && !rmaSai && !saidaPedido && Boolean(data.operacao);
+  if (!exigeEstoqueFixo) return;
+
+  if (requireEstoqueFixo) {
+    if (!data.filialId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          data.operacao === "ENTRADA"
+            ? "Informe o estoque de entrada"
+            : data.operacao === "SAIDA"
+              ? "Informe o estoque de saída"
+              : "Informe o estoque de origem",
+        path: ["filialId"],
+      });
+    }
+    if (data.operacao === "TRANSFERENCIA") {
+      if (!data.filialDestinoId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Informe o estoque de destino",
+          path: ["filialDestinoId"],
+        });
+      } else if (
+        data.filialId &&
+        data.filialDestinoId &&
+        data.filialId === data.filialDestinoId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Origem e destino devem ser estoques diferentes",
+          path: ["filialDestinoId"],
+        });
+      }
+    } else if (data.filialDestinoId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Destino só se aplica a transferência",
+        path: ["filialDestinoId"],
+      });
+    }
+    return;
+  }
+
+  // Update incompleto: só inconsistências quando campos estão preenchidos
+  if (data.operacao === "TRANSFERENCIA") {
+    if (
+      data.filialId &&
+      data.filialDestinoId &&
+      data.filialId === data.filialDestinoId
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Origem e destino devem ser estoques diferentes",
+        path: ["filialDestinoId"],
+      });
+    }
+  } else if (data.filialDestinoId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Destino só se aplica a transferência",
+      path: ["filialDestinoId"],
+    });
+  }
+}
+
+export const tipoMovimentacaoSchema = tipoMovimentacaoObjectSchema.superRefine(
+  (data, ctx) => refineTipoMovimentacao(data, ctx, { requireEstoqueFixo: true })
 );
+
+/**
+ * Valida o estado mesclado (existing + PATCH).
+ * `requireEstoqueFixo: false` permite tipo ainda sem estoque (cutover).
+ */
+export function validateTipoMovimentacaoMerged(
+  data: unknown,
+  opts?: { requireEstoqueFixo?: boolean }
+) {
+  return tipoMovimentacaoObjectSchema
+    .superRefine((d, ctx) =>
+      refineTipoMovimentacao(d, ctx, {
+        requireEstoqueFixo: opts?.requireEstoqueFixo !== false,
+      })
+    )
+    .safeParse(data);
+}
 export const createMovimentacaoSchema = z
   .object({
     tipoId: z.string().uuid(),

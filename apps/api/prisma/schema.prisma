@@ -28,6 +28,8 @@ model Filial {
   unidadesSerie         UnidadeSerie[]
   rmaProcessos          RmaProcesso[]
   pedidosVendaAcabado   PedidoVenda[]
+  tiposMovimentacao     TipoMovimentacao[] @relation("TipoFilial")
+  tiposMovimentacaoDestino TipoMovimentacao[] @relation("TipoFilialDestino")
 
   @@map("filiais")
 }
@@ -176,6 +178,8 @@ model Cliente {
 
 model TipoMovimentacao {
   id                 String              @id @default(uuid()) @db.Uuid
+  /// Código curto único (ex. SAI-PLN, ENT-TBO)
+  codigo             String              @unique @db.VarChar(30)
   nome               String              @unique @db.VarChar(50)
   /// ENTRADA | SAIDA | TRANSFERENCIA
   operacao           String              @db.VarChar(20)
@@ -202,14 +206,22 @@ model TipoMovimentacao {
   rmaSaidaCliente    Boolean             @default(false) @map("rma_saida_cliente")
   /// SAIDA usada na separação de pedidos eGestor (no máximo um ativo)
   saidaPedidoVenda   Boolean             @default(false) @map("saida_pedido_venda")
+  /// Estoque afetado (ENTRADA/SAIDA) ou origem (TRANSFERENCIA). Null em tipos sistema.
+  filialId           String?             @map("filial_id") @db.Uuid
+  /// Destino — só TRANSFERENCIA (não-sistema)
+  filialDestinoId    String?             @map("filial_destino_id") @db.Uuid
   descricao          String?             @db.Text
   ativo              Boolean             @default(true)
   movimentacoes      Movimentacao[]
   alertas            ConfiguracaoAlerta[]
   ehRetornoDe        TipoMovimentacao?   @relation("TipoRetorno", fields: [ehRetornoDeId], references: [id], onDelete: SetNull)
   retornosComoOrigem TipoMovimentacao[]  @relation("TipoRetorno")
+  filial             Filial?             @relation("TipoFilial", fields: [filialId], references: [id], onDelete: Restrict)
+  filialDestino      Filial?             @relation("TipoFilialDestino", fields: [filialDestinoId], references: [id], onDelete: Restrict)
 
   @@index([ehRetornoDeId])
+  @@index([filialId])
+  @@index([filialDestinoId])
   /// No máximo um tipo ativo com cada flag RMA (índice parcial no SQL)
   @@map("tipos_movimentacao")
 }

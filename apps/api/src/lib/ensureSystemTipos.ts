@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 
 type TipoSistema = {
+  codigo: string;
   nome: string;
   operacao: "ENTRADA" | "SAIDA" | "TRANSFERENCIA";
   requerCliente: boolean;
@@ -13,12 +14,13 @@ type TipoSistema = {
 
 /**
  * Tipos internos referenciados pelo código (inventário, transferência, árvore).
- * Não são cadastro de negócio — `sistema: true` e ficam fora da lista de cadastro / lançamento
- * (exceto Transferência entre estoques no Novo Lançamento).
+ * Não são cadastro de negócio — `sistema: true` e ficam fora da lista de cadastro / lançamento.
  * RMA usa tipos cadastrados pelo admin com flags `rmaEntradaEstoque` / `rmaSaidaCliente`.
+ * Transferências no Novo Lançamento: tipos de negócio com estoque origem/destino fixos.
  */
 const TIPOS_SISTEMA: TipoSistema[] = [
   {
+    codigo: "SYS-INV",
     nome: "Inventário / Saldo Inicial",
     operacao: "ENTRADA",
     requerCliente: false,
@@ -28,6 +30,7 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao: "Somente via Inicialização de Estoque",
   },
   {
+    codigo: "SYS-TR-REC",
     nome: "Transferência Recebida",
     operacao: "ENTRADA",
     requerCliente: false,
@@ -37,6 +40,7 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao: "Gerado pelo módulo Transferências na conferência do destino",
   },
   {
+    codigo: "SYS-AJ-POS",
     nome: "Ajuste Positivo",
     operacao: "ENTRADA",
     requerCliente: false,
@@ -46,6 +50,7 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao: "Usado pelo Inventário / saldo inicial",
   },
   {
+    codigo: "SYS-BAIXA-BOM",
     nome: "Baixa de componente (árvore)",
     operacao: "SAIDA",
     requerCliente: false,
@@ -57,6 +62,7 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     baixaPorArvore: false,
   },
   {
+    codigo: "SYS-TR-ENV",
     nome: "Transferência Enviada",
     operacao: "SAIDA",
     requerCliente: false,
@@ -66,6 +72,7 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao: "Gerado pelo módulo Transferências (F8)",
   },
   {
+    codigo: "SYS-AJ-NEG",
     nome: "Ajuste Negativo",
     operacao: "SAIDA",
     requerCliente: false,
@@ -75,6 +82,7 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao: "Usado pelo Inventário / saldo inicial",
   },
   {
+    codigo: "SYS-ESTORNO",
     nome: "Estorno",
     operacao: "ENTRADA",
     requerCliente: false,
@@ -84,14 +92,15 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao: "Gerado pelo sistema ao estornar",
   },
   {
+    codigo: "SYS-TR-LEGADO",
     nome: "Transferência entre estoques",
     operacao: "TRANSFERENCIA",
     requerCliente: false,
     requerAprovacao: false,
-    permitidoOperador: true,
-    permitidoGerente: true,
+    permitidoOperador: false,
+    permitidoGerente: false,
     descricao:
-      "Lançamento A->B: creditar destino agora ou aguardar confirmação de recebimento (F15)",
+      "Legado interno. No lançamento use tipos de transferência com estoques fixos no cadastro.",
   },
 ];
 
@@ -124,7 +133,6 @@ async function removeTiposRmaFixosLegado() {
     if (!t) continue;
     const usados = await prisma.movimentacao.count({ where: { tipoId: t.id } });
     if (usados > 0) {
-      // Histórico: mantém o tipo só para movimentações antigas; RMA novo exige cadastro.
       await prisma.tipoMovimentacao.update({
         where: { id: t.id },
         data: { rmaEntradaEstoque: false, rmaSaidaCliente: false },
@@ -145,6 +153,7 @@ export async function ensureSystemTipos(): Promise<number> {
     await prisma.tipoMovimentacao.upsert({
       where: { nome: t.nome },
       update: {
+        codigo: base.codigo,
         operacao: base.operacao,
         requerCliente: base.requerCliente,
         requerAprovacao: base.requerAprovacao,
@@ -154,6 +163,8 @@ export async function ensureSystemTipos(): Promise<number> {
         descricao: base.descricao,
         baixaPorArvore: baixaPorArvore === true,
         ativo: true,
+        filialId: null,
+        filialDestinoId: null,
       },
       create: {
         ...base,

@@ -97,6 +97,9 @@ async function main() {
       nome: string;
       operacao: string;
       baixaPorArvore?: boolean;
+      sistema?: boolean;
+      filialId?: string | null;
+      filialDestinoId?: string | null;
     }>
   >("/tipos-movimentacao", { token });
   let tipoArvore = tipos.find(
@@ -106,7 +109,11 @@ async function main() {
   );
   const tipoCompra = tipos.find((t) => t.nome === "Compra");
   const tipoTransf = tipos.find(
-    (t) => t.operacao === "TRANSFERENCIA" && !t.nome.includes("Enviada")
+    (t) =>
+      t.operacao === "TRANSFERENCIA" &&
+      !t.sistema &&
+      Boolean(t.filialId) &&
+      Boolean(t.filialDestinoId)
   );
   if (!tipoCompra || !cats[0]) {
     fail("tipos seed incompletos (rode db:seed)", { tipoArvore, tipoCompra });
@@ -126,6 +133,7 @@ async function main() {
         method: "POST",
         token,
         body: {
+          codigo: `SAI-ARV-${Date.now().toString(36).slice(-4).toUpperCase()}`,
           nome: `Saída Árvore ${Date.now().toString(36).slice(-4)}`,
           operacao: "SAIDA",
           requerCliente: false,
@@ -133,6 +141,7 @@ async function main() {
           baixaPorArvore: true,
           permitidoOperador: true,
           permitidoGerente: true,
+          filialId: pln!.id,
         },
         expectStatus: 201,
       }
@@ -157,6 +166,7 @@ async function main() {
         method: "POST",
         token,
         body: {
+          codigo: `TR-ARV-${Date.now().toString(36).slice(-4).toUpperCase()}`,
           nome: `Transf Árvore ${Date.now().toString(36).slice(-4)}`,
           operacao: "TRANSFERENCIA",
           requerCliente: false,
@@ -164,6 +174,8 @@ async function main() {
           baixaPorArvore: true,
           permitidoOperador: true,
           permitidoGerente: true,
+          filialId: pln!.id,
+          filialDestinoId: tbo!.id,
         },
         expectStatus: 201,
       }

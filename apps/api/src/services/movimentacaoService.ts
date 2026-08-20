@@ -23,10 +23,14 @@ import {
   criarTransferenciaImediata,
   criarTransferenciaPendenteAprovacao,
 } from "./transferenciaService";
-import { resolveOperadorFilialId } from "../lib/filialScope";
+import { assertOperadorPodeFilial, resolveOperadorFilialId } from "../lib/filialScope";
 import { assertNotaFiscalNumeroLivre } from "../lib/notaFiscalNumero";
 import { isValidRmaStoredPath } from "../lib/rmaUploads";
 import { isValidUploadPath } from "../lib/uploads";
+import {
+  aplicarFiliaisDoTipoOperacional,
+  type TipoFiliaisSource,
+} from "./movimentacaoFiliaisTipo";
 import {
   agendarAlertasRetorno,
   cancelarAlertasRetornoPendentes,
@@ -223,6 +227,21 @@ export async function criarMovimentacao(
 
   if (!usoInterno && !tipoPermitidoParaPerfil(tipo, user.perfil)) {
     throw new AppError(403, "Perfil não autorizado para este tipo");
+  }
+
+  // Lançamento manual: estoque vem do tipo (fixo no cadastro)
+  const filiaisTipo = aplicarFiliaisDoTipoOperacional(
+    tipo as TipoFiliaisSource,
+    input,
+    usoInterno
+  );
+  if (!filiaisTipo.ok) {
+    throw new AppError(400, filiaisTipo.message);
+  }
+  const tipoOperacional =
+    !tipo.sistema && !tipoRma && !tipoPedido && !usoInterno;
+  if (tipoOperacional && tipo.filialId && user.perfil === "OPERADOR") {
+    assertOperadorPodeFilial(user, tipo.filialId);
   }
 
   if (

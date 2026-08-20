@@ -83,7 +83,14 @@ async function main() {
   if (!cats[0]) fail("categoria ausente");
 
   const tipos = await req<
-    Array<{ id: string; nome: string; operacao: string; sistema: boolean }>
+    Array<{
+      id: string;
+      nome: string;
+      operacao: string;
+      sistema: boolean;
+      filialId?: string | null;
+      filialDestinoId?: string | null;
+    }>
   >("/tipos-movimentacao", { token });
   const tipoCompra = tipos.find((t) => t.nome === "Compra" && !t.sistema);
   const tipoVenda = tipos.find(
@@ -93,8 +100,8 @@ async function main() {
     (t) =>
       t.operacao === "TRANSFERENCIA" &&
       !t.sistema &&
-      (t.nome === "Transferência entre estoques" ||
-        (!/árvore|arvore/i.test(t.nome) && t.nome.toLowerCase().includes("transfer")))
+      Boolean(t.filialId) &&
+      Boolean(t.filialDestinoId)
   );
   if (!tipoCompra || !tipoTransf) fail("tipos Compra/Transferência ausentes");
 
