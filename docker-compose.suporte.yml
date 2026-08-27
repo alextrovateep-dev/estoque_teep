@@ -1,0 +1,23 @@
+# Coexistência no servidor "suporte" (Apache já usa 80/443).
+# Não sobe Caddy; web/api só em localhost para o Apache fazer proxy.
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+#     --env-file .env.production up -d --build
+#
+# Apache encaminha (ver deploy/apache-suporte-vhosts.conf):
+#   web → http://127.0.0.1:3000
+#   api → http://127.0.0.1:4000  (uploads + Socket.io)
+
+services:
+  caddy:
+    # Não inicia neste host (só com: --profile caddy)
+    profiles: ["caddy"]
+
+  api:
+    ports:
+      - "127.0.0.1:4000:4000"
+
+  web:
+    ports:
+      - "127.0.0.1:3000:3000"
