@@ -904,7 +904,7 @@ cadastrosRouter.patch(
   requirePerfil("ADMIN", "GERENTE"),
   requirePermissao("cadastros_produtos_editar"),
   validateBody(updateProdutoSchema),
-  async (req, res, next) => {
+  async (req: AuthedRequest, res, next) => {
     try {
       const atual = await prisma.produto.findUnique({
         where: { id: req.params.id },
