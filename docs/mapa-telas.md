@@ -21,14 +21,19 @@ Auth / 1º acesso: [senha-provisoria.md](./senha-provisoria.md) · `/login` · `
 | Novo Lançamento | `/lancamentos/novo` | `lancamentos` | [lançamento / transf.](./lancamento.md) · [séries](./geracao-numero-serie.md) |
 | Pedidos | `/pedidos` | `pedidos` | [pedidos eGestor](./pedidos-egestor.md) |
 | Transferências | `/transferencias` | `transferencias` | idem (só conferência) |
-| RMA | `/rma` | `rma` · financeiro: `rma_cobranca` | [RMA](./rma.md) |
+| Aprovações | `/aprovacoes` | `aprovacoes` | [lançamento](./lancamento.md) |
+
+## RMA
+
+| Tela | Rota | Permissão | Doc |
+|------|------|-----------|-----|
+| Processos | `/rma` | `rma` · financeiro: `rma_cobranca` | [RMA](./rma.md) |
 
 ## Controle
 
 | Tela | Rota | Permissão | Doc |
 |------|------|-----------|-----|
 | Movimentações | `/movimentacoes` | `movimentacoes` | Histórico; filtro `?serie=` |
-| Aprovações | `/aprovacoes` | `aprovacoes` | [lançamento](./lancamento.md) |
 | Inventário | `/estoque/init` | `estoque_init` | Abaixo (§ Inventário) · [INSTALACAO](./INSTALACAO.md) §9 |
 
 `/estoque/series` → redirect Dashboard/Movimentações (filtro série).  
@@ -38,11 +43,12 @@ Auth / 1º acesso: [senha-provisoria.md](./senha-provisoria.md) · `/login` · `
 
 | Tela | Rota | Quem | Doc |
 |------|------|------|-----|
-| Produtos | `/cadastros/produtos` | `cadastros_produtos_*` | [upload](./upload-midia.md) · [série](./geracao-numero-serie.md) |
-| Clientes / Fornecedores | `/cadastros/clientes` | `cadastros_clientes_*` | — (CRUD + CNPJ/CEP na API) |
-| Árvore de produto | `/cadastros/arvore` | `cadastros_arvore_*` | [árvore](./arvore-produto.md) |
+| Estoques (filiais) | `/admin/filiais` | **Admin** | Locais de saldo; flag **acabados** para pedidos |
 | Categorias | `/admin/categorias` | **Admin** | — |
-| Estoques (filiais) | `/admin/filiais` | **Admin** | Locais de saldo; flag **acabados** para pedidos; seed demo: PLN/TBO/RMA/DESC |
+| Produtos | `/cadastros/produtos` | `cadastros_produtos_*` | [upload](./upload-midia.md) · [série](./geracao-numero-serie.md) |
+| Árvore de produto | `/cadastros/arvore` | `cadastros_arvore_*` | [árvore](./arvore-produto.md) |
+| Clientes / Fornecedores | `/cadastros/clientes` | `cadastros_clientes_*` | — (CRUD + CNPJ/CEP na API) |
+| Checklists RMA | `/cadastros/rma-checklists` | `rma` | [RMA](./rma.md) |
 
 ## Administração (só Admin)
 

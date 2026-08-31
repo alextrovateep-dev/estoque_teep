@@ -24,7 +24,7 @@ type NavItem = {
 const OPS_GROUP_LABELS: Record<NonNullable<NavItem["group"]>, string> = {
   visao: "Visão",
   operacoes: "Operações",
-  rma: "Processo RMA",
+  rma: "RMA",
   controle: "Controle",
   cadastros: "Cadastros",
 };
@@ -236,7 +236,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         group: "visao",
         perm: "relatorios",
       },
-      // Operações — ações do dia
+      // Operações — ações do dia (inclui fila de aprovação)
       {
         href: "/lancamentos/novo",
         label: "Novo Lançamento",
@@ -258,7 +258,14 @@ export function AppShell({ children }: { children: ReactNode }) {
         group: "operacoes",
         perm: "transferencias",
       },
-      // Processo RMA — fluxo de garantia / assistência
+      {
+        href: "/aprovacoes",
+        label: "Aprovações",
+        section: "ops",
+        group: "operacoes",
+        perm: "aprovacoes",
+      },
+      // RMA — garantia / assistência
       {
         href: "/rma",
         label: "Processos",
@@ -266,14 +273,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         group: "rma",
         perm: "rma",
       },
-      {
-        href: "/cadastros/rma-checklists",
-        label: "Checklists",
-        section: "ops",
-        group: "rma",
-        perm: "rma",
-      },
-      // Controle — histórico, filas e ajustes
+      // Controle — histórico e ajustes
       {
         href: "/movimentacoes",
         label: "Movimentações",
@@ -282,26 +282,42 @@ export function AppShell({ children }: { children: ReactNode }) {
         perm: "movimentacoes",
       },
       {
-        href: "/aprovacoes",
-        label: "Aprovações",
-        section: "ops",
-        group: "controle",
-        perm: "aprovacoes",
-      },
-      {
         href: "/estoque/init",
         label: "Inventário",
         section: "ops",
         group: "controle",
         perm: "estoque_init",
       },
-      // Cadastros — dados mestres (inclui itens só Admin)
+      // Cadastros — dependência: estoques/categorias → produtos → árvore → clientes
+      ...(isAdmin
+        ? [
+            {
+              href: "/admin/filiais",
+              label: "Estoques",
+              section: "ops" as const,
+              group: "cadastros" as const,
+            },
+            {
+              href: "/admin/categorias",
+              label: "Categorias",
+              section: "ops" as const,
+              group: "cadastros" as const,
+            },
+          ]
+        : []),
       {
         href: "/cadastros/produtos",
         label: "Produtos",
         section: "ops",
         group: "cadastros",
         perm: ["cadastros_produtos_ver", "cadastros_produtos_editar"],
+      },
+      {
+        href: "/cadastros/arvore",
+        label: "Árvore de produto",
+        section: "ops",
+        group: "cadastros",
+        perm: ["cadastros_arvore_ver", "cadastros_arvore_editar"],
       },
       {
         href: "/cadastros/clientes",
@@ -311,28 +327,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         perm: ["cadastros_clientes_ver", "cadastros_clientes_editar"],
       },
       {
-        href: "/cadastros/arvore",
-        label: "Árvore de produto",
+        href: "/cadastros/rma-checklists",
+        label: "Checklists RMA",
         section: "ops",
         group: "cadastros",
-        perm: ["cadastros_arvore_ver", "cadastros_arvore_editar"],
+        perm: "rma",
       },
-      ...(isAdmin
-        ? [
-            {
-              href: "/admin/categorias",
-              label: "Categorias",
-              section: "ops" as const,
-              group: "cadastros" as const,
-            },
-            {
-              href: "/admin/filiais",
-              label: "Estoques",
-              section: "ops" as const,
-              group: "cadastros" as const,
-            },
-          ]
-        : []),
     ];
     const ops = opsAll.filter((item) => {
       if (!item.perm) return true;
@@ -568,8 +568,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               {user.perfil === "ADMIN" ? (
                 <>
                   Cadastre ao menos um <strong>estoque</strong> para liberar
-                  lançamentos, transferências e RMA. Você pode navegar no
-                  sistema, mas operações ficam bloqueadas até lá.
+                  lançamentos. Você pode navegar no sistema, mas operações
+                  ficam bloqueadas até esse cadastro.
                 </>
               ) : (
                 <>
