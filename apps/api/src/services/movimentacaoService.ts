@@ -918,7 +918,10 @@ export async function criarMovimentacao(
       produtoCodigo: result.movimentacao.produto.codigo,
       produtoDescricao: result.movimentacao.produto.descricao,
       filialNome: result.movimentacao.filial.nome,
+      filialSigla: result.movimentacao.filial.sigla,
       saldoAtual: result.saldoAtual,
+      estoqueMinimo: result.movimentacao.produto.estoqueMinimo,
+      estoqueMaximo: result.movimentacao.produto.estoqueMaximo,
     });
   }
 
@@ -1088,7 +1091,10 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
       produtoCodigo: result.movimentacao.produto.codigo,
       produtoDescricao: result.movimentacao.produto.descricao,
       filialNome: result.movimentacao.filial.nome,
+      filialSigla: result.movimentacao.filial.sigla,
       saldoAtual: result.saldoAtual,
+      estoqueMinimo: result.movimentacao.produto.estoqueMinimo,
+      estoqueMaximo: result.movimentacao.produto.estoqueMaximo,
     });
   }
 
@@ -1345,7 +1351,10 @@ export async function estornarMovimentacao(
       produtoCodigo: result.movimentacao.produto.codigo,
       produtoDescricao: result.movimentacao.produto.descricao,
       filialNome: result.movimentacao.filial.nome,
+      filialSigla: result.movimentacao.filial.sigla,
       saldoAtual: result.saldoAtual,
+      estoqueMinimo: result.movimentacao.produto.estoqueMinimo,
+      estoqueMaximo: result.movimentacao.produto.estoqueMaximo,
     });
   }
 
@@ -1399,6 +1408,8 @@ export async function inicializarEstoque(
       saldoAtual: number;
       abaixoMinimo: boolean;
       acimaMaximo: boolean;
+      estoqueMinimo: number;
+      estoqueMaximo: number;
     }> = [];
 
     function registrarLimiar(
@@ -1418,6 +1429,8 @@ export async function inicializarEstoque(
         saldoAtual,
         abaixoMinimo,
         acimaMaximo,
+        estoqueMinimo: produto.estoqueMinimo,
+        estoqueMaximo: produto.estoqueMaximo,
       });
     }
 
@@ -1582,7 +1595,10 @@ export async function inicializarEstoque(
       produtoCodigo: a.produtoCodigo,
       produtoDescricao: a.produtoDescricao,
       filialNome: filial.nome,
+      filialSigla: filial.sigla,
       saldoAtual: a.saldoAtual,
+      estoqueMinimo: a.estoqueMinimo,
+      estoqueMaximo: a.estoqueMaximo,
     });
     alertas.push(
       ...alertasUiDeLimiares({

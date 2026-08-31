@@ -167,6 +167,9 @@ type AlertaLimiarRaw = {
   acimaMaximo: boolean;
   saldoAtual: number;
   filialNome: string;
+  filialSigla?: string;
+  estoqueMinimo?: number;
+  estoqueMaximo?: number;
 };
 
 function emitirAlertasLimiaresTransferencia(
@@ -181,7 +184,10 @@ function emitirAlertasLimiaresTransferencia(
       produtoCodigo: a.produtoCodigo,
       produtoDescricao: a.produtoDescricao,
       filialNome: a.filialNome,
+      filialSigla: a.filialSigla,
       saldoAtual: a.saldoAtual,
+      estoqueMinimo: a.estoqueMinimo,
+      estoqueMaximo: a.estoqueMaximo,
     });
     alertasUi.push(
       ...alertasUiDeLimiares({

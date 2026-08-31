@@ -1,6 +1,5 @@
 import {
   DIAS_ALERTA_RETORNO_DEFAULT,
-  ALERTA_EVENTO_LABELS,
 } from "@teep/shared";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
@@ -246,19 +245,31 @@ export async function processarAlertasRetornoVencidos(): Promise<{
       if (!agenda) continue;
 
       const m = agenda.movimentacao;
-      const titulo = `${ALERTA_EVENTO_LABELS.ALERTA_RETORNO_MOVIMENTACAO} · ${m.produto.codigo}`;
+      const href = `/movimentacoes/${m.id}`;
+      const appUrl = (
+        process.env.FRONTEND_URL ||
+        process.env.CORS_ORIGIN ||
+        "http://localhost:3000"
+      ).replace(/\/$/, "");
+      const titulo = `Retorno pendente · ${m.produto.codigo}`;
       const mensagem = [
-        `Alerta de retorno (${agenda.dias} dias) — ${m.tipo.nome}.`,
-        `Produto: ${m.produto.codigo} — ${m.produto.descricao}.`,
-        `Qtd saída: ${Number(m.quantidade)} · ainda em aberto: ${restante}.`,
-        m.cliente ? `Cliente: ${m.cliente.nome}.` : null,
-        `Filial: ${m.filial.sigla} (${m.filial.nome}).`,
-        `Movimento: ${m.id.slice(0, 8)}… em ${formatDataMovimentoSp(m.dataMovimento)}.`,
-        m.notaFiscalNumero ? `NF: ${m.notaFiscalNumero}.` : null,
-        "Verifique se o equipamento já retornou ou providencie o retorno.",
+        `Já se passaram ${agenda.dias} dias e ainda há quantidade em aberto do movimento de ${m.tipo.nome}.`,
+        `Produto: ${m.produto.codigo} — ${m.produto.descricao}`,
+        [
+          `Qtd saída: ${Number(m.quantidade)}`,
+          `Ainda em aberto: ${restante}`,
+          m.cliente ? `Cliente: ${m.cliente.nome}` : null,
+          `Estoque: ${m.filial.sigla} (${m.filial.nome})`,
+          `Movimento ${m.id.slice(0, 8)} em ${formatDataMovimentoSp(m.dataMovimento)}`,
+          m.notaFiscalNumero ? `NF: ${m.notaFiscalNumero}` : null,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        "Confira se o equipamento já voltou ou providencie o retorno.",
+        `Ver movimento: ${appUrl}${href}`,
       ]
         .filter(Boolean)
-        .join(" ");
+        .join("\n\n");
 
       sideEffectsStarted = true;
       // Sino para quem tem o tick; e-mail NÃO vai no fanout (evita duplicata com emailsDestino).
@@ -271,6 +282,7 @@ export async function processarAlertasRetornoVencidos(): Promise<{
           dias: agenda.dias,
           produtoCodigo: m.produto.codigo,
           qtyRestante: restante,
+          href,
         },
         dedupeKey: `${m.id}|${agenda.dias}`,
         tryEmail: false,

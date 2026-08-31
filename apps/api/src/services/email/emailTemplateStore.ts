@@ -42,21 +42,21 @@ export function defaultEmailTemplate(type: EmailType): EmailTemplateDef {
       type,
       label: "Acesso — senha provisória",
       subject: "[TEEP] {{titulo}}",
-      preheader: "Senha provisória para acesso ao TEEP Estoque",
+      preheader: "{{intro}}",
       placeholders: ACESSO_PLACEHOLDERS,
       bodyText: [
         "Olá {{nome}},",
         "",
         "{{intro}}",
         "",
-        "E-mail de acesso: {{email}}",
+        "E-mail de login: {{email}}",
         "Senha provisória: {{senha}}",
         "",
-        "Acesse: {{appUrl}}",
+        "Entre aqui: {{appUrl}}",
         "",
-        "No primeiro login você será obrigado a trocar esta senha.",
+        "Por segurança, no primeiro acesso pedimos que você troque esta senha. Não encaminhe este e-mail — ele contém sua senha temporária.",
         "",
-        "— Sistema TEEP Estoque",
+        "Equipe TEEP Estoque",
       ].join("\n"),
     };
   }
@@ -189,31 +189,164 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
     "http://localhost:3000";
   if (type === "ACESSO_SENHA_PROVISORIA") {
     return {
-      nome: "Usuário Teste",
-      titulo: "Acesso ao TEEP Estoque",
+      nome: "Maria Silva",
+      titulo: "Bem-vindo ao TEEP Estoque",
       intro:
-        "Seu usuário foi criado no Sistema de Controle de Estoque TEEP.",
-      email: "usuario@teep.com.br",
+        "Criamos seu acesso ao controle de estoque da TEEP. Use os dados abaixo no primeiro login.",
+      email: "maria.silva@teep.com.br",
       senha: "Tmp9xample",
       appUrl,
     };
   }
-  if (
-    type === "DIVERGENCIA_TRANSFERENCIA" ||
-    type === "TRANSFERENCIA_PENDENTE_APROVACAO" ||
-    type === "TRANSFERENCIA_APROVADA" ||
-    type === "TRANSFERENCIA_REJEITADA" ||
-    type === "RMA_ABERTO" ||
-    type === "RMA_FINANCEIRO" ||
-    type === "RMA_ENCERRADO" ||
-    type === "RMA_LAUDO" ||
-    type === "PEDIDO_SEPARADO" ||
-    type === "ALERTA_RETORNO_MOVIMENTACAO"
-  ) {
+  if (type === "ESTOQUE_MINIMO") {
     return {
-      nome: "Usuário Teste",
-      titulo: ALERTA_EVENTO_LABELS[type],
-      mensagem: `Mensagem de exemplo para o evento ${type}.`,
+      nome: "Ana Operações",
+      titulo: "Saldo baixo · DEMO-01",
+      mensagem: [
+        "O saldo de DEMO-01 — Sensor TEEP em PLN (Paulínia) está baixo.",
+        "Saldo atual: 2\nMínimo cadastrado: 5",
+        `Confira no sistema: ${appUrl}/dashboard`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "ESTOQUE_MAXIMO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Saldo alto · DEMO-01",
+      mensagem: [
+        "O saldo de DEMO-01 — Sensor TEEP em PLN (Paulínia) ultrapassou o máximo.",
+        "Saldo atual: 120\nMáximo cadastrado: 100",
+        `Confira no sistema: ${appUrl}/dashboard`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "PRECO_AJUSTADO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Preço atualizado · DEMO-01",
+      mensagem: [
+        "O preço de DEMO-01 — Sensor TEEP foi alterado.",
+        "De R$ 150,00 para R$ 165,00 (+10%).",
+        "Alteração feita por Carlos Admin.",
+        `Ver produto: ${appUrl}/cadastros/produtos/00000000-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "TRANSFERENCIA_PENDENTE_APROVACAO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Transferência aguardando aprovação · a1b2c3d4",
+      mensagem: [
+        "Há uma transferência (a1b2c3d4) esperando sua aprovação.",
+        "De Paulínia para Taubaté · 2 item(ns).",
+        "Solicitada por Carlos Admin.",
+        `Aprovar ou rejeitar: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "TRANSFERENCIA_APROVADA") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Transferência aprovada · a1b2c3d4",
+      mensagem: [
+        "A transferência a1b2c3d4 foi aprovada por Maria Aprovadora.",
+        "Rota: Paulínia → Taubaté.",
+        `Acompanhe: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "TRANSFERENCIA_REJEITADA") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Transferência rejeitada · a1b2c3d4",
+      mensagem: [
+        "A transferência a1b2c3d4 foi rejeitada por Maria Aprovadora.",
+        "Rota: Paulínia → Taubaté.",
+        "Motivo: Quantidade divergente do pedido.",
+        `Detalhes: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "DIVERGENCIA_TRANSFERENCIA") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Divergência na transferência · a1b2c3d4",
+      mensagem: [
+        "A conferência da transferência a1b2c3d4 encontrou diferença entre o enviado e o recebido.",
+        "Rota: Paulínia → Taubaté.",
+        "DEMO-01: enviado 10, recebido 8.",
+        `Revise em: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "ALERTA_RETORNO_MOVIMENTACAO") {
+    return {
+      nome: "Financeiro",
+      titulo: "Retorno pendente · DEMO-01",
+      mensagem: [
+        "Já se passaram 30 dias e ainda há quantidade em aberto do movimento de Empréstimo.",
+        "Produto: DEMO-01 — Sensor TEEP",
+        "Qtd saída: 2\nAinda em aberto: 2\nCliente: Cliente Demo\nEstoque: PLN (Paulínia)\nMovimento a1b2c3d4 em 01/07/2026",
+        "Confira se o equipamento já voltou ou providencie o retorno.",
+        `Ver movimento: ${appUrl}/movimentacoes/a1b2c3d4-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "RMA_ABERTO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Novo RMA · b2c3d4e5",
+      mensagem: [
+        "Um novo RMA (b2c3d4e5) foi aberto para Cliente Demo LTDA.",
+        "2 item(ns) · NF de entrada: 12345",
+        "Aberto por Carlos Admin.",
+        "Itens: DEMO-01 × 1; DEMO-02 × 1",
+        `Abrir o processo: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "RMA_FINANCEIRO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "RMA — financeiro · b2c3d4e5",
+      mensagem: [
+        "Atualização financeira no RMA b2c3d4e5 (Cliente Demo LTDA).",
+        "Há cobrança registrada neste RMA.\nValor: R$ 350,00 · NF de cobrança: 99887",
+        `Ver processo: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "RMA_ENCERRADO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "RMA fechado · b2c3d4e5",
+      mensagem: [
+        "O RMA b2c3d4e5 de Cliente Demo LTDA foi fechado.",
+        `Consultar: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "RMA_LAUDO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Laudo disponível no RMA · b2c3d4e5",
+      mensagem: [
+        "Há diagnóstico(s) / laudo(s) no RMA b2c3d4e5 (Cliente Demo LTDA).",
+        "• DEMO-01 — defeito confirmado\n• DEMO-02 — em análise",
+        `Abrir o processo: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "PEDIDO_SEPARADO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Pedido separado · 1042",
+      mensagem: [
+        "O pedido 1042 foi separado e o estoque já foi baixado.",
+        "Cliente: Cliente Demo LTDA",
+        "Estoque: PLN",
+        `Ver pedido: ${appUrl}/pedidos/c3d4e5f6-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
     };
   }
   return {

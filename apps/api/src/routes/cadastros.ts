@@ -999,10 +999,12 @@ cadastrosRouter.patch(
 
       if (precoMudou) {
         notificarPrecoAjustado({
+          produtoId: updated.id,
           produtoCodigo: updated.codigo,
           produtoDescricao: updated.descricao,
           precoAnterior,
           precoNovo,
+          alteradoPorNome: req.user?.nome,
         });
       }
 
