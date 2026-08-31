@@ -12,6 +12,7 @@ apps/api/prisma/*.db
 apps/api/prisma/*.db-journal
 .pgdata
 backups/
+teep-prod-images.tar.gz
 apps/api/uploads/**
 !apps/api/uploads/.gitkeep
 !apps/api/uploads/fotos-perfil/.gitkeep

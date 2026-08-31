@@ -11,7 +11,8 @@ Não use `pnpm`/Postgres embutido nem o `docker-compose.yml` de desenvolvimento 
 
 Este arquivo cobre **instalar** o stack e **homologar** (cadastros, inventário, smoke) antes do go-live.
 
-Servidor **TechCenter** (ainda não instalar): [INSTALACAO-TECHCENTER.md](./INSTALACAO-TECHCENTER.md).
+Servidor **TechCenter** (ainda não instalar): [INSTALACAO-TECHCENTER.md](./INSTALACAO-TECHCENTER.md).  
+Servidor **suporte** (Apache + build off-site): [INSTALACAO-SUPORTE.md](./INSTALACAO-SUPORTE.md).
 
 ---
 

@@ -1,11 +1,15 @@
 # Coexistência no servidor "suporte" (Apache já usa 80/443).
 # Não sobe Caddy; web/api só em localhost para o Apache fazer proxy.
 #
-# Uso:
-#   docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+# Uso normal (máquina com build Docker funcional):
+#   docker-compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
 #     --env-file .env.production up -d --build
 #
-# Apache encaminha (ver deploy/apache-suporte-vhosts.conf):
+# Servidor suporte (Debian 9 + Docker 19 — DNS quebrado na bridge):
+#   build fora → scripts/build-prod-images.* + scripts/load-prod-images.sh
+#   Guia: docs/INSTALACAO-SUPORTE.md
+#
+# Apache encaminha (deploy/apache-suporte-vhosts.conf):
 #   web → http://127.0.0.1:3000
 #   api → http://127.0.0.1:4000  (uploads + Socket.io)
 
@@ -15,9 +19,15 @@ services:
     profiles: ["caddy"]
 
   api:
+    image: estoque-teep-api:latest
+    build:
+      network: host
     ports:
       - "127.0.0.1:4000:4000"
 
   web:
+    image: estoque-teep-web:latest
+    build:
+      network: host
     ports:
       - "127.0.0.1:3000:3000"
