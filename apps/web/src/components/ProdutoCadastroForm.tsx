@@ -74,10 +74,13 @@ export function ProdutoCadastroForm({
   const pendingFotosRef = useRef(pendingFotos);
   pendingFotosRef.current = pendingFotos;
   const [uploading, setUploading] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
+  /** Após criar produto: opções cadastrar outro ou ir ao dashboard. */
+  const [posCriacaoOpen, setPosCriacaoOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -267,7 +270,7 @@ export function ProdutoCadastroForm({
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    if (readOnly) return;
+    if (readOnly || saving || posCriacaoOpen) return;
     setError("");
     setMsg("");
     const body: Record<string, unknown> = {
@@ -293,6 +296,7 @@ export function ProdutoCadastroForm({
         reiniciarAnual: form.reiniciarAnual,
       };
     }
+    setSaving(true);
     try {
       if (editId) {
         await api(`/produtos/${editId}`, {
@@ -315,13 +319,25 @@ export function ProdutoCadastroForm({
           for (const p of pendingFotos) URL.revokeObjectURL(p.preview);
           setPendingFotos([]);
         }
-        router.push(`/cadastros/produtos/${created.id}?ok=criado`);
+        setPosCriacaoOpen(true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
       setUploading(false);
+      setSaving(false);
     }
+  }
+
+  function cadastrarOutroProduto() {
+    for (const p of pendingFotos) URL.revokeObjectURL(p.preview);
+    setPendingFotos([]);
+    setFotos([]);
+    setForm(emptyForm);
+    setError("");
+    setMsg("");
+    setPosCriacaoOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   if (loading) {
@@ -378,7 +394,10 @@ export function ProdutoCadastroForm({
         onSubmit={onSubmit}
         className="mt-5 space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
       >
-        <fieldset disabled={readOnly} className="min-w-0 space-y-5 border-0 p-0">
+        <fieldset
+          disabled={readOnly || saving || posCriacaoOpen}
+          className="min-w-0 space-y-5 border-0 p-0"
+        >
         <div className="grid gap-4 md:grid-cols-3">
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">
@@ -812,9 +831,14 @@ export function ProdutoCadastroForm({
           {!readOnly && (
             <button
               type="submit"
-              className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white"
+              disabled={saving || posCriacaoOpen}
+              className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60"
             >
-              {editId ? "Salvar alterações" : "Cadastrar produto"}
+              {saving
+                ? "Salvando…"
+                : editId
+                  ? "Salvar alterações"
+                  : "Cadastrar produto"}
             </button>
           )}
           <Link
@@ -825,6 +849,44 @@ export function ProdutoCadastroForm({
           </Link>
         </div>
       </form>
+
+      {posCriacaoOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="pos-criacao-titulo"
+        >
+          <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h2
+              id="pos-criacao-titulo"
+              className="text-lg font-semibold text-slate-900"
+            >
+              Produto cadastrado
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">
+              O que deseja fazer agora?
+            </p>
+            <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                autoFocus
+                onClick={cadastrarOutroProduto}
+                className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white"
+              >
+                Cadastrar outro
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push("/dashboard")}
+                className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm text-slate-800 hover:bg-slate-50"
+              >
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
