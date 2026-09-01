@@ -86,6 +86,11 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
     senha: string;
   } | null>(null);
   const [createdDone, setCreatedDone] = useState(false);
+  const [revokePerfil, setRevokePerfil] = useState<"GERENTE" | "OPERADOR">(
+    "GERENTE"
+  );
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [usuarioAtivo, setUsuarioAtivo] = useState(true);
   const [cadastrosExpandidos, setCadastrosExpandidos] = useState<
     Partial<Record<CadastrosPaginaId, boolean>>
   >({});
@@ -112,6 +117,7 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
       const u = await api<Usuario>(`/usuarios/${editId}`);
       if (cancelled) return;
       const perfil = (u.perfil as Perfil) || "OPERADOR";
+      setUsuarioAtivo(u.ativo);
       setForm({
         nome: u.nome,
         email: u.email,
@@ -256,6 +262,95 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
     }
   }
 
+  async function reloadUsuario() {
+    if (!editId) return;
+    const u = await api<Usuario>(`/usuarios/${editId}`);
+    const perfil = (u.perfil as Perfil) || "OPERADOR";
+    setUsuarioAtivo(u.ativo);
+    setForm({
+      nome: u.nome,
+      email: u.email,
+      perfil,
+      filialIds:
+        u.filialIds && u.filialIds.length > 0
+          ? u.filialIds
+          : u.filialId
+            ? [u.filialId]
+            : [],
+      receberAlertasEmail: Boolean(u.receberAlertasEmail),
+      alertasEmail: {
+        ...emptyAlertas(),
+        ...(u.alertasEmail || {}),
+      },
+      fotoPerfil: u.fotoPerfil || null,
+      permissoes: u.permissoes || defaultPermissoes(perfil),
+    });
+  }
+
+  async function concederAdmin() {
+    if (!editId || form.perfil === "ADMIN") return;
+    if (
+      !confirm(
+        `Conceder acesso administrador a ${form.nome.trim() || form.email}? O usuário terá acesso total ao sistema.`
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setMsg("");
+    setAdminBusy(true);
+    try {
+      await api(`/usuarios/${editId}/admin-access`, {
+        method: "POST",
+        body: JSON.stringify({ admin: true }),
+      });
+      await reloadUsuario();
+      setMsg("Acesso administrador concedido.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao conceder admin");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
+  async function revogarAdmin() {
+    if (!editId || form.perfil !== "ADMIN") return;
+    const self = getStoredUser();
+    if (self?.id === editId) {
+      setError("Você não pode revogar seu próprio acesso administrador.");
+      return;
+    }
+    if (
+      revokePerfil === "OPERADOR" &&
+      form.filialIds.length === 0
+    ) {
+      setError("Para revogar como Operador, vincule ao menos um estoque antes.");
+      return;
+    }
+    if (
+      !confirm(
+        `Revogar acesso administrador de ${form.nome.trim() || form.email}? O perfil voltará a ${revokePerfil === "GERENTE" ? "Gerente" : "Operador"}.`
+      )
+    ) {
+      return;
+    }
+    setError("");
+    setMsg("");
+    setAdminBusy(true);
+    try {
+      await api(`/usuarios/${editId}/admin-access`, {
+        method: "POST",
+        body: JSON.stringify({ admin: false, perfil: revokePerfil }),
+      });
+      await reloadUsuario();
+      setMsg("Acesso administrador revogado.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao revogar admin");
+    } finally {
+      setAdminBusy(false);
+    }
+  }
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
@@ -336,6 +431,8 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
   const avatarSrc =
     pendingPreview || resolveAssetUrl(form.fotoPerfil) || null;
   const isAdminForm = form.perfil === "ADMIN";
+  const selfId = getStoredUser()?.id;
+  const isSelf = Boolean(editId && selfId && editId === selfId);
   /** Ativas + já vinculadas (mesmo se inativas), para não sumir no editar. */
   const filiaisForm = filiais.filter(
     (f) => f.ativo !== false || form.filialIds.includes(f.id)
@@ -509,6 +606,73 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
             )}
           </select>
         </label>
+
+        {editId && (
+          <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 sm:col-span-2">
+            <p className="text-sm font-medium text-violet-950">
+              Acesso administrador
+            </p>
+            {isAdminForm ? (
+              <>
+                <p className="mt-1 text-xs text-violet-900/80">
+                  Este usuário tem acesso total (menu Administração, usuários,
+                  e-mails, estoques globais).
+                  {isSelf
+                    ? " Você não pode revogar o próprio acesso por aqui."
+                    : ""}
+                </p>
+                {!isSelf && (
+                  <div className="mt-3 flex flex-wrap items-end gap-3">
+                    <label className="block text-sm">
+                      <span className="mb-1 block font-medium text-violet-950">
+                        Perfil após revogar
+                      </span>
+                      <select
+                        className="rounded-lg border border-violet-200 bg-white px-3 py-2"
+                        value={revokePerfil}
+                        onChange={(e) =>
+                          setRevokePerfil(
+                            e.target.value as "GERENTE" | "OPERADOR"
+                          )
+                        }
+                        disabled={adminBusy}
+                      >
+                        <option value="GERENTE">Gerente</option>
+                        <option value="OPERADOR">Operador</option>
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void revogarAdmin()}
+                      disabled={adminBusy}
+                      className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-sm font-medium text-violet-950 hover:bg-violet-100 disabled:opacity-50"
+                    >
+                      {adminBusy ? "Aguarde…" : "Revogar acesso administrador"}
+                    </button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="mt-1 text-xs text-violet-900/80">
+                  Concede menu Administração e permissões totais. Pode ser
+                  revogado depois.
+                  {!usuarioAtivo
+                    ? " Ative o usuário antes de conceder administrador."
+                    : ""}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void concederAdmin()}
+                  disabled={adminBusy || !usuarioAtivo}
+                  className="mt-3 rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800 disabled:opacity-50"
+                >
+                  {adminBusy ? "Aguarde…" : "Conceder acesso administrador"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
           <p className="text-sm font-medium text-slate-800">

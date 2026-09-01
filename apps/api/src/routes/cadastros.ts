@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import {
   createUsuarioSchema,
   updateUsuarioSchema,
+  adminAccessSchema,
   filialSchema,
   categoriaSchema,
   createProdutoSchema,
@@ -656,6 +657,100 @@ cadastrosRouter.patch(
         purgeOrphanAvatarFiles(atual.id, [rest.fotoPerfil]);
       }
 
+      res.json(mapUsuarioResponse(updated));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+cadastrosRouter.post(
+  "/usuarios/:id/admin-access",
+  requirePerfil("ADMIN"),
+  validateBody(adminAccessSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const { admin, perfil: perfilRevogar } = req.body as {
+        admin: boolean;
+        perfil?: "GERENTE" | "OPERADOR";
+      };
+      const actorId = req.user!.id;
+      const targetId = req.params.id;
+
+      const usuario = await prisma.usuario.findUnique({
+        where: { id: targetId },
+        select: {
+          id: true,
+          perfil: true,
+          ativo: true,
+          filialId: true,
+          filiaisVinculos: { select: { filialId: true } },
+        },
+      });
+      if (!usuario) throw new AppError(404, "Usuário não encontrado");
+
+      if (admin) {
+        if (usuario.perfil === "ADMIN") {
+          throw new AppError(400, "Usuário já é administrador");
+        }
+        if (!usuario.ativo) {
+          throw new AppError(400, "Usuário inativo");
+        }
+        const updated = await prisma.usuario.update({
+          where: { id: targetId },
+          data: { perfil: "ADMIN", permissoes: {} },
+          select: usuarioSelect,
+        });
+        await prisma.refreshToken.deleteMany({
+          where: { usuarioId: targetId },
+        });
+        return res.json(mapUsuarioResponse(updated));
+      }
+
+      if (usuario.perfil !== "ADMIN") {
+        throw new AppError(400, "Usuário não é administrador");
+      }
+      if (targetId === actorId) {
+        throw new AppError(
+          400,
+          "Você não pode revogar seu próprio acesso administrador"
+        );
+      }
+      const adminsAtivos = await prisma.usuario.count({
+        where: { perfil: "ADMIN", ativo: true },
+      });
+      if (adminsAtivos <= 1) {
+        throw new AppError(
+          400,
+          "Não é possível remover o último administrador ativo"
+        );
+      }
+
+      const novoPerfil = (perfilRevogar || "GERENTE") as Perfil;
+      if (novoPerfil === "OPERADOR") {
+        const ids =
+          usuario.filiaisVinculos.length > 0
+            ? usuario.filiaisVinculos.map((v) => v.filialId)
+            : usuario.filialId
+              ? [usuario.filialId]
+              : [];
+        if (ids.length === 0) {
+          throw new AppError(
+            400,
+            "Para revogar como Operador, vincule ao menos um estoque ao usuário antes"
+          );
+        }
+      }
+
+      const updated = await prisma.usuario.update({
+        where: { id: targetId },
+        data: {
+          perfil: novoPerfil,
+          permissoes: resolvePermissoes(novoPerfil, null),
+        },
+        select: usuarioSelect,
+      });
+      await prisma.refreshToken.deleteMany({ where: { usuarioId: targetId } });
       res.json(mapUsuarioResponse(updated));
     } catch (e) {
       next(e);

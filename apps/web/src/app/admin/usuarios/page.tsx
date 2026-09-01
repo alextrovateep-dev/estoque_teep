@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "@/lib/api";
+import { api, getStoredUser } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
 import { ALERTA_EVENTOS, AlertaEvento, PermissoesUsuario } from "@teep/shared";
 import Link from "next/link";
@@ -97,6 +97,44 @@ function UsuariosPageInner() {
     }
   }
 
+  async function toggleAdminAccess(
+    u: Usuario,
+    grant: boolean,
+    perfil: "GERENTE" | "OPERADOR" = "GERENTE"
+  ) {
+    const self = getStoredUser();
+    if (!grant && u.id === self?.id) {
+      setError("Você não pode revogar seu próprio acesso administrador.");
+      return;
+    }
+    const ok = grant
+      ? confirm(
+          `Conceder acesso administrador a ${u.nome}? Terá acesso total ao sistema.`
+        )
+      : confirm(
+          `Revogar acesso administrador de ${u.nome}? Voltará a ${perfil === "OPERADOR" ? "Operador" : "Gerente"}.`
+        );
+    if (!ok) return;
+    setError("");
+    setMsg("");
+    try {
+      await api(`/usuarios/${u.id}/admin-access`, {
+        method: "POST",
+        body: JSON.stringify(
+          grant ? { admin: true } : { admin: false, perfil }
+        ),
+      });
+      showFeedback(
+        grant
+          ? `${u.nome} agora é administrador.`
+          : `Acesso administrador revogado de ${u.nome}.`
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
   async function resetSenhaProvisoria(u: Usuario) {
     if (u.perfil === "ADMIN") return;
     if (
@@ -129,9 +167,9 @@ function UsuariosPageInner() {
         <div>
           <h1 className="text-2xl font-semibold">Usuários e Perfis</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Cadastre Gerente e Operador. A senha é provisória: o usuário recebe
-            e-mail e troca no primeiro acesso. Defina foto, filiais e o que cada
-            pessoa pode ver e fazer.
+            Cadastre Gerente e Operador. Você pode conceder ou revogar acesso
+            administrador depois. A senha é provisória: o usuário recebe e-mail
+            e troca no primeiro acesso.
           </p>
         </div>
         <Link
@@ -246,14 +284,36 @@ function UsuariosPageInner() {
                     >
                       Editar
                     </Link>
-                    {u.perfil !== "ADMIN" && (
-                      <button
-                        type="button"
-                        onClick={() => void resetSenhaProvisoria(u)}
-                        className="text-brand hover:underline"
-                      >
-                        Reset senha
-                      </button>
+                    {u.perfil === "ADMIN" ? (
+                      u.id !== getStoredUser()?.id && (
+                        <button
+                          type="button"
+                          onClick={() => void toggleAdminAccess(u, false)}
+                          className="text-violet-700 hover:underline"
+                          title="Volta ao perfil Gerente"
+                        >
+                          Revogar admin
+                        </button>
+                      )
+                    ) : (
+                      <>
+                        {u.ativo && (
+                          <button
+                            type="button"
+                            onClick={() => void toggleAdminAccess(u, true)}
+                            className="text-violet-700 hover:underline"
+                          >
+                            Tornar admin
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => void resetSenhaProvisoria(u)}
+                          className="text-brand hover:underline"
+                        >
+                          Reset senha
+                        </button>
+                      </>
                     )}
                     <button
                       type="button"

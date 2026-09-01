@@ -101,6 +101,13 @@ export const updateUsuarioSchema = createUsuarioBaseSchema
   })
   .superRefine(refineOperadorFiliais);
 
+/** Conceder ou revogar perfil ADMIN (ação explícita do admin). */
+export const adminAccessSchema = z.object({
+  admin: z.boolean(),
+  /** Ao revogar: perfil de destino (padrão GERENTE). */
+  perfil: z.enum(["GERENTE", "OPERADOR"]).optional(),
+});
+
 /** Qualquer autenticado atualiza o próprio perfil */
 export const updateMeSchema = z.object({
   nome: z.string().min(2).max(100).optional(),
