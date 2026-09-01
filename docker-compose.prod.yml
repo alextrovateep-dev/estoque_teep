@@ -4,6 +4,7 @@
 #      export TEEP_SUORTE=1  # + docker-compose.suporte.yml (Apache)
 #
 # Não publica portas de Postgres/Redis. Caddy expõe 80/443 com HTTPS.
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -44,7 +45,8 @@ services:
     # Secrets e SMTP: env_file passa valores literais (sem expandir $oi, $VAR…).
     # O bloco environment: abaixo só o que é montado ou default fixo.
     env_file:
-      - ${ENV_FILE:-.env.production}    environment:
+      - ${ENV_FILE:-.env.production}
+    environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-teep}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-estoque_teep}?schema=public
       REDIS_URL: redis://redis:6379
       NODE_ENV: production
