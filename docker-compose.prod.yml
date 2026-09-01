@@ -1,7 +1,5 @@
-# Produção / staging — use com .env.production
-# Guia: docs/INSTALACAO.md
-# Uso: ./scripts/compose-prod.sh up -d --build
-#      export TEEP_SUORTE=1  # + docker-compose.suporte.yml (Apache)
+# Produção — docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+# Suporte (Apache): acrescente -f docker-compose.suporte.yml
 #
 # Não publica portas de Postgres/Redis. Caddy expõe 80/443 com HTTPS.
 

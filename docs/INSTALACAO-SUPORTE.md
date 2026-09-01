@@ -147,29 +147,48 @@ sudo systemctl reload apache2
 2. Trocar senha do admin
 3. No `.env.production`: `SEED_ON_START=0` e reiniciar API:
    ```bash
-   export TEEP_SUORTE=1
-   ./scripts/compose-prod.sh up -d api
+   docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+     --env-file .env.production up -d api
    ```
 
 ### Comandos do dia a dia (servidor suporte)
 
-Sempre na raiz `/opt/estoque-teep`:
+Na raiz `/opt/estoque-teep`:
 
 ```bash
-export TEEP_SUORTE=1   # inclui docker-compose.suporte.yml
+docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+  --env-file .env.production ps
 
-./scripts/compose-prod.sh ps
-./scripts/compose-prod.sh logs api --tail=100
-./scripts/compose-prod.sh up -d api
+docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+  --env-file .env.production logs api --tail=100
+
+docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+  --env-file .env.production up -d api
 ```
 
-**Senha SMTP com `$`:** use `SMTP_PASS_B64` no `.env.production` (um arquivo só):
+**Senha SMTP com `$`:** remova `SMTP_PASS=` do `.env.production`. Use só `SMTP_PASS_B64`:
 
 ```bash
 echo -n 'SUA_SENHA_LITERAL' | base64 -w0
-# cole o resultado em SMTP_PASS_B64=... no .env.production
-# não use SMTP_PASS= nessa senha
-./scripts/compose-prod.sh up -d api
+# SMTP_PASS_B64=... no .env.production
+```
+
+**Build sem cache (api):**
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+  --env-file .env.production build --no-cache api
+
+docker compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
+  --env-file .env.production up -d api
+```
+
+**Disco cheio no build (`ERR_PNPM_ENOSPC`):**
+
+```bash
+df -h
+docker system prune -af
+docker builder prune -af
 ```
 
 ---
@@ -191,7 +210,7 @@ Postgres/Redis sobem do compose (não precisam rebuild). Só `api` e `web` vêm 
 ## O que não fazer
 
 - `docker-compose.prod.yml` **sozinho** (Caddy briga com Apache na 80/443).
-- Build `--build` no servidor suporte (DNS bridge quebrado).
+- `SMTP_PASS=` no `.env.production` se a senha tiver `$` (use `SMTP_PASS_B64`).
 - Usar MySQL/Postgres do host.
 - Commitar `.env.production`.
 
