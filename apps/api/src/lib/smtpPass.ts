@@ -1,27 +1,31 @@
 import fs from "fs";
 
-/**
- * Senha SMTP sem passar pelo parser do Docker Compose.
- * Compose expande $var em --env-file e env_file — use SMTP_PASS_FILE (.smtp.env montado).
- */
+const SMTP_PASS_PREFIX = "SMTP_PASS=";
+
+function firstContentLine(text: string): string {
+  return (
+    text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l && !l.startsWith("#")) ?? ""
+  );
+}
+
+function parseSmtpPassLine(line: string): string {
+  return line.startsWith(SMTP_PASS_PREFIX)
+    ? line.slice(SMTP_PASS_PREFIX.length).trim()
+    : line;
+}
+
+/** SMTP_PASS_FILE (.smtp.env montado) ou SMTP_PASS no ambiente. */
 export function readSmtpPass(): string {
-  const path = process.env.SMTP_PASS_FILE?.trim();
-  if (path) {
+  const filePath = process.env.SMTP_PASS_FILE?.trim();
+  if (filePath) {
     try {
-      const raw = fs.readFileSync(path, "utf8");
-      const line =
-        raw
-          .split(/\r?\n/)
-          .map((l) => l.trim())
-          .find((l) => l && !l.startsWith("#")) ?? "";
-      if (!line) return "";
-      const eq = line.indexOf("=");
-      if (eq > 0 && line.slice(0, eq).trim() === "SMTP_PASS") {
-        return line.slice(eq + 1).trim();
-      }
-      return line;
-    } catch (e) {
-      console.error(`[email] não leu SMTP_PASS_FILE (${path}):`, e);
+      const line = firstContentLine(fs.readFileSync(filePath, "utf8"));
+      if (line) return parseSmtpPassLine(line);
+    } catch {
+      /* usa SMTP_PASS se o arquivo não existir */
     }
   }
   return process.env.SMTP_PASS ?? "";

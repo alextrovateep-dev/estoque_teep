@@ -117,7 +117,7 @@ async function parseJsonResponse(res: Response): Promise<unknown> {
 
 const fetchCreds: RequestCredentials = "include";
 
-/** Login isolado — sem token legado, sem retry de refresh, sem redirect automático. */
+/** Login direto (sem api() / refresh). */
 export async function loginRequest(
   email: string,
   senha: string

@@ -163,17 +163,13 @@ export TEEP_SUORTE=1   # inclui docker-compose.suporte.yml
 ./scripts/compose-prod.sh up -d api
 ```
 
-**Senha SMTP com `$` (ex.: `$oi`):** Compose **sempre** expande `$` em `.env.production` (WARN `oi`, `passLen 15`).  
-Solução: arquivo **`.smtp.env`** na raiz (não passa pelo Compose):
+**SMTP com `$` na senha:** use `.smtp.env` (`cp deploy/smtp.env.example .smtp.env`). Não coloque `SMTP_PASS` em `.env.production`.
 
 ```bash
 cp deploy/smtp.env.example .smtp.env
 chmod 600 .smtp.env
-nano .smtp.env   # uma linha: LTH@vDdgA,liG$oi=b
-# remova SMTP_PASS= do .env.production
+nano .smtp.env
 ./scripts/rebuild-prod.sh api
-./scripts/compose-prod.sh exec api node -e "const fs=require('fs');const p=process.env.SMTP_PASS_FILE;console.log('passLen',fs.readFileSync(p,'utf8').trim().replace(/^SMTP_PASS=/,'').length)"
-# esperado: passLen 18
 ```
 
 ---

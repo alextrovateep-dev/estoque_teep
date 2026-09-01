@@ -42,8 +42,6 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
-    # Secrets e SMTP: env_file passa valores literais (sem expandir $oi, $VAR…).
-    # O bloco environment: abaixo só o que é montado ou default fixo.
     env_file:
       - ${ENV_FILE:-.env.production}
     environment:
@@ -57,7 +55,6 @@ services:
       PUPPETEER_EXECUTABLE_PATH: ${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
     volumes:
       - api_uploads:/app/uploads
-      # Senha SMTP literal ($ não é interpretado — Compose corrompe env_file)
       - ${SMTP_PASS_FILE_HOST:-./.smtp.env}:/run/teep/smtp.env:ro
     depends_on:
       postgres:

@@ -7,63 +7,37 @@ import {
   normalizeRecipient,
 } from "../services/email/recipientUtils";
 
-let transporter: Transporter | null = null;
+type SmtpConfig = {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+};
 
-function smtpEnv() {
-  const user = process.env.SMTP_USER?.trim() || "";
-  const pass = readSmtpPass();
-  const passFromFile = Boolean(process.env.SMTP_PASS_FILE?.trim());
+function smtpConfig(): SmtpConfig | null {
+  const host = process.env.SMTP_HOST?.trim();
+  if (!host) return null;
   return {
-    host: process.env.SMTP_HOST?.trim() || "",
+    host,
     port: Number(process.env.SMTP_PORT || 587),
     secure: process.env.SMTP_SECURE === "1",
-    user,
-    pass,
-    passLen: pass.length,
-    passFromFile,
-    hasAuth: Boolean(user && pass),
+    user: process.env.SMTP_USER?.trim() || "",
+    pass: readSmtpPass(),
   };
 }
 
-function isSmtpAuthError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err);
-  return /535|authentication|auth/i.test(msg);
+function createTransporter(cfg: SmtpConfig): Transporter {
+  const auth =
+    cfg.user && cfg.pass ? { user: cfg.user, pass: cfg.pass } : undefined;
+  return nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth,
+  });
 }
 
-/** Ajuda a diagnosticar senha truncada pelo Docker Compose ($var no .env). */
-function logSmtpFailure(err: unknown): void {
-  const cfg = smtpEnv();
-  const msg = err instanceof Error ? err.message : String(err);
-  console.error(
-    `[email] SMTP falhou host=${cfg.host} port=${cfg.port} secure=${cfg.secure} user=${cfg.user} passLen=${cfg.passLen} passFromFile=${cfg.passFromFile} erro=${msg}`
-  );
-  if (!cfg.hasAuth) {
-    console.error(
-      "[email] SMTP_HOST definido mas senha/usuário vazio — use .smtp.env (SMTP_PASS_FILE) ou SMTP_USER + SMTP_PASS"
-    );
-  }
-  if (isSmtpAuthError(err)) {
-    console.error(
-      "[email] Dica 535: Compose corta $ na senha. Crie .smtp.env com a senha literal e remova SMTP_PASS do .env.production (ver deploy/smtp.env.example)."
-    );
-  }
-}
-
-function getTransporter(): Transporter | null {
-  const cfg = smtpEnv();
-  if (!cfg.host) return null;
-  if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: cfg.host,
-      port: cfg.port,
-      secure: cfg.secure,
-      auth: cfg.hasAuth ? { user: cfg.user, pass: cfg.pass } : undefined,
-    });
-  }
-  return transporter;
-}
-
-/** Envio SMTP síncrono (worker da fila / teste admin). */
 export async function deliverPreparedMail(opts: {
   to: string;
   subject: string;
@@ -74,9 +48,9 @@ export async function deliverPreparedMail(opts: {
 }): Promise<void> {
   const identity = resolveTransactionalIdentity();
   const to = normalizeRecipient(opts.to);
-  const tx = getTransporter();
+  const cfg = smtpConfig();
 
-  if (!tx) {
+  if (!cfg) {
     console.log(
       `[email:dev] type=${opts.emailType || "?"} channel=transactional to=${to} from=${identity.from} subject=${JSON.stringify(opts.subject)}\n${opts.text}`
     );
@@ -85,7 +59,7 @@ export async function deliverPreparedMail(opts: {
 
   let info;
   try {
-    info = await tx.sendMail({
+    info = await createTransporter(cfg).sendMail({
       from: identity.from,
       replyTo: identity.replyTo,
       envelope: { from: identity.envelopeFrom, to: [to] },
@@ -96,8 +70,10 @@ export async function deliverPreparedMail(opts: {
       headers: opts.asTest ? { "X-TEEP-Email-Test": "1" } : undefined,
     });
   } catch (err) {
-    if (isSmtpAuthError(err)) transporter = null;
-    logSmtpFailure(err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[email] SMTP falhou host=${cfg.host} port=${cfg.port} user=${cfg.user} passLen=${cfg.pass.length} erro=${msg}`
+    );
     throw err;
   }
 
