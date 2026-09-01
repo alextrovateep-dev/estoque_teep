@@ -167,7 +167,8 @@ export async function api<T>(
   if (!headers.has("Content-Type") && options.body) {
     headers.set("Content-Type", "application/json");
   }
-  const token = getAccessToken();
+  const publicAuth = isPublicAuthPath(path);
+  const token = publicAuth ? null : getAccessToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   let res = await fetch(`${API_URL}${path}`, {
@@ -176,7 +177,7 @@ export async function api<T>(
     credentials: fetchCreds,
   });
 
-  if (res.status === 401 && getStoredUser()) {
+  if (res.status === 401 && getStoredUser() && !publicAuth) {
     const fresh = await ensureAccessToken();
     if (fresh) {
       headers.set("Authorization", `Bearer ${fresh}`);
@@ -199,23 +200,15 @@ export async function api<T>(
   return body as T;
 }
 
-function formatApiError(body: unknown, status: number): string {
-  if (status === 401) return "Sessão expirada. Entre de novo e tente outra vez.";
-  if (status === 403) return "Você não tem permissão para esta ação.";
-  if (status === 502 || status === 503) {
-    if (
-      body &&
-      typeof body === "object" &&
-      typeof (body as { error?: unknown }).error === "string" &&
-      (body as { error: string }).error.trim()
-    ) {
-      return (body as { error: string }).error.trim();
-    }
-    return "Serviço temporariamente indisponível. Tente de novo em instantes.";
-  }
-  if (!body || typeof body !== "object") {
-    return status === 400 ? MSG_VALIDACAO_GENERICA : `Erro ${status}`;
-  }
+const PUBLIC_AUTH_PATHS = ["/auth/login"];
+
+function isPublicAuthPath(path: string): boolean {
+  const base = path.split("?")[0] ?? path;
+  return PUBLIC_AUTH_PATHS.includes(base);
+}
+
+function extractApiErrorMessage(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
   const b = body as {
     error?: unknown;
     details?: {
@@ -246,6 +239,17 @@ function formatApiError(body: unknown, status: number): string {
   );
   if (fromForm) {
     return mensagemErroValidacao({ message: fromForm });
+  }
+  return null;
+}
+
+function formatApiError(body: unknown, status: number): string {
+  const fromBody = extractApiErrorMessage(body);
+  if (fromBody) return fromBody;
+  if (status === 401) return "Sessão expirada. Entre de novo e tente outra vez.";
+  if (status === 403) return "Você não tem permissão para esta ação.";
+  if (status === 502 || status === 503) {
+    return "Serviço temporariamente indisponível. Tente de novo em instantes.";
   }
   if (status === 400) return MSG_VALIDACAO_GENERICA;
   return `Erro ${status}`;
@@ -325,9 +329,7 @@ export async function apiDownload(
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
-    throw new Error(
-      (errBody as { error?: string }).error || `Erro ${res.status}`
-    );
+    throw new Error(formatApiError(errBody, res.status));
   }
 
   const disposition = res.headers.get("Content-Disposition") || "";

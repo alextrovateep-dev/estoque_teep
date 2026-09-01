@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, getStoredUser, setSession, User } from "@/lib/api";
+import { api, clearSession, getStoredUser, setSession, User } from "@/lib/api";
 import { homeForUser } from "@/lib/access";
 import { TeepLogo } from "@/components/TeepLogo";
 
@@ -30,6 +30,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
+    clearSession();
     try {
       const data = await api<{
         accessToken: string;
