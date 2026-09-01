@@ -22,6 +22,7 @@ export function navAllowlist(
     // Visão
     { href: "/dashboard", label: "Dashboard / Saldos", perm: "dashboard" },
     { href: "/relatorios", label: "Relatórios", perm: "relatorios" },
+    { href: "/movimentacoes", label: "Movimentações", perm: "movimentacoes" },
     // Operações
     { href: "/lancamentos/novo", label: "Novo Lançamento", perm: "lancamentos" },
     {
@@ -30,9 +31,8 @@ export function navAllowlist(
       perm: "transferencias",
     },
     { href: "/rma", label: "Processos RMA", perm: "rma" },
-    // Controle
-    { href: "/movimentacoes", label: "Movimentações", perm: "movimentacoes" },
     { href: "/aprovacoes", label: "Aprovações", perm: "aprovacoes" },
+    // Ajustes
     { href: "/estoque/init", label: "Inventário", perm: "estoque_init" },
     // Cadastros
     { href: "/cadastros/produtos", label: "Produtos", perm: "cadastros_produtos_ver" },

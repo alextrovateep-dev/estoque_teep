@@ -6,6 +6,7 @@ import { userHas } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
 import { matchNomeOuDocumento, onlyDigits } from "@/lib/documento";
 import { useSerieFiltro } from "@/hooks/useSerieFiltro";
+import { tipoVisivelFiltroMovimentacoes } from "@teep/shared";
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
@@ -53,7 +54,15 @@ type Mov = {
 };
 
 type Produto = { id: string; codigo: string; descricao: string };
-type Tipo = { id: string; nome: string; operacao: string };
+type Tipo = {
+  id: string;
+  nome: string;
+  operacao: string;
+  sistema?: boolean;
+  rmaEntradaEstoque?: boolean;
+  rmaSaidaCliente?: boolean;
+  saidaPedidoVenda?: boolean;
+};
 type Parceiro = {
   id: string;
   nome: string;
@@ -121,9 +130,6 @@ export default function MovimentacoesPage() {
   const [produtos, setProdutos] = useState<Produto[]>([]);
 
   const [tipoId, setTipoId] = useState("");
-  const [tipoLabel, setTipoLabel] = useState("");
-  const [tipoQuery, setTipoQuery] = useState("");
-  const [tipoOpen, setTipoOpen] = useState(false);
   const [tipos, setTipos] = useState<Tipo[]>([]);
 
   const [operacaoFiltro, setOperacaoFiltro] = useState<
@@ -191,7 +197,7 @@ export default function MovimentacoesPage() {
     ])
       .then(([p, t, c]) => {
         setProdutos(p);
-        setTipos(t);
+        setTipos(t.filter(tipoVisivelFiltroMovimentacoes));
         setParceiros(c);
       })
       .catch((e) =>
@@ -213,17 +219,25 @@ export default function MovimentacoesPage() {
       .slice(0, 20);
   }, [produtos, produtoQuery]);
 
-  const tiposFiltrados = useMemo(() => {
-    const q = tipoQuery.trim().toLowerCase();
-    if (!q) return [];
-    return tipos
-      .filter(
-        (t) =>
-          t.nome.toLowerCase().includes(q) ||
-          t.operacao.toLowerCase().includes(q)
-      )
-      .slice(0, 20);
-  }, [tipos, tipoQuery]);
+  const tiposVisiveis = useMemo(() => {
+    if (!operacaoFiltro) return tipos;
+    return tipos.filter((t) => t.operacao === operacaoFiltro);
+  }, [tipos, operacaoFiltro]);
+
+  const tiposPorOperacao = useMemo(() => {
+    const byOp = (op: Tipo["operacao"]) =>
+      tiposVisiveis.filter((t) => t.operacao === op);
+    return {
+      ENTRADA: byOp("ENTRADA"),
+      SAIDA: byOp("SAIDA"),
+      TRANSFERENCIA: byOp("TRANSFERENCIA"),
+    };
+  }, [tiposVisiveis]);
+
+  const tipoLabel = useMemo(() => {
+    if (!tipoId) return "";
+    return tipos.find((t) => t.id === tipoId)?.nome ?? "";
+  }, [tipoId, tipos]);
 
   const parceirosFiltrados = useMemo(() => {
     const q = parceiroQuery.trim();
@@ -471,18 +485,25 @@ export default function MovimentacoesPage() {
     setPage(1);
   }
 
-  function selecionarTipo(t: Tipo) {
-    setTipoId(t.id);
-    setTipoLabel(t.nome);
-    setTipoQuery(t.nome);
-    setTipoOpen(false);
+  function mudarOperacaoFiltro(
+    v: "" | "ENTRADA" | "SAIDA" | "TRANSFERENCIA"
+  ) {
+    setOperacaoFiltro(v);
+    if (tipoId) {
+      const t = tipos.find((x) => x.id === tipoId);
+      if (t && v && t.operacao !== v) setTipoId("");
+    }
     setPage(1);
   }
 
-  function limparTipo() {
-    setTipoId("");
-    setTipoLabel("");
-    setTipoQuery("");
+  function mudarTipoFiltro(id: string) {
+    setTipoId(id);
+    if (id) {
+      const t = tipos.find((x) => x.id === id);
+      if (t?.operacao === "ENTRADA" || t?.operacao === "SAIDA" || t?.operacao === "TRANSFERENCIA") {
+        setOperacaoFiltro(t.operacao);
+      }
+    }
     setPage(1);
   }
 
@@ -516,7 +537,7 @@ export default function MovimentacoesPage() {
     setDataInicio(daysAgoISO(30));
     setDataFim(todayISO());
     limparProduto();
-    limparTipo();
+    setTipoId("");
     limparParceiro();
     setParceiroModo("");
     setOperacaoFiltro("");
@@ -681,82 +702,71 @@ export default function MovimentacoesPage() {
             )}
           </div>
 
-          <div className="relative col-span-1 min-w-0 sm:col-span-1 lg:col-span-2">
-            <div className="flex gap-1">
-              <input
-                value={tipoQuery}
-                onChange={(e) => {
-                  setTipoQuery(e.target.value);
-                  setTipoId("");
-                  setTipoLabel("");
-                  setTipoOpen(true);
-                  setPage(1);
-                }}
-                onFocus={() => setTipoOpen(true)}
-                onBlur={() => setTimeout(() => setTipoOpen(false), 150)}
-                placeholder="Tipo…"
-                className="w-full min-w-0 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
-                autoComplete="off"
-              />
-              {(tipoId || tipoQuery) && (
-                <button
-                  type="button"
-                  onClick={limparTipo}
-                  className="shrink-0 rounded-md border border-slate-200 px-1.5 text-slate-500 hover:bg-slate-50"
-                  title="Limpar tipo"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-            {tipoOpen && tipoQuery.trim() && !tipoId && (
-              <ul className="absolute z-20 mt-1 max-h-56 w-full min-w-[12rem] overflow-auto rounded-lg border bg-white shadow-lg">
-                {tiposFiltrados.length === 0 ? (
-                  <li className="px-3 py-2 text-sm text-slate-500">
-                    Nenhum tipo encontrado
-                  </li>
-                ) : (
-                  tiposFiltrados.map((t) => (
-                    <li key={t.id}>
-                      <button
-                        type="button"
-                        className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          selecionarTipo(t);
-                        }}
-                      >
-                        {t.nome}
-                        <span className="ml-1 text-xs text-slate-400">
-                          ({t.operacao === "TRANSFERENCIA" ? "A→B" : t.operacao})
-                        </span>
-                      </button>
-                    </li>
-                  ))
-                )}
-              </ul>
-            )}
-          </div>
-
           <select
             value={operacaoFiltro}
             onChange={(e) => {
               const v = e.target.value;
-              setOperacaoFiltro(
+              mudarOperacaoFiltro(
                 v === "ENTRADA" || v === "SAIDA" || v === "TRANSFERENCIA"
                   ? v
                   : ""
               );
-              setPage(1);
             }}
             className="col-span-1 min-w-0 rounded-md border border-slate-200 px-2 py-1.5 text-sm sm:col-span-1 lg:col-span-1"
-            title="Filtrar por operação"
+            title="Filtrar por operação (entrada, saída ou transferência)"
             aria-label="Operação"
           >
             <option value="">Operação</option>
-            <option value="ENTRADA">Entrada</option>
-            <option value="SAIDA">Saída</option>
-            <option value="TRANSFERENCIA">Transferência</option>
+            <option value="ENTRADA">Entradas</option>
+            <option value="SAIDA">Saídas</option>
+            <option value="TRANSFERENCIA">Transferências</option>
+          </select>
+
+          <select
+            value={tipoId}
+            onChange={(e) => mudarTipoFiltro(e.target.value)}
+            className="col-span-2 min-w-0 rounded-md border border-slate-200 px-2 py-1.5 text-sm sm:col-span-2 lg:col-span-2"
+            title="Tipo de movimentação"
+            aria-label="Tipo de movimentação"
+          >
+            <option value="">Todos os tipos</option>
+            {operacaoFiltro ? (
+              tiposVisiveis.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.nome}
+                </option>
+              ))
+            ) : (
+              <>
+                {tiposPorOperacao.ENTRADA.length > 0 ? (
+                  <optgroup label="Entradas">
+                    {tiposPorOperacao.ENTRADA.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.nome}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {tiposPorOperacao.SAIDA.length > 0 ? (
+                  <optgroup label="Saídas">
+                    {tiposPorOperacao.SAIDA.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.nome}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {tiposPorOperacao.TRANSFERENCIA.length > 0 ? (
+                  <optgroup label="Transferências">
+                    {tiposPorOperacao.TRANSFERENCIA.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.nome}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </>
+            )}
           </select>
 
           <div className="relative col-span-2 min-w-0 sm:col-span-2 lg:col-span-3">

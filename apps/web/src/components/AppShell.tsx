@@ -25,7 +25,7 @@ const OPS_GROUP_LABELS: Record<NonNullable<NavItem["group"]>, string> = {
   visao: "Visão",
   operacoes: "Operações",
   rma: "RMA",
-  controle: "Controle",
+  controle: "Ajustes",
   cadastros: "Cadastros",
 };
 
@@ -228,6 +228,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         group: "visao",
         perm: "relatorios",
       },
+      {
+        href: "/movimentacoes",
+        label: "Movimentações",
+        section: "ops",
+        group: "visao",
+        perm: "movimentacoes",
+      },
       // Operações — ações do dia (inclui fila de aprovação)
       {
         href: "/lancamentos/novo",
@@ -265,14 +272,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         group: "rma",
         perm: "rma",
       },
-      // Controle — histórico e ajustes
-      {
-        href: "/movimentacoes",
-        label: "Movimentações",
-        section: "ops",
-        group: "controle",
-        perm: "movimentacoes",
-      },
+      // Ajustes — inventário / saldo inicial
       {
         href: "/estoque/init",
         label: "Inventário",

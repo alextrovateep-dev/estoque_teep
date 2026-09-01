@@ -20,6 +20,7 @@ import {
   isValidCnpj,
   tipoExigeCnpj,
   MSG_CNPJ_OBRIGATORIO,
+  tipoVisivelFiltroMovimentacoes,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { upsertConfiguracaoSerie } from "../services/geracaoSerieService";
@@ -1529,15 +1530,14 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
     const paraLancamento = req.query.paraLancamento === "1";
     const paraFiltro = req.query.paraFiltro === "1";
 
-    // Filtros da linha do tempo: todos os tipos ativos (inclui sistema)
+    // Filtro da tela Movimentações: tipos de negócio (sem internos do sistema)
     if (paraFiltro) {
-      return res.json(
-        await prisma.tipoMovimentacao.findMany({
-          where: { ativo: true },
-          include: tipoIncludeFiliais,
-          orderBy: { nome: "asc" },
-        })
-      );
+      const all = await prisma.tipoMovimentacao.findMany({
+        where: { ativo: true },
+        include: tipoIncludeFiliais,
+        orderBy: { nome: "asc" },
+      });
+      return res.json(all.filter(tipoVisivelFiltroMovimentacoes));
     }
 
     if (!paraLancamento && req.user?.perfil === "ADMIN") {
