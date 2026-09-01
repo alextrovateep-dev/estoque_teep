@@ -21,11 +21,17 @@ set +a
 : "${NEXT_PUBLIC_API_URL:?defina NEXT_PUBLIC_API_URL em $ENV_FILE}"
 : "${NEXT_PUBLIC_APP_URL:?defina NEXT_PUBLIC_APP_URL em $ENV_FILE}"
 
+NO_CACHE=()
+if [[ "${NO_CACHE_BUILD:-}" == "1" ]] || [[ "${2:-}" == "--no-cache" ]]; then
+  NO_CACHE=(--no-cache)
+  echo "==> Modo --no-cache"
+fi
+
 echo "==> Build api (estoque-teep-api:latest)"
-docker build -f apps/api/Dockerfile -t estoque-teep-api:latest .
+docker build "${NO_CACHE[@]}" -f apps/api/Dockerfile -t estoque-teep-api:latest .
 
 echo "==> Build web (estoque-teep-web:latest)"
-docker build -f apps/web/Dockerfile \
+docker build "${NO_CACHE[@]}" -f apps/web/Dockerfile \
   --build-arg "NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}" \
   --build-arg "NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}" \
   -t estoque-teep-web:latest .

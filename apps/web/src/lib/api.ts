@@ -44,10 +44,118 @@ export function displayName(user: Pick<User, "nome" | "apelido">): string {
 
 const ACCESS = "teep_access";
 const USER = "teep_user";
-/** Legado: limpar se ainda existir de sessões antigas. */
+/** Legado: refresh em localStorage (removido — cookie HttpOnly na API). */
 const REFRESH_LEGACY = "teep_refresh";
 
+const PUBLIC_AUTH_PATHS = ["/auth/login", "/auth/logout"];
+
+function isPublicAuthPath(path: string): boolean {
+  const base = path.split("?")[0] ?? path;
+  return PUBLIC_AUTH_PATHS.includes(base);
+}
+
+function extractApiErrorMessage(body: unknown): string | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as {
+    error?: unknown;
+    details?: {
+      formErrors?: string[];
+      fieldErrors?: Record<string, string[] | undefined>;
+    };
+  };
+  const fieldKey = Object.keys(b.details?.fieldErrors || {})[0];
+  const fieldMsg = fieldKey
+    ? (b.details?.fieldErrors?.[fieldKey] || []).find(
+        (m) => typeof m === "string" && m.trim()
+      )
+    : undefined;
+  if (typeof b.error === "string" && b.error.trim()) {
+    return mensagemErroValidacao({
+      message: b.error.trim(),
+      path: fieldKey ? [fieldKey] : [],
+    });
+  }
+  if (fieldMsg || fieldKey) {
+    return mensagemErroValidacao({
+      message: fieldMsg,
+      path: fieldKey ? [fieldKey] : [],
+    });
+  }
+  const fromForm = (b.details?.formErrors || []).find(
+    (m) => typeof m === "string" && m.trim()
+  );
+  if (fromForm) {
+    return mensagemErroValidacao({ message: fromForm });
+  }
+  return null;
+}
+
+function formatApiError(body: unknown, status: number): string {
+  const fromBody = extractApiErrorMessage(body);
+  if (fromBody) return fromBody;
+  if (status === 401) return "Sessão expirada. Entre de novo e tente outra vez.";
+  if (status === 403) return "Você não tem permissão para esta ação.";
+  if (status === 502 || status === 503) {
+    return "Serviço temporariamente indisponível. Tente de novo em instantes.";
+  }
+  if (status === 400) return MSG_VALIDACAO_GENERICA;
+  if (status === 0) {
+    return "Não foi possível contactar a API. Verifique sua conexão.";
+  }
+  return `Erro ${status}`;
+}
+
+async function parseJsonResponse(res: Response): Promise<unknown> {
+  const text = await res.text();
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return {};
+  }
+}
+
 const fetchCreds: RequestCredentials = "include";
+
+/** Login isolado — sem token legado, sem retry de refresh, sem redirect automático. */
+export async function loginRequest(
+  email: string,
+  senha: string
+): Promise<{ accessToken: string; user: User }> {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: fetchCreds,
+      body: JSON.stringify({
+        email: email.trim().toLowerCase(),
+        senha,
+      }),
+    });
+  } catch {
+    throw new Error(
+      `Não foi possível contactar a API (${API_URL}). Verifique DNS, HTTPS e CORS_ORIGIN.`
+    );
+  }
+
+  const body = await parseJsonResponse(res);
+  if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error(
+        extractApiErrorMessage(body) || "E-mail ou senha incorretos."
+      );
+    }
+    if (res.status === 429) {
+      throw new Error(
+        extractApiErrorMessage(body) ||
+          "Muitas tentativas de login. Aguarde 1 minuto."
+      );
+    }
+    throw new Error(formatApiError(body, res.status));
+  }
+  return body as { accessToken: string; user: User };
+}
 
 export function getStoredUser(): User | null {
   if (typeof window === "undefined") return null;
@@ -193,66 +301,11 @@ export async function api<T>(
     }
   }
 
-  const body = await res.json().catch(() => ({}));
+  const body = await parseJsonResponse(res);
   if (!res.ok) {
     throw new Error(formatApiError(body, res.status));
   }
   return body as T;
-}
-
-const PUBLIC_AUTH_PATHS = ["/auth/login"];
-
-function isPublicAuthPath(path: string): boolean {
-  const base = path.split("?")[0] ?? path;
-  return PUBLIC_AUTH_PATHS.includes(base);
-}
-
-function extractApiErrorMessage(body: unknown): string | null {
-  if (!body || typeof body !== "object") return null;
-  const b = body as {
-    error?: unknown;
-    details?: {
-      formErrors?: string[];
-      fieldErrors?: Record<string, string[] | undefined>;
-    };
-  };
-  const fieldKey = Object.keys(b.details?.fieldErrors || {})[0];
-  const fieldMsg = fieldKey
-    ? (b.details?.fieldErrors?.[fieldKey] || []).find(
-        (m) => typeof m === "string" && m.trim()
-      )
-    : undefined;
-  if (typeof b.error === "string" && b.error.trim()) {
-    return mensagemErroValidacao({
-      message: b.error.trim(),
-      path: fieldKey ? [fieldKey] : [],
-    });
-  }
-  if (fieldMsg || fieldKey) {
-    return mensagemErroValidacao({
-      message: fieldMsg,
-      path: fieldKey ? [fieldKey] : [],
-    });
-  }
-  const fromForm = (b.details?.formErrors || []).find(
-    (m) => typeof m === "string" && m.trim()
-  );
-  if (fromForm) {
-    return mensagemErroValidacao({ message: fromForm });
-  }
-  return null;
-}
-
-function formatApiError(body: unknown, status: number): string {
-  const fromBody = extractApiErrorMessage(body);
-  if (fromBody) return fromBody;
-  if (status === 401) return "Sessão expirada. Entre de novo e tente outra vez.";
-  if (status === 403) return "Você não tem permissão para esta ação.";
-  if (status === 502 || status === 503) {
-    return "Serviço temporariamente indisponível. Tente de novo em instantes.";
-  }
-  if (status === 400) return MSG_VALIDACAO_GENERICA;
-  return `Erro ${status}`;
 }
 
 /** Upload multipart (não define Content-Type — o browser seta boundary). */

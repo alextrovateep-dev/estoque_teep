@@ -147,9 +147,24 @@ sudo systemctl reload apache2
 2. Trocar senha do admin
 3. No `.env.production`: `SEED_ON_START=0` e reiniciar API:
    ```bash
-   docker-compose -f docker-compose.prod.yml -f docker-compose.suporte.yml \
-     --env-file .env.production up -d api
+   export TEEP_SUORTE=1
+   ./scripts/compose-prod.sh up -d api
    ```
+
+### Comandos do dia a dia (servidor suporte)
+
+Sempre na raiz `/opt/estoque-teep`:
+
+```bash
+export TEEP_SUORTE=1   # inclui docker-compose.suporte.yml
+
+./scripts/compose-prod.sh ps
+./scripts/compose-prod.sh logs api --tail=100
+./scripts/compose-prod.sh up -d api
+./scripts/compose-prod.sh exec api node -e "console.log('passLen', (process.env.SMTP_PASS||'').length)"
+```
+
+SMTP/senhas com `$` (ex.: `$oi`): **não** precisam `$$` no `.env` para a API — o serviço `api` usa `env_file` e recebe o valor literal. Ainda use `--env-file` (o script faz isso) para interpolar `DATABASE_URL` / build do `web`.
 
 ---
 

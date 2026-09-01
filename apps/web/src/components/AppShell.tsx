@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { getStoredUser, logoutSession, User, api, displayName } from "@/lib/api";
+import { getStoredUser, logoutSession, User, api, displayName, clearSession } from "@/lib/api";
 import { homeForUser, userCanOpenCadastro, userHas, userHasAny } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -183,6 +183,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         meFetchedRef.current = false;
+        clearSession();
+        router.replace("/login");
       });
 
     return () => window.removeEventListener("teep-user-updated", onUserUpdated);

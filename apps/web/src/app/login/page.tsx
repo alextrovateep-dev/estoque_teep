@@ -2,7 +2,14 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, clearSession, getStoredUser, setSession, User } from "@/lib/api";
+import {
+  clearSession,
+  ensureAccessToken,
+  getStoredUser,
+  loginRequest,
+  setSession,
+  User,
+} from "@/lib/api";
 import { homeForUser } from "@/lib/access";
 import { TeepLogo } from "@/components/TeepLogo";
 
@@ -19,11 +26,28 @@ export default function LoginPage() {
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
 
   useEffect(() => {
-    const u = getStoredUser();
-    if (!u) return;
-    router.replace(destinoPosLogin(u));
+    let cancelled = false;
+    void (async () => {
+      const u = getStoredUser();
+      if (!u) {
+        if (!cancelled) setCheckingSession(false);
+        return;
+      }
+      const token = await ensureAccessToken();
+      if (cancelled) return;
+      if (token) {
+        router.replace(destinoPosLogin(u));
+        return;
+      }
+      clearSession();
+      setCheckingSession(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
 
   async function onSubmit(e: FormEvent) {
@@ -32,16 +56,7 @@ export default function LoginPage() {
     setLoading(true);
     clearSession();
     try {
-      const data = await api<{
-        accessToken: string;
-        user: User;
-      }>("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          senha,
-        }),
-      });
+      const data = await loginRequest(email, senha);
       setSession(data);
       router.replace(destinoPosLogin(data.user));
     } catch (err) {
@@ -49,6 +64,14 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-brand-light to-slate-100 px-4">
+        <p className="text-sm text-slate-500">Verificando sessão…</p>
+      </div>
+    );
   }
 
   return (
