@@ -163,13 +163,13 @@ export TEEP_SUORTE=1   # inclui docker-compose.suporte.yml
 ./scripts/compose-prod.sh up -d api
 ```
 
-**SMTP com `$` na senha:** use `.smtp.env` (`cp deploy/smtp.env.example .smtp.env`). Não coloque `SMTP_PASS` em `.env.production`.
+**Senha SMTP com `$`:** use `SMTP_PASS_B64` no `.env.production` (um arquivo só):
 
 ```bash
-cp deploy/smtp.env.example .smtp.env
-chmod 600 .smtp.env
-nano .smtp.env
-./scripts/rebuild-prod.sh api
+echo -n 'SUA_SENHA_LITERAL' | base64 -w0
+# cole o resultado em SMTP_PASS_B64=... no .env.production
+# não use SMTP_PASS= nessa senha
+./scripts/compose-prod.sh up -d api
 ```
 
 ---

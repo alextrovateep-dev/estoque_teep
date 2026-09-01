@@ -17,16 +17,30 @@ function parseSmtpPassLine(line: string): string {
     : line;
 }
 
-/** SMTP_PASS_FILE (.smtp.env montado) ou SMTP_PASS no ambiente. */
+function readPassFromFile(filePath: string): string {
+  const line = firstContentLine(fs.readFileSync(filePath, "utf8"));
+  return line ? parseSmtpPassLine(line) : "";
+}
+
+/** Ordem: SMTP_PASS_B64 → SMTP_PASS_FILE (legado) → SMTP_PASS. */
 export function readSmtpPass(): string {
+  const b64 = process.env.SMTP_PASS_B64?.trim();
+  if (b64) {
+    try {
+      return Buffer.from(b64, "base64").toString("utf8");
+    } catch {
+      console.error("[email] SMTP_PASS_B64 inválido");
+    }
+  }
+
   const filePath = process.env.SMTP_PASS_FILE?.trim();
   if (filePath) {
     try {
-      const line = firstContentLine(fs.readFileSync(filePath, "utf8"));
-      if (line) return parseSmtpPassLine(line);
+      return readPassFromFile(filePath);
     } catch {
-      /* usa SMTP_PASS se o arquivo não existir */
+      /* fallback */
     }
   }
+
   return process.env.SMTP_PASS ?? "";
 }
