@@ -4,6 +4,7 @@ dist
 .env
 .env.local
 .env.production
+.smtp.env
 apps/api/.env
 apps/web/.env.local
 *.log

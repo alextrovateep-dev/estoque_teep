@@ -53,9 +53,12 @@ services:
       API_PORT: 4000
       TRUST_PROXY: "1"
       UPLOAD_DIR: /app/uploads
+      SMTP_PASS_FILE: /run/teep/smtp.env
       PUPPETEER_EXECUTABLE_PATH: ${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}
     volumes:
       - api_uploads:/app/uploads
+      # Senha SMTP literal ($ não é interpretado — Compose corrompe env_file)
+      - ${SMTP_PASS_FILE_HOST:-./.smtp.env}:/run/teep/smtp.env:ro
     depends_on:
       postgres:
         condition: service_healthy

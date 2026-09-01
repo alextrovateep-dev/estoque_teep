@@ -1,6 +1,7 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
 import { resolveTransactionalIdentity } from "./mailIdentity";
+import { readSmtpPass } from "./smtpPass";
 import {
   escapeHtml,
   normalizeRecipient,
@@ -10,7 +11,8 @@ let transporter: Transporter | null = null;
 
 function smtpEnv() {
   const user = process.env.SMTP_USER?.trim() || "";
-  const pass = process.env.SMTP_PASS ?? "";
+  const pass = readSmtpPass();
+  const passFromFile = Boolean(process.env.SMTP_PASS_FILE?.trim());
   return {
     host: process.env.SMTP_HOST?.trim() || "",
     port: Number(process.env.SMTP_PORT || 587),
@@ -18,6 +20,7 @@ function smtpEnv() {
     user,
     pass,
     passLen: pass.length,
+    passFromFile,
     hasAuth: Boolean(user && pass),
   };
 }
@@ -32,16 +35,16 @@ function logSmtpFailure(err: unknown): void {
   const cfg = smtpEnv();
   const msg = err instanceof Error ? err.message : String(err);
   console.error(
-    `[email] SMTP falhou host=${cfg.host} port=${cfg.port} secure=${cfg.secure} user=${cfg.user} passLen=${cfg.passLen} erro=${msg}`
+    `[email] SMTP falhou host=${cfg.host} port=${cfg.port} secure=${cfg.secure} user=${cfg.user} passLen=${cfg.passLen} passFromFile=${cfg.passFromFile} erro=${msg}`
   );
   if (!cfg.hasAuth) {
     console.error(
-      "[email] SMTP_HOST definido mas SMTP_USER/SMTP_PASS vazio — verifique .env.production e reinicie a api"
+      "[email] SMTP_HOST definido mas senha/usuário vazio — use .smtp.env (SMTP_PASS_FILE) ou SMTP_USER + SMTP_PASS"
     );
   }
   if (isSmtpAuthError(err)) {
     console.error(
-      "[email] Dica 535: servidor rejeitou login (user/senha/porta/secure). Confira SMTP_* no container (passLen acima). Senha com $: use env_file no compose (SMTP_PASS literal) — se POSTGRES_PASSWORD tiver $, escape $$ no .env para DATABASE_URL."
+      "[email] Dica 535: Compose corta $ na senha. Crie .smtp.env com a senha literal e remova SMTP_PASS do .env.production (ver deploy/smtp.env.example)."
     );
   }
 }
