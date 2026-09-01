@@ -100,9 +100,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [pendentesAprovacao, setPendentesAprovacao] = useState(0);
   const [showBday, setShowBday] = useState(false);
-  const meFetchedRef = useRef(false);
 
-  /** Sessão local + redirects; /auth/me só na 1ª montagem do shell (persiste entre páginas). */
+  /** Sessão local + /auth/me a cada navegação (perfil admin pode mudar no DB). */
   useEffect(() => {
     const u = getStoredUser();
     if (!u) {
@@ -121,10 +120,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       router.replace("/perfil?completar=1");
       return;
     }
-    if (!routeAllowed(pathname, u)) {
-      router.replace(homeForUser(u));
-      return;
-    }
     setUser(u);
     setOpen(false);
 
@@ -134,10 +129,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
     window.addEventListener("teep-user-updated", onUserUpdated);
 
-    if (meFetchedRef.current) {
-      return () => window.removeEventListener("teep-user-updated", onUserUpdated);
-    }
-    meFetchedRef.current = true;
     void api<User>("/auth/me")
       .then((me) => {
         const next: User = {
@@ -182,7 +173,6 @@ export function AppShell({ children }: { children: ReactNode }) {
         }
       })
       .catch(() => {
-        meFetchedRef.current = false;
         clearSession();
         router.replace("/login");
       });

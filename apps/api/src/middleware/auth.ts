@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { randomUUID } from "crypto";
 import { Perfil } from "@teep/shared";
+import { prisma } from "../lib/prisma";
 
 export type AuthUser = {
   id: string;
@@ -128,24 +129,56 @@ export function authenticate(
 }
 
 export function requirePerfil(...perfis: Perfil[]) {
-  return (req: AuthedRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !perfis.includes(req.user.perfil)) {
+  return async (req: AuthedRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
       return res.status(403).json({ error: "Acesso negado para este perfil" });
     }
-    next();
+    try {
+      const row = await prisma.usuario.findUnique({
+        where: { id: req.user.id },
+        select: { perfil: true, ativo: true },
+      });
+      if (!row?.ativo) {
+        return res.status(401).json({ error: "Usuário inativo" });
+      }
+      const perfilDb = row.perfil as Perfil;
+      if (!perfis.includes(perfilDb)) {
+        return res.status(403).json({ error: "Acesso negado para este perfil" });
+      }
+      // JWT pode estar defasado após conceder/revogar admin — rotas usam perfil do DB.
+      req.user.perfil = perfilDb;
+      next();
+    } catch (e) {
+      next(e);
+    }
   };
 }
 
-export function requireFilialOperador(
+export async function requireFilialOperador(
   req: AuthedRequest,
   res: Response,
   next: NextFunction
 ) {
-  if (
-    req.user?.perfil === "OPERADOR" &&
-    !(req.user.filialIds?.length || req.user.filialId)
-  ) {
-    return res.status(403).json({ error: "Operador sem filial vinculada" });
+  if (!req.user) return next();
+  try {
+    const row = await prisma.usuario.findUnique({
+      where: { id: req.user.id },
+      select: {
+        perfil: true,
+        filialId: true,
+        filiaisVinculos: { select: { filialId: true } },
+      },
+    });
+    if (!row) return next();
+    req.user.perfil = row.perfil as Perfil;
+    if (row.perfil !== "OPERADOR") return next();
+    const ids = row.filiaisVinculos.map((v) => v.filialId);
+    const hasFilial = ids.length > 0 || Boolean(row.filialId);
+    if (!hasFilial) {
+      return res.status(403).json({ error: "Operador sem filial vinculada" });
+    }
+    next();
+  } catch (e) {
+    next(e);
   }
-  next();
 }

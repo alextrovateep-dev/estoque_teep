@@ -97,11 +97,7 @@ function UsuariosPageInner() {
     }
   }
 
-  async function toggleAdminAccess(
-    u: Usuario,
-    grant: boolean,
-    perfil: "GERENTE" | "OPERADOR" = "GERENTE"
-  ) {
+  async function toggleAdminAccess(u: Usuario, grant: boolean) {
     const self = getStoredUser();
     if (!grant && u.id === self?.id) {
       setError("Você não pode revogar seu próprio acesso administrador.");
@@ -112,7 +108,7 @@ function UsuariosPageInner() {
           `Conceder acesso administrador a ${u.nome}? Terá acesso total ao sistema.`
         )
       : confirm(
-          `Revogar acesso administrador de ${u.nome}? Voltará a ${perfil === "OPERADOR" ? "Operador" : "Gerente"}.`
+          `Revogar acesso administrador de ${u.nome}? Voltará ao perfil anterior (Gerente ou Operador).`
         );
     if (!ok) return;
     setError("");
@@ -120,9 +116,7 @@ function UsuariosPageInner() {
     try {
       await api(`/usuarios/${u.id}/admin-access`, {
         method: "POST",
-        body: JSON.stringify(
-          grant ? { admin: true } : { admin: false, perfil }
-        ),
+        body: JSON.stringify(grant ? { admin: true } : { admin: false }),
       });
       showFeedback(
         grant
@@ -136,7 +130,13 @@ function UsuariosPageInner() {
   }
 
   async function resetSenhaProvisoria(u: Usuario) {
-    if (u.perfil === "ADMIN") return;
+    const self = getStoredUser();
+    if (u.perfil === "ADMIN" && u.id === self?.id) {
+      setError(
+        "Para sua senha de admin, use Perfil → trocar senha (ou outro administrador pode resetar)."
+      );
+      return;
+    }
     if (
       !confirm(
         `Gerar nova senha provisória para ${u.email} e enviar por e-mail?`
@@ -167,9 +167,9 @@ function UsuariosPageInner() {
         <div>
           <h1 className="text-2xl font-semibold">Usuários e Perfis</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Cadastre Gerente e Operador. Você pode conceder ou revogar acesso
-            administrador depois. A senha é provisória: o usuário recebe e-mail
-            e troca no primeiro acesso.
+            Cadastre Gerente ou Operador. Administrador = mesma conta, com
+            acesso total (botão &quot;Tornar admin&quot;). Senha provisória no
+            primeiro acesso.
           </p>
         </div>
         <Link
@@ -284,18 +284,7 @@ function UsuariosPageInner() {
                     >
                       Editar
                     </Link>
-                    {u.perfil === "ADMIN" ? (
-                      u.id !== getStoredUser()?.id && (
-                        <button
-                          type="button"
-                          onClick={() => void toggleAdminAccess(u, false)}
-                          className="text-violet-700 hover:underline"
-                          title="Volta ao perfil Gerente"
-                        >
-                          Revogar admin
-                        </button>
-                      )
-                    ) : (
+                    {u.perfil !== "ADMIN" ? (
                       <>
                         {u.ativo && (
                           <button
@@ -314,6 +303,26 @@ function UsuariosPageInner() {
                           Reset senha
                         </button>
                       </>
+                    ) : (
+                      u.id !== getStoredUser()?.id && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void toggleAdminAccess(u, false)}
+                            className="text-violet-700 hover:underline"
+                            title="Volta ao perfil Gerente"
+                          >
+                            Revogar admin
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void resetSenhaProvisoria(u)}
+                            className="text-brand hover:underline"
+                          >
+                            Reset senha
+                          </button>
+                        </>
+                      )
                     )}
                     <button
                       type="button"

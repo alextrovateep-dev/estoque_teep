@@ -533,9 +533,9 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
             {editId ? "Editar usuário" : "Cadastrar usuário"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Cadastre Gerente e Operador. A senha é provisória: o usuário recebe
-            e-mail e troca no primeiro acesso. Defina foto, filiais e o que cada
-            pessoa pode ver e fazer.
+            Cadastre Gerente ou Operador (mesmo e-mail e senha de sempre).
+            Administrador não é cadastro separado: conceda acesso total a quem
+            já existe — a pessoa continua entrando com a mesma conta.
           </p>
         </div>
         <Link
@@ -655,8 +655,9 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
             ) : (
               <>
                 <p className="mt-1 text-xs text-violet-900/80">
-                  Concede menu Administração e permissões totais. Pode ser
-                  revogado depois.
+                  Concede menu Administração e acesso total. E-mail e senha do
+                  usuário não mudam — só o nível de permissão. Pode revogar
+                  depois (volta Gerente ou Operador).
                   {!usuarioAtivo
                     ? " Ative o usuário antes de conceder administrador."
                     : ""}

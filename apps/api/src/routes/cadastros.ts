@@ -509,7 +509,7 @@ cadastrosRouter.post(
 cadastrosRouter.post(
   "/usuarios/:id/senha-provisoria",
   requirePerfil("ADMIN"),
-  async (req, res, next) => {
+  async (req: AuthedRequest, res, next) => {
     try {
       const usuario = await prisma.usuario.findUnique({
         where: { id: req.params.id },
@@ -522,10 +522,10 @@ cadastrosRouter.post(
         },
       });
       if (!usuario) throw new AppError(404, "Usuário não encontrado");
-      if (usuario.perfil === "ADMIN") {
+      if (usuario.perfil === "ADMIN" && usuario.id === req.user!.id) {
         throw new AppError(
           400,
-          "Não é permitido redefinir senha de Admin por esta API"
+          "Use Perfil → trocar senha para alterar a sua própria senha de administrador"
         );
       }
       if (!usuario.ativo) {
@@ -560,6 +560,16 @@ cadastrosRouter.post(
   }
 );
 
+function readPerfilAnterior(permissoes: unknown): Perfil | null {
+  const anterior = (permissoes as Record<string, unknown> | null)?._perfilAnterior;
+  return anterior === "GERENTE" || anterior === "OPERADOR" ? anterior : null;
+}
+
+function permissoesAdminComAnterior(permissoes: unknown): Record<string, string> {
+  const anterior = readPerfilAnterior(permissoes);
+  return anterior ? { _perfilAnterior: anterior } : {};
+}
+
 cadastrosRouter.patch(
   "/usuarios/:id",
   requirePerfil("ADMIN"),
@@ -568,7 +578,7 @@ cadastrosRouter.patch(
     try {
       const atual = await prisma.usuario.findUnique({
         where: { id: req.params.id },
-        select: { id: true, fotoPerfil: true, perfil: true },
+        select: { id: true, fotoPerfil: true, perfil: true, permissoes: true },
       });
       if (!atual) throw new AppError(404, "Usuário não encontrado");
 
@@ -611,7 +621,7 @@ cadastrosRouter.patch(
 
       if (permissoes !== undefined) {
         if (perfilEfetivo === "ADMIN") {
-          data.permissoes = {};
+          data.permissoes = permissoesAdminComAnterior(atual.permissoes);
         } else {
           data.permissoes = resolvePermissoes(
             perfilEfetivo,
@@ -684,6 +694,7 @@ cadastrosRouter.post(
           perfil: true,
           ativo: true,
           filialId: true,
+          permissoes: true,
           filiaisVinculos: { select: { filialId: true } },
         },
       });
@@ -696,9 +707,13 @@ cadastrosRouter.post(
         if (!usuario.ativo) {
           throw new AppError(400, "Usuário inativo");
         }
+        const perfilAnterior = usuario.perfil as Perfil;
         const updated = await prisma.usuario.update({
           where: { id: targetId },
-          data: { perfil: "ADMIN", permissoes: {} },
+          data: {
+            perfil: "ADMIN",
+            permissoes: { _perfilAnterior: perfilAnterior },
+          },
           select: usuarioSelect,
         });
         await prisma.refreshToken.deleteMany({
@@ -726,7 +741,9 @@ cadastrosRouter.post(
         );
       }
 
-      const novoPerfil = (perfilRevogar || "GERENTE") as Perfil;
+      const overrides = usuario.permissoes as Record<string, unknown> | null;
+      const perfilRestaurado = readPerfilAnterior(overrides);
+      const novoPerfil = (perfilRevogar || perfilRestaurado || "GERENTE") as Perfil;
       if (novoPerfil === "OPERADOR") {
         const ids =
           usuario.filiaisVinculos.length > 0
