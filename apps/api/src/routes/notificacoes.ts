@@ -218,7 +218,12 @@ emailAdminRouter.post("/templates/:type/teste", async (req: AuthedRequest, res, 
       (typeof req.body?.to === "string" && req.body.to.trim()) ||
       req.user!.email;
     const sample = await getEmailSample(type);
-    await sendPreparedMailNow(to, sample, { asTest: true });
+    try {
+      await sendPreparedMailNow(to, sample, { asTest: true });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new AppError(502, msg);
+    }
     res.json({ ok: true, to, type, subject: `[TESTE] ${sample.subject}` });
   } catch (e) {
     next(e);
