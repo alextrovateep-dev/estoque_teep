@@ -12,6 +12,7 @@ export type SimulacaoLinha = {
   produtoFilhoId: string;
   codigo: string;
   descricao: string;
+  unidade: string;
   ativo: boolean;
   fantasma: boolean;
   qtdPorUnidade: number;
@@ -30,6 +31,7 @@ export type SimulacaoResult = {
     id: string;
     codigo: string;
     descricao: string;
+    unidade: string;
     precoUnitario: number;
   };
   quantidade: number;
@@ -84,6 +86,7 @@ export async function calcularSimulacaoArvore(opts: {
       id: true,
       codigo: true,
       descricao: true,
+      unidade: true,
       precoUnitario: true,
     },
   });
@@ -103,6 +106,7 @@ export async function calcularSimulacaoArvore(opts: {
           id: true,
           codigo: true,
           descricao: true,
+          unidade: true,
           precoUnitario: true,
           ativo: true,
         },
@@ -156,6 +160,7 @@ export async function calcularSimulacaoArvore(opts: {
       produtoFilhoId: b.produtoFilhoId,
       codigo: b.produtoFilho.codigo,
       descricao: b.produtoFilho.descricao,
+      unidade: b.produtoFilho.unidade,
       ativo: b.produtoFilho.ativo,
       fantasma,
       qtdPorUnidade,
@@ -175,6 +180,7 @@ export async function calcularSimulacaoArvore(opts: {
       id: pai.id,
       codigo: pai.codigo,
       descricao: pai.descricao,
+      unidade: pai.unidade,
       precoUnitario: Number(pai.precoUnitario),
     },
     quantidade: opts.quantidade,

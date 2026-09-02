@@ -1137,6 +1137,7 @@ cadastrosRouter.get("/produtos/:id/componentes", async (req, res, next) => {
         id: true,
         codigo: true,
         descricao: true,
+        unidade: true,
         precoUnitario: true,
         ativo: true,
       },
@@ -1150,6 +1151,7 @@ cadastrosRouter.get("/produtos/:id/componentes", async (req, res, next) => {
             id: true,
             codigo: true,
             descricao: true,
+            unidade: true,
             controlaSerie: true,
             ativo: true,
             precoUnitario: true,
@@ -1162,6 +1164,7 @@ cadastrosRouter.get("/produtos/:id/componentes", async (req, res, next) => {
       produtoId: pai.id,
       codigo: pai.codigo,
       descricao: pai.descricao,
+      unidade: pai.unidade,
       precoUnitario: Number(pai.precoUnitario),
       ativo: pai.ativo,
       itens: itens.map((i) => ({

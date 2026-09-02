@@ -63,13 +63,13 @@ export function InventarioSerieAjuste({
 
   async function sugerirProximasSeries() {
     setErroLocal("");
-    onEnsureConfig();
     try {
       const c = await api<{
         proximo: number;
         configuracao: NonNullable<SerieConfigLite>;
       }>(`/series/contador/${produtoId}`);
-      const cfg = c.configuracao;
+      const cfg = serieConfig ?? c.configuracao;
+      if (!serieConfig) onEnsureConfig();
       const geradas = gerarSequenciaSeries({
         codigoProduto: codigo,
         ano2: anoDoisDigitos(),

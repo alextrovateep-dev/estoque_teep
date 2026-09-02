@@ -4,7 +4,9 @@ import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import { api } from "@/lib/api";
 import {
   clampTamanhoSequencial,
+  formatQtyUnidade,
   interpretarEntradaSerie,
+  normalizarUnidade,
 } from "@teep/shared";
 import { useEffect, useRef, useState } from "react";
 
@@ -12,6 +14,7 @@ export type LancamentoProduto = {
   id: string;
   codigo: string;
   descricao: string;
+  unidade?: string;
   precoUnitario?: string | number;
   controlaSerie?: boolean;
   configuracaoSerie?: {
@@ -58,10 +61,6 @@ type Props = {
   onError: (msg: string) => void;
   onMsg?: (msg: string) => void;
 };
-
-function formatQty(n: number) {
-  return n.toLocaleString("pt-BR", { maximumFractionDigits: 4 });
-}
 
 async function fetchSaldo(produtoId: string, filialId: string) {
   const r = await api<{
@@ -432,6 +431,9 @@ export function LancamentoLinhaItem({
                   >
                     <span className="font-mono text-xs">{p.codigo}</span> —{" "}
                     {p.descricao}
+                    <span className="ml-1 font-mono text-[10px] text-slate-400">
+                      {normalizarUnidade(p.unidade || "UN")}
+                    </span>
                   </button>
                 </li>
               ))}
@@ -442,6 +444,11 @@ export function LancamentoLinhaItem({
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-slate-600">
             Qtd
+            {linha.produto ? (
+              <span className="ml-1 font-mono font-normal text-slate-400">
+                ({normalizarUnidade(linha.produto.unidade || "UN")})
+              </span>
+            ) : null}
           </span>
           <input
             type="number"
@@ -464,7 +471,12 @@ export function LancamentoLinhaItem({
           {" · "}
           Saldo:{" "}
           <strong>
-            {linha.saldo === null ? "…" : formatQty(linha.saldo)}
+            {linha.saldo === null
+              ? "…"
+              : formatQtyUnidade(
+                  linha.saldo,
+                  linha.produto.unidade || "UN"
+                )}
           </strong>
         </div>
       )}

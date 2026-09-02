@@ -14,6 +14,7 @@ import {
   onlyDigits,
   tipoExigeCnpj,
 } from "./documento";
+import { normalizarUnidade } from "./unidadeMedida";
 
 const alertasEmailSchema = z
   .record(z.enum(ALERTA_EVENTOS), z.boolean())
@@ -196,12 +197,17 @@ const seriesArraySchema = z
   .max(500)
   .optional();
 
+const unidadeField = z.preprocess(
+  (v) => (typeof v === "string" && v.trim() ? normalizarUnidade(v) : v),
+  z.string().max(10)
+);
+
 export const produtoSchema = z
   .object({
     codigo: z.string().min(1).max(50),
     descricao: z.string().min(1).max(150),
     categoriaId: z.string().uuid(),
-    unidade: z.string().max(10).optional(),
+    unidade: unidadeField.optional(),
     precoUnitario: z.coerce.number().min(0).optional(),
     /** 0 = sem alerta de mínimo */
     estoqueMinimo: z.coerce.number().int().min(0).optional(),
@@ -234,7 +240,7 @@ export const createProdutoSchema = z
     codigo: z.string().min(1).max(50),
     descricao: z.string().min(1).max(150),
     categoriaId: z.string().uuid(),
-    unidade: z.string().max(10).default("UN"),
+    unidade: unidadeField.default("UN"),
     precoUnitario: z.coerce.number().min(0).default(0),
     estoqueMinimo: z.coerce.number().int().min(0).default(0),
     estoqueMaximo: z.coerce.number().int().min(0).default(0),
@@ -257,7 +263,7 @@ export const updateProdutoSchema = z
     codigo: z.string().min(1).max(50).optional(),
     descricao: z.string().min(1).max(150).optional(),
     categoriaId: z.string().uuid().optional(),
-    unidade: z.string().max(10).optional(),
+    unidade: unidadeField.optional(),
     precoUnitario: z.coerce.number().min(0).optional(),
     estoqueMinimo: z.coerce.number().int().min(0).optional(),
     estoqueMaximo: z.coerce.number().int().min(0).optional(),

@@ -12,6 +12,7 @@ import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
+import { formatQtyUnidade, normalizarUnidade } from "@teep/shared";
 
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_ALERTA_EMAILS = 10;
@@ -43,6 +44,7 @@ type SaidaAberta = {
     id: string;
     codigo: string;
     descricao: string;
+    unidade?: string;
     controlaSerie?: boolean;
     precoUnitario?: string | number;
   };
@@ -55,6 +57,7 @@ type Produto = {
   id: string;
   codigo: string;
   descricao: string;
+  unidade?: string;
   precoUnitario?: string | number;
   controlaSerie?: boolean;
   configuracaoSerie?: {
@@ -146,7 +149,7 @@ function NovoLancamentoForm() {
       produtoFilhoId: string;
       quantidade: number;
       fantasma: boolean;
-      produtoFilho: { codigo: string; descricao: string };
+      produtoFilho: { codigo: string; descricao: string; unidade?: string };
     }>
   >([]);
   const [saldoOrigem, setSaldoOrigem] = useState<number | null>(null);
@@ -582,7 +585,11 @@ function NovoLancamentoForm() {
         produtoFilhoId: string;
         quantidade: number;
         fantasma: boolean;
-        produtoFilho: { codigo: string; descricao: string };
+        produtoFilho: {
+          codigo: string;
+          descricao: string;
+          unidade?: string;
+        };
       }>;
     }>(`/produtos/${produto.id}/componentes`)
       .then((r) => {
@@ -669,6 +676,7 @@ function NovoLancamentoForm() {
       id: s.produto.id,
       codigo: s.produto.codigo,
       descricao: s.produto.descricao,
+      unidade: s.produto.unidade,
       controlaSerie: Boolean(s.produto.controlaSerie),
       precoUnitario: s.produto.precoUnitario,
     });
@@ -2007,6 +2015,10 @@ function NovoLancamentoForm() {
                     style: "currency",
                     currency: "BRL",
                   })}
+                  <span className="text-slate-500">
+                    {" "}
+                    / {normalizarUnidade(produto.unidade || "UN")}
+                  </span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
                   <span>
@@ -2016,7 +2028,12 @@ function NovoLancamentoForm() {
                       : ""}
                     :{" "}
                     <strong>
-                      {saldoOrigem === null ? "…" : formatQty(saldoOrigem)}
+                      {saldoOrigem === null
+                        ? "…"
+                        : formatQtyUnidade(
+                            saldoOrigem,
+                            produto.unidade || "UN"
+                          )}
                     </strong>
                   </span>
                   {isTransf && (
@@ -2029,7 +2046,10 @@ function NovoLancamentoForm() {
                       <strong>
                         {saldoDestino === null
                           ? "…"
-                          : formatQty(saldoDestino)}
+                          : formatQtyUnidade(
+                              saldoDestino,
+                              produto.unidade || "UN"
+                            )}
                       </strong>
                     </span>
                   )}
@@ -2056,7 +2076,11 @@ function NovoLancamentoForm() {
                         const cons = b.quantidade * qtdMont;
                         return (
                           <li key={b.produtoFilhoId}>
-                            {b.produtoFilho.codigo} × {cons}
+                            {b.produtoFilho.codigo} ×{" "}
+                            {formatQtyUnidade(
+                              cons,
+                              b.produtoFilho.unidade || "UN"
+                            )}
                             {b.fantasma
                               ? " (fantasma — não baixa estoque)"
                               : ""}
@@ -2074,7 +2098,14 @@ function NovoLancamentoForm() {
             ) : null}
 
             <label className="block">
-              <span className="mb-1 block text-sm font-medium">Quantidade</span>
+              <span className="mb-1 block text-sm font-medium">
+                Quantidade
+                {produto ? (
+                  <span className="ml-1 font-mono text-xs font-normal text-slate-500">
+                    ({normalizarUnidade(produto.unidade || "UN")})
+                  </span>
+                ) : null}
+              </span>
               <input
                 type="number"
                 min={produto?.controlaSerie ? 1 : 0.0001}

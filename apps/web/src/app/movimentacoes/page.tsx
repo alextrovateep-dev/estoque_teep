@@ -6,7 +6,7 @@ import { userHas } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
 import { matchNomeOuDocumento, onlyDigits } from "@/lib/documento";
 import { useSerieFiltro } from "@/hooks/useSerieFiltro";
-import { tipoVisivelFiltroMovimentacoes } from "@teep/shared";
+import { formatQtyUnidade, tipoVisivelFiltroMovimentacoes } from "@teep/shared";
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
@@ -22,7 +22,7 @@ type Mov = {
   notaFiscalNumero?: string | null;
   notaFiscalArquivo?: string | null;
   transferenciaNotaFiscalNumero?: string | null;
-  produto: { codigo: string; descricao: string };
+  produto: { codigo: string; descricao: string; unidade?: string };
   tipo: { nome: string };
   filial: { sigla: string };
   filialDestino?: { sigla: string } | null;
@@ -1251,7 +1251,10 @@ export default function MovimentacoesPage() {
                           ) : null}
                         </td>
                         <td className="px-3 py-2 align-middle tabular-nums font-semibold text-slate-900">
-                          {formatQty(Number(m.quantidade))}
+                          {formatQtyUnidade(
+                            Number(m.quantidade),
+                            m.produto.unidade || "UN"
+                          )}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 align-middle font-medium text-slate-800">
                           {filialLabel}

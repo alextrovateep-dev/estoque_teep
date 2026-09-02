@@ -3,6 +3,7 @@
 import { InventarioSerieAjuste } from "@/components/InventarioSerieAjuste";
 import type { SerieConfigLite } from "@/components/SerieCamposPrefixo";
 import { api } from "@/lib/api";
+import { formatQtyUnidade, normalizarUnidade } from "@teep/shared";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Filial = { id: string; nome: string; sigla: string };
@@ -10,12 +11,14 @@ type Produto = {
   id: string;
   codigo: string;
   descricao: string;
+  unidade?: string;
   controlaSerie?: boolean;
 };
 type EstoqueRow = {
   produtoId: string;
   codigo: string;
   descricao: string;
+  unidade: string;
   controlaSerie: boolean;
   saldoAtual: number;
   novoSaldo: string;
@@ -32,6 +35,38 @@ type EstoqueRow = {
 
 type SerieDisponivel = { id: string; numeroSerie: string };
 
+/** Saldo digitado válido (não dispara Δ enquanto o campo está vazio ou incompleto). */
+function parseSaldoInput(raw: string): number | null {
+  const s = raw.trim();
+  if (s === "" || s === "-" || s.endsWith(".")) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+function saldoEfetivo(r: EstoqueRow): number {
+  const parsed = parseSaldoInput(r.novoSaldo);
+  return parsed !== null ? parsed : r.saldoAtual;
+}
+
+function deltaDeRow(r: EstoqueRow): number | null {
+  const parsed = parseSaldoInput(r.novoSaldo);
+  if (parsed === null) return null;
+  return parsed - r.saldoAtual;
+}
+
+function rowAlterada(r: EstoqueRow): boolean {
+  const parsed = parseSaldoInput(r.novoSaldo);
+  if (parsed === null) return false;
+  return parsed !== r.saldoAtual;
+}
+
+function sinalDelta(d: number): -1 | 0 | 1 {
+  if (d > 0) return 1;
+  if (d < 0) return -1;
+  return 0;
+}
+
 function toRow(
   p: Produto,
   saldo: number,
@@ -43,6 +78,7 @@ function toRow(
     produtoId: p.id,
     codigo: p.codigo,
     descricao: p.descricao,
+    unidade: normalizarUnidade(p.unidade || "UN"),
     controlaSerie: Boolean(p.controlaSerie),
     saldoAtual: saldo,
     novoSaldo: saldoMudou || !old ? String(saldo) : old.novoSaldo,
@@ -68,6 +104,17 @@ export default function InitEstoquePage() {
   const [produtoFiltro, setProdutoFiltro] = useState("");
   const [somenteAlterados, setSomenteAlterados] = useState(false);
   const loadGen = useRef(0);
+  const painelTimerRef = useRef<
+    Record<string, ReturnType<typeof setTimeout>>
+  >({});
+
+  useEffect(() => {
+    return () => {
+      for (const t of Object.values(painelTimerRef.current)) {
+        clearTimeout(t);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     api<Filial[]>("/filiais")
@@ -235,9 +282,7 @@ export default function InitEstoquePage() {
       );
     }
     if (somenteAlterados) {
-      list = list.filter(
-        (r) => Number(r.novoSaldo) !== r.saldoAtual && r.novoSaldo !== ""
-      );
+      list = list.filter(rowAlterada);
     }
     return list;
   }, [rows, produtoFiltro, somenteAlterados]);
@@ -245,17 +290,14 @@ export default function InitEstoquePage() {
   const precisaReinit = useMemo(
     () =>
       rows.some((r) => {
-        const d = Number(r.novoSaldo) - r.saldoAtual;
-        return Number.isFinite(d) && d !== 0 && r.saldoAtual > 0;
+        const d = deltaDeRow(r);
+        return d !== null && d !== 0 && r.saldoAtual > 0;
       }),
     [rows]
   );
 
   const qtdAlterados = useMemo(
-    () =>
-      rows.filter(
-        (r) => Number(r.novoSaldo) !== r.saldoAtual && r.novoSaldo !== ""
-      ).length,
+    () => rows.filter(rowAlterada).length,
     [rows]
   );
 
@@ -322,28 +364,68 @@ export default function InitEstoquePage() {
     if (delta > 0) void carregarSerieConfig(produtoId);
   }
 
+  function agendarPainelSeries(produtoId: string, delta: number) {
+    const prev = painelTimerRef.current[produtoId];
+    if (prev) clearTimeout(prev);
+    painelTimerRef.current[produtoId] = setTimeout(() => {
+      delete painelTimerRef.current[produtoId];
+      prepararPainelSeries(produtoId, delta);
+    }, 350);
+  }
+
+  function cancelarPainelSeries(produtoId: string) {
+    const prev = painelTimerRef.current[produtoId];
+    if (prev) {
+      clearTimeout(prev);
+      delete painelTimerRef.current[produtoId];
+    }
+  }
+
   function atualizarNovoSaldo(produtoId: string, novoSaldo: string) {
+    const row = rows.find((r) => r.produtoId === produtoId);
+    if (!row) return;
+
+    const saldoParsed = parseSaldoInput(novoSaldo);
+    const prevParsed = parseSaldoInput(row.novoSaldo);
+    const prevD = prevParsed !== null ? prevParsed - row.saldoAtual : 0;
+    const d = saldoParsed !== null ? saldoParsed - row.saldoAtual : null;
+
     setRows((prev) =>
       prev.map((x) => {
         if (x.produtoId !== produtoId) return x;
-        const d = Number(novoSaldo) - x.saldoAtual;
+        if (saldoParsed === null) {
+          return { ...x, novoSaldo };
+        }
+        const newSign = sinalDelta(d!);
+        const oldSign = sinalDelta(prevD);
+        const signChanged =
+          oldSign !== 0 && newSign !== 0 && oldSign !== newSign;
         const n =
-          x.controlaSerie && Number.isFinite(d) && d !== 0
-            ? Math.min(Math.abs(Math.trunc(d)), 200)
+          x.controlaSerie && d! !== 0
+            ? Math.min(Math.abs(Math.trunc(d!)), 200)
             : 0;
-        return {
-          ...x,
-          novoSaldo,
-          series: Array.from({ length: n }, (_, i) => x.series[i] || ""),
-        };
+        const nextSeries =
+          d! === 0 || signChanged
+            ? Array.from({ length: n }, () => "")
+            : Array.from({ length: n }, (_, i) => x.series[i] || "");
+        return { ...x, novoSaldo, series: nextSeries };
       })
     );
-    const row = rows.find((r) => r.produtoId === produtoId);
-    if (!row?.controlaSerie) return;
-    const d = Number(novoSaldo) - row.saldoAtual;
-    if (Number.isFinite(d) && d !== 0) {
-      prepararPainelSeries(produtoId, d);
+
+    if (!row.controlaSerie) return;
+
+    if (d === null) {
+      cancelarPainelSeries(produtoId);
+      return;
     }
+
+    if (d === 0) {
+      cancelarPainelSeries(produtoId);
+      setExpandSerie((cur) => (cur === produtoId ? null : cur));
+      return;
+    }
+
+    agendarPainelSeries(produtoId, d);
   }
 
   function toggleExpand(produtoId: string, controlaSerie: boolean) {
@@ -365,35 +447,44 @@ export default function InitEstoquePage() {
     setError("");
     setMsg("");
     try {
-      const itens = rows
-        .map((r) => {
-          const saldo = Number(r.novoSaldo);
-          const delta = saldo - r.saldoAtual;
-          const base: {
-            produtoId: string;
-            saldo: number;
-            series?: string[];
-          } = {
-            produtoId: r.produtoId,
-            saldo,
-          };
-          if (r.controlaSerie && delta !== 0) {
-            base.series = r.series;
-          } else if (r.controlaSerie && r.saldoAtual === 0 && saldo > 0) {
-            base.series = r.series;
-          }
-          return base;
-        })
-        .filter((i) => !Number.isNaN(i.saldo));
+      const alterados = rows.filter(rowAlterada);
 
-      if (precisaReinit && !confirmarReinit) {
+      if (alterados.length === 0) {
+        throw new Error("Nenhuma alteração para aplicar.");
+      }
+
+      const itens = alterados.map((r) => {
+        const saldo = saldoEfetivo(r);
+        const delta = saldo - r.saldoAtual;
+        const base: {
+          produtoId: string;
+          saldo: number;
+          series?: string[];
+        } = {
+          produtoId: r.produtoId,
+          saldo,
+        };
+        if (r.controlaSerie && delta !== 0) {
+          base.series = r.series;
+        } else if (r.controlaSerie && r.saldoAtual === 0 && saldo > 0) {
+          base.series = r.series;
+        }
+        return base;
+      });
+
+      const precisaReinitSubmit = alterados.some((r) => {
+        const d = saldoEfetivo(r) - r.saldoAtual;
+        return d !== 0 && r.saldoAtual > 0;
+      });
+
+      if (precisaReinitSubmit && !confirmarReinit) {
         throw new Error(
           "Marque “Permitir alterar produtos que já têm saldo” para aplicar ajustes em itens com estoque existente."
         );
       }
 
-      for (const r of rows) {
-        const saldo = Number(r.novoSaldo);
+      for (const r of alterados) {
+        const saldo = saldoEfetivo(r);
         const delta = saldo - r.saldoAtual;
         if (!r.controlaSerie || delta === 0) continue;
         const need = Math.abs(delta);
@@ -590,8 +681,9 @@ export default function InitEstoquePage() {
                 </tr>
               ) : (
                 rowsVisiveis.map((r) => {
-                  const delta = Number(r.novoSaldo) - r.saldoAtual;
-                  const needsSeries = r.controlaSerie && delta !== 0;
+                  const delta = deltaDeRow(r);
+                  const needsSeries =
+                    r.controlaSerie && delta !== null && delta !== 0;
                   const aberto = expandSerie === r.produtoId;
                   const qtdSeries =
                     r.seriesExistentes?.length ?? r.seriesEmEstoque;
@@ -607,7 +699,8 @@ export default function InitEstoquePage() {
                         ) : null}
                       </td>
                       <td className="px-3 py-2">{r.descricao}</td>
-                      <td className="px-3 py-2">{r.saldoAtual}
+                      <td className="px-3 py-2">
+                        {formatQtyUnidade(r.saldoAtual, r.unidade)}
                         {r.controlaSerie ? (
                           <div className="text-[11px] text-slate-500">
                             {qtdSeries} série(s) em estoque
@@ -626,7 +719,10 @@ export default function InitEstoquePage() {
                               atualizarNovoSaldo(r.produtoId, e.target.value)
                             }
                           />
-                          {delta !== 0 && Number.isFinite(delta) ? (
+                          <span className="text-[11px] text-slate-500">
+                            {r.unidade}
+                          </span>
+                          {delta !== null && delta !== 0 ? (
                             <span
                               className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
                                 delta > 0
@@ -647,7 +743,7 @@ export default function InitEstoquePage() {
                           <InventarioSerieAjuste
                             produtoId={r.produtoId}
                             codigo={r.codigo}
-                            delta={delta}
+                            delta={delta!}
                             filialLabel={filialLabel}
                             series={r.series}
                             seriesExistentes={r.seriesExistentes}

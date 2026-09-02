@@ -24,6 +24,7 @@ type Produto = {
   precoUnitario: string | number;
   estoqueMinimo: number;
   estoqueMaximo: number;
+  unidade?: string;
   controlaSerie?: boolean;
   categoriaId?: string;
   ativo: boolean;
@@ -227,6 +228,7 @@ function ProdutosPageInner() {
               <th className="px-3 py-2">Código</th>
               <th className="px-3 py-2">Descrição</th>
               <th className="px-3 py-2">Categoria</th>
+              <th className="px-3 py-2">Un.</th>
               <th className="px-3 py-2 text-right">Preço</th>
               <th className="px-3 py-2">Mín.</th>
               <th className="px-3 py-2">Máx.</th>
@@ -354,6 +356,9 @@ function ProdutosPageInner() {
                       )}
                     </td>
                     <td className="px-3 py-2">{p.categoria?.nome}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-600">
+                      {p.unidade || "UN"}
+                    </td>
                     <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                       {formatMoney(p.precoUnitario)}
                     </td>

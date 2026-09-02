@@ -1,7 +1,15 @@
 "use client";
 
+import { UnidadeEntradaSelect } from "@/components/UnidadeMedidaSelect";
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { userCanEditCadastro, userCanOpenCadastro } from "@/lib/access";
+import {
+  converterQuantidade,
+  formatQtyUnidade,
+  normalizarUnidade,
+  unidadeLabel,
+  unidadesConvertiveis,
+} from "@teep/shared";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
@@ -17,9 +25,13 @@ type BomItem = {
   produtoFilhoId: string;
   codigo: string;
   descricao: string;
+  /** Quantidade na unidade de estoque do filho (por 1 un. do pai). */
   quantidade: string;
   fantasma: boolean;
   precoUnitario?: number;
+  unidadeFilho: string;
+  /** Unidade usada ao digitar (converte para unidadeFilho ao salvar). */
+  unidadeEntrada: string;
 };
 
 type Filial = { id: string; nome: string; sigla: string };
@@ -29,6 +41,7 @@ type Simulacao = {
     id: string;
     codigo: string;
     descricao: string;
+    unidade: string;
     precoUnitario: number;
   };
   quantidade: number;
@@ -37,6 +50,7 @@ type Simulacao = {
     produtoFilhoId: string;
     codigo: string;
     descricao: string;
+    unidade: string;
     fantasma: boolean;
     qtdPorUnidade: number;
     qtdNecessaria: number;
@@ -66,6 +80,37 @@ function qty(n: number) {
   });
 }
 
+function qtyParaExibicao(
+  qtyEstoque: string,
+  unidadeEstoque: string,
+  unidadeEntrada: string
+): string {
+  const q = Number(qtyEstoque);
+  if (!Number.isFinite(q)) return qtyEstoque;
+  const estoque = normalizarUnidade(unidadeEstoque);
+  const entrada = normalizarUnidade(unidadeEntrada);
+  if (estoque === entrada) return qtyEstoque;
+  const conv = converterQuantidade(q, estoque, entrada);
+  if (conv == null) return qtyEstoque;
+  return String(conv);
+}
+
+function salvarQtyDaEntrada(
+  rawEntrada: string,
+  unidadeEstoque: string,
+  unidadeEntrada: string
+): string {
+  if (rawEntrada.trim() === "") return rawEntrada;
+  const q = Number(rawEntrada);
+  if (!Number.isFinite(q)) return rawEntrada;
+  const estoque = normalizarUnidade(unidadeEstoque);
+  const entrada = normalizarUnidade(unidadeEntrada);
+  if (estoque === entrada) return rawEntrada;
+  const conv = converterQuantidade(q, entrada, estoque);
+  if (conv == null) return rawEntrada;
+  return String(conv);
+}
+
 export default function ArvoreProdutoPage() {
   const router = useRouter();
   const [lista, setLista] = useState<ArvoreResumo[]>([]);
@@ -74,6 +119,7 @@ export default function ArvoreProdutoPage() {
   const [paiId, setPaiId] = useState<string | null>(null);
   const [paiLabel, setPaiLabel] = useState("");
   const [paiPreco, setPaiPreco] = useState(0);
+  const [paiUnidade, setPaiUnidade] = useState("UN");
   const [itens, setItens] = useState<BomItem[]>([]);
   const [itensSalvosJson, setItensSalvosJson] = useState("");
   const [error, setError] = useState("");
@@ -89,7 +135,13 @@ export default function ArvoreProdutoPage() {
 
   const [compBusca, setCompBusca] = useState("");
   const [compSugestoes, setCompSugestoes] = useState<
-    Array<{ id: string; codigo: string; descricao: string; precoUnitario?: number }>
+    Array<{
+      id: string;
+      codigo: string;
+      descricao: string;
+      unidade?: string;
+      precoUnitario?: number;
+    }>
   >([]);
 
   const [showSim, setShowSim] = useState(false);
@@ -141,6 +193,7 @@ export default function ArvoreProdutoPage() {
       produtoId: string;
       codigo: string;
       descricao: string;
+      unidade?: string;
       precoUnitario?: number;
       itens: Array<{
         produtoFilhoId: string;
@@ -149,6 +202,7 @@ export default function ArvoreProdutoPage() {
         produtoFilho: {
           codigo: string;
           descricao: string;
+          unidade?: string;
           precoUnitario?: number;
         };
       }>;
@@ -156,14 +210,20 @@ export default function ArvoreProdutoPage() {
     setPaiId(r.produtoId);
     setPaiLabel(`${r.codigo} — ${r.descricao}`);
     setPaiPreco(Number(r.precoUnitario) || 0);
-    const mapped = (r.itens || []).map((i) => ({
-      produtoFilhoId: i.produtoFilhoId,
-      codigo: i.produtoFilho.codigo,
-      descricao: i.produtoFilho.descricao,
-      quantidade: String(i.quantidade),
-      fantasma: i.fantasma,
-      precoUnitario: Number(i.produtoFilho.precoUnitario) || 0,
-    }));
+    setPaiUnidade(normalizarUnidade(r.unidade || "UN"));
+    const mapped = (r.itens || []).map((i) => {
+      const unidadeFilho = normalizarUnidade(i.produtoFilho.unidade || "UN");
+      return {
+        produtoFilhoId: i.produtoFilhoId,
+        codigo: i.produtoFilho.codigo,
+        descricao: i.produtoFilho.descricao,
+        quantidade: String(i.quantidade),
+        fantasma: i.fantasma,
+        precoUnitario: Number(i.produtoFilho.precoUnitario) || 0,
+        unidadeFilho,
+        unidadeEntrada: unidadeFilho,
+      };
+    });
     setItens(mapped);
     setItensSalvosJson(
       JSON.stringify(
@@ -220,6 +280,7 @@ export default function ArvoreProdutoPage() {
     setPaiId(null);
     setPaiLabel("");
     setPaiPreco(0);
+    setPaiUnidade("UN");
     setItens([]);
     setItensSalvosJson("");
     setNovoPaiBusca("");
@@ -364,7 +425,7 @@ export default function ArvoreProdutoPage() {
   }
 
   const colGrid =
-    "grid grid-cols-[minmax(0,1fr)_4.5rem_6.5rem_6.5rem_5.5rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1.4fr)_5rem_7rem_7rem_6rem_4.5rem]";
+    "grid grid-cols-[minmax(0,1fr)_minmax(5.5rem,6.5rem)_6.5rem_6.5rem_5.5rem] items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1.4fr)_minmax(6rem,7.5rem)_7rem_7rem_6rem_4.5rem]";
 
   return (
     <>
@@ -374,8 +435,9 @@ export default function ArvoreProdutoPage() {
             Árvore de produto
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Monte a composição (BOM) e, se quiser, simule se o estoque cobre a
-            produção.
+            Monte a composição (BOM). Cada linha informa quanto do componente
+            (na unidade de estoque dele) entra por 1 unidade do pai. Na edição,
+            você pode digitar em CM, M, etc. quando a família for a mesma.
           </p>
         </div>
         {canEdit && (
@@ -549,6 +611,13 @@ export default function ArvoreProdutoPage() {
                   <p className="mt-0.5 truncate text-base font-semibold text-slate-900">
                     {paiLabel}
                   </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Unidade do pai:{" "}
+                    <span className="font-mono font-medium text-slate-700">
+                      {paiUnidade}
+                    </span>{" "}
+                    ({unidadeLabel(paiUnidade)})
+                  </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   {canEdit &&
@@ -633,6 +702,7 @@ export default function ArvoreProdutoPage() {
                             id: string;
                             codigo: string;
                             descricao: string;
+                            unidade?: string;
                             precoUnitario?: number;
                           }>
                         >(`/produtos/busca?q=${encodeURIComponent(q.trim())}`)
@@ -671,6 +741,12 @@ export default function ArvoreProdutoPage() {
                                     fantasma: false,
                                     precoUnitario:
                                       Number(s.precoUnitario) || 0,
+                                    unidadeFilho: normalizarUnidade(
+                                      s.unidade || "UN"
+                                    ),
+                                    unidadeEntrada: normalizarUnidade(
+                                      s.unidade || "UN"
+                                    ),
                                   },
                                 ]);
                                 setCompBusca("");
@@ -683,6 +759,9 @@ export default function ArvoreProdutoPage() {
                                 <span className="text-slate-500">
                                   {" "}
                                   — {s.descricao}
+                                </span>
+                                <span className="ml-1 font-mono text-[10px] text-slate-400">
+                                  {normalizarUnidade(s.unidade || "UN")}
                                 </span>
                               </span>
                               <span className="shrink-0 tabular-nums text-xs text-slate-400">
@@ -709,8 +788,8 @@ export default function ArvoreProdutoPage() {
                     className={`${colGrid} border-b border-slate-100 bg-slate-50 px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-slate-400`}
                   >
                     <div>Item</div>
-                    <div className="text-right">Qtd</div>
-                    <div className="text-right">Preço un.</div>
+                    <div className="text-right">Qtd / un.</div>
+                    <div className="text-right">Preço / {paiUnidade || "un."}</div>
                     <div className="text-right">Valor</div>
                     <div className="text-center">Fantasma</div>
                     <div className="hidden text-right sm:block" />
@@ -727,35 +806,88 @@ export default function ArvoreProdutoPage() {
                           </div>
                           <div className="truncate text-xs text-slate-500">
                             {b.descricao}
+                            <span className="ml-1 font-mono text-[10px] text-slate-400">
+                              est. {b.unidadeFilho}
+                            </span>
                           </div>
+                          {!unidadesConvertiveis(paiUnidade, b.unidadeFilho) &&
+                          !b.fantasma ? (
+                            <p className="mt-0.5 text-[10px] font-medium text-amber-800">
+                              Unidade diferente do pai — marque fantasma se não
+                              baixar estoque
+                            </p>
+                          ) : null}
                         </div>
                         <div className="text-right">
                           {editando ? (
-                            <input
-                              type="number"
-                              min="0.0001"
-                              step="any"
-                              required
-                              aria-label={`Quantidade ${b.codigo}`}
-                              className="ml-auto w-full max-w-[4.5rem] rounded border border-slate-200 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-brand"
-                              value={b.quantidade}
-                              onChange={(e) => {
-                                const next = [...itens];
-                                next[idx] = {
-                                  ...itens[idx],
-                                  quantidade: e.target.value,
-                                };
-                                setItens(next);
-                              }}
-                            />
+                            <div className="ml-auto flex max-w-[7.5rem] flex-col items-end gap-1">
+                              <input
+                                type="number"
+                                min="0.0001"
+                                step="any"
+                                required
+                                aria-label={`Quantidade ${b.codigo}`}
+                                className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-right text-sm tabular-nums outline-none focus:border-brand"
+                                value={qtyParaExibicao(
+                                  b.quantidade,
+                                  b.unidadeFilho,
+                                  b.unidadeEntrada
+                                )}
+                                onChange={(e) => {
+                                  const next = [...itens];
+                                  next[idx] = {
+                                    ...itens[idx],
+                                    quantidade: salvarQtyDaEntrada(
+                                      e.target.value,
+                                      b.unidadeFilho,
+                                      b.unidadeEntrada
+                                    ),
+                                  };
+                                  setItens(next);
+                                }}
+                              />
+                              <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                                <span>/ 1 {paiUnidade}</span>
+                                <UnidadeEntradaSelect
+                                  unidadeEstoque={b.unidadeFilho}
+                                  value={b.unidadeEntrada}
+                                  onChange={(unidadeEntrada) => {
+                                    const next = [...itens];
+                                    next[idx] = {
+                                      ...itens[idx],
+                                      unidadeEntrada,
+                                    };
+                                    setItens(next);
+                                  }}
+                                />
+                              </div>
+                              {b.unidadeEntrada !== b.unidadeFilho ? (
+                                <span className="text-[10px] text-teal-800">
+                                  = {formatQtyUnidade(
+                                    Number(b.quantidade) || 0,
+                                    b.unidadeFilho
+                                  )}{" "}
+                                  em estoque
+                                </span>
+                              ) : null}
+                            </div>
                           ) : (
                             <span className="tabular-nums font-medium text-slate-800">
-                              {b.quantidade}
+                              {formatQtyUnidade(
+                                Number(b.quantidade) || 0,
+                                b.unidadeFilho
+                              )}
+                              <span className="block text-[10px] font-normal text-slate-400">
+                                / 1 {paiUnidade}
+                              </span>
                             </span>
                           )}
                         </div>
                         <div className="text-right tabular-nums text-slate-600">
                           {money(b.preco)}
+                          <span className="block text-[10px] font-normal text-slate-400">
+                            / {b.unidadeFilho}
+                          </span>
                         </div>
                         <div className="text-right tabular-nums font-semibold text-slate-900">
                           {money(b.valorLinha)}
@@ -821,7 +953,7 @@ export default function ArvoreProdutoPage() {
                   <div className="flex flex-wrap items-end justify-between gap-3 border-t border-slate-200 bg-slate-50/80 px-3 py-3 text-sm">
                     <div>
                       <div className="text-[11px] uppercase tracking-wide text-slate-400">
-                        Custo da composição (1 un. do pai)
+                        Custo da composição (1 {paiUnidade} do pai)
                       </div>
                       <div className="mt-0.5 flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
                         <span className="text-base font-semibold tabular-nums text-slate-900">
@@ -877,7 +1009,7 @@ export default function ArvoreProdutoPage() {
                   <div className="grid gap-2 sm:grid-cols-3">
                     <label className="block text-sm">
                       <span className="mb-1 block text-xs font-medium">
-                        Qtd. do item pai
+                        Qtd. do item pai ({paiUnidade})
                       </span>
                       <input
                         type="number"
@@ -1012,14 +1144,22 @@ export default function ArvoreProdutoPage() {
                                     </div>
                                   </td>
                                   <td className="px-2 py-1.5 text-right tabular-nums">
-                                    {qty(l.qtdNecessaria)}
+                                    {formatQtyUnidade(l.qtdNecessaria, l.unidade)}
                                   </td>
                                   <td className="px-2 py-1.5 text-right tabular-nums">
-                                    {qty(l.saldoDisponivel ?? l.saldoAtual)}
+                                    {formatQtyUnidade(
+                                      l.saldoDisponivel ?? l.saldoAtual,
+                                      l.unidade
+                                    )}
                                     {(l.reservadoTransferencia || 0) > 0 && (
                                       <div className="text-[10px] text-slate-400">
-                                        bruto {qty(l.saldoAtual)} · reserv.{" "}
-                                        {qty(l.reservadoTransferencia || 0)}
+                                        bruto{" "}
+                                        {formatQtyUnidade(l.saldoAtual, l.unidade)}{" "}
+                                        · reserv.{" "}
+                                        {formatQtyUnidade(
+                                          l.reservadoTransferencia || 0,
+                                          l.unidade
+                                        )}
                                       </div>
                                     )}
                                   </td>
@@ -1030,7 +1170,7 @@ export default function ArvoreProdutoPage() {
                                         : "text-slate-600"
                                     }`}
                                   >
-                                    {qty(l.faltante)}
+                                    {formatQtyUnidade(l.faltante, l.unidade)}
                                   </td>
                                   <td className="px-2 py-1.5 text-right tabular-nums">
                                     {l.faltante > 0

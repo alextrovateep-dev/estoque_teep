@@ -14,8 +14,10 @@ import {
   anoDoisDigitos,
   formatarNumeroSerie,
   labelFormatoSeriePreset,
+  unidadeLabel,
 } from "@teep/shared";
 import Link from "next/link";
+import { UnidadeMedidaSelect } from "@/components/UnidadeMedidaSelect";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
@@ -29,6 +31,7 @@ type Produto = {
   estoqueMaximo: number;
   controlaSerie?: boolean;
   categoriaId?: string;
+  unidade?: string;
   ativo: boolean;
   fotos?: string[] | unknown;
   categoria: Categoria;
@@ -46,6 +49,7 @@ const emptyForm = {
   codigo: "",
   descricao: "",
   categoriaId: "",
+  unidade: "UN",
   precoUnitario: "0,00",
   estoqueMinimo: "0",
   estoqueMaximo: "0",
@@ -120,6 +124,7 @@ export function ProdutoCadastroForm({
           codigo: p.codigo,
           descricao: p.descricao,
           categoriaId: p.categoriaId || p.categoria?.id || "",
+          unidade: p.unidade || "UN",
           precoUnitario: formatMoneyPlain(p.precoUnitario),
           estoqueMinimo: String(p.estoqueMinimo ?? 0),
           estoqueMaximo: String(p.estoqueMaximo ?? 0),
@@ -294,7 +299,7 @@ export function ProdutoCadastroForm({
       estoqueMinimo: Number(form.estoqueMinimo),
       estoqueMaximo: Number(form.estoqueMaximo),
       controlaSerie: form.controlaSerie,
-      unidade: "UN",
+      unidade: form.unidade,
     };
     if (form.controlaSerie) {
       body.configuracaoSerie = {
@@ -463,6 +468,19 @@ export function ProdutoCadastroForm({
         <div className="grid gap-4 md:grid-cols-3">
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">
+              Unidade de medida
+            </span>
+            <UnidadeMedidaSelect
+              value={form.unidade}
+              onChange={(unidade) => setForm({ ...form, unidade })}
+            />
+            <span className="mt-1 block text-xs text-slate-500">
+              Estoque, lançamentos e árvore usam esta unidade. Preço é por{" "}
+              {form.unidade} ({unidadeLabel(form.unidade)}).
+            </span>
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">
               Preço unitário (R$)
             </span>
             <input
@@ -483,7 +501,7 @@ export function ProdutoCadastroForm({
               }
             />
             <span className="mt-1 block text-xs text-slate-500">
-              Use vírgula para centavos (ex.: 1.234,56)
+              Valor por 1 {form.unidade} — use vírgula para centavos
             </span>
           </label>
           <label className="block text-sm">
