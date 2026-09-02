@@ -1,12 +1,20 @@
 "use client";
 
 import { api, getStoredUser } from "@/lib/api";
-import { resolveAssetUrl } from "@/lib/assets";
+import { ImageLightbox } from "@/components/ImageLightbox";
 import { userCanEditCadastro } from "@/lib/access";
 import { formatMoney } from "@/lib/money";
+import { resolveAssetUrl } from "@/lib/assets";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+
+type FotoLightbox = {
+  images: string[];
+  initialIndex: number;
+  titulo: string;
+  codigo: string;
+};
 
 type Categoria = { id: string; nome: string; ativo: boolean };
 type Produto = {
@@ -48,6 +56,12 @@ function asFotos(raw: unknown): string[] {
   return Array.isArray(raw) ? (raw as string[]) : [];
 }
 
+function fotosResolvidas(raw: unknown): string[] {
+  return asFotos(raw)
+    .map((f) => resolveAssetUrl(f))
+    .filter((u): u is string => Boolean(u));
+}
+
 function formatData(iso: string) {
   try {
     return new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" }).format(
@@ -86,6 +100,7 @@ function ProdutosPageInner() {
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [relCache, setRelCache] = useState<Record<string, RelProduto>>({});
   const [loadingRel, setLoadingRel] = useState<string | null>(null);
+  const [fotoLightbox, setFotoLightbox] = useState<FotoLightbox | null>(null);
 
   async function load() {
     const [p, resumos] = await Promise.all([
@@ -221,7 +236,8 @@ function ProdutosPageInner() {
           </thead>
           <tbody>
             {filtrados.map((p) => {
-              const capa = asFotos(p.fotos)[0];
+              const fotos = fotosResolvidas(p.fotos);
+              const capaUrl = fotos[0] ?? null;
               const r = resumo[p.id];
               const hist = temHistorico(p.id);
               const aberto = expandidoId === p.id;
@@ -274,13 +290,37 @@ function ProdutosPageInner() {
                       ) : null}
                     </td>
                     <td className="px-3 py-2">
-                      {resolveAssetUrl(capa) ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={resolveAssetUrl(capa)!}
-                          alt=""
-                          className="h-10 w-10 rounded object-cover"
-                        />
+                      {capaUrl ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setFotoLightbox({
+                              images: fotos,
+                              initialIndex: 0,
+                              titulo: p.descricao,
+                              codigo: p.codigo,
+                            })
+                          }
+                          className="block cursor-zoom-in rounded ring-offset-2 transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand/50"
+                          title={
+                            fotos.length > 1
+                              ? `Ampliar fotos (${fotos.length})`
+                              : "Ampliar foto"
+                          }
+                          aria-label={`Ampliar foto de ${p.descricao}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={capaUrl}
+                            alt=""
+                            className="h-10 w-10 rounded object-cover"
+                          />
+                          {fotos.length > 1 ? (
+                            <span className="sr-only">
+                              {fotos.length} fotos
+                            </span>
+                          ) : null}
+                        </button>
                       ) : (
                         <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">
                           —
@@ -377,6 +417,15 @@ function ProdutosPageInner() {
           </tbody>
         </table>
       </div>
+
+      <ImageLightbox
+        open={fotoLightbox !== null}
+        onClose={() => setFotoLightbox(null)}
+        images={fotoLightbox?.images ?? []}
+        initialIndex={fotoLightbox?.initialIndex ?? 0}
+        title={fotoLightbox?.titulo ?? ""}
+        subtitle={fotoLightbox?.codigo}
+      />
     </>
   );
 }

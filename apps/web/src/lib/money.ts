@@ -41,3 +41,13 @@ export function parseMoneyInput(raw: string): number {
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : 0;
 }
+
+/** Preço não negativo — uso em formulários. */
+export function normalizeMoneyInput(raw: string): number {
+  return Math.max(0, parseMoneyInput(raw));
+}
+
+/** Valor formatado para campo editável após blur (≥ 0). */
+export function formatMoneyField(raw: string): string {
+  return formatMoneyPlain(normalizeMoneyInput(raw));
+}

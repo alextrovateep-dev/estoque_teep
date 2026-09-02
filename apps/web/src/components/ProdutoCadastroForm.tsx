@@ -1,11 +1,13 @@
 "use client";
 
+import { ImageLightbox } from "@/components/ImageLightbox";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import { api, apiUpload } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
 import {
-  formatMoney,
+  formatMoneyField,
   formatMoneyPlain,
-  parseMoneyInput,
+  normalizeMoneyInput,
 } from "@/lib/money";
 import {
   FORMATOS_SERIE_PRESETS,
@@ -86,6 +88,12 @@ export function ProdutoCadastroForm({
   const [loadFailed, setLoadFailed] = useState(false);
   /** Após criar produto: opções cadastrar outro ou ir ao dashboard. */
   const [posCriacaoOpen, setPosCriacaoOpen] = useState(false);
+  const [fotoLightbox, setFotoLightbox] = useState<{
+    images: string[];
+    initialIndex: number;
+  } | null>(null);
+
+  useBodyScrollLock(posCriacaoOpen);
 
   useEffect(() => {
     let cancelled = false;
@@ -282,7 +290,7 @@ export function ProdutoCadastroForm({
       codigo: form.codigo.trim(),
       descricao: form.descricao.trim(),
       categoriaId: form.categoriaId,
-      precoUnitario: parseMoneyInput(form.precoUnitario),
+      precoUnitario: normalizeMoneyInput(form.precoUnitario),
       estoqueMinimo: Number(form.estoqueMinimo),
       estoqueMaximo: Number(form.estoqueMaximo),
       controlaSerie: form.controlaSerie,
@@ -470,10 +478,13 @@ export function ProdutoCadastroForm({
               onBlur={() =>
                 setForm((f) => ({
                   ...f,
-                  precoUnitario: formatMoneyPlain(parseMoneyInput(f.precoUnitario)),
+                  precoUnitario: formatMoneyField(f.precoUnitario),
                 }))
               }
             />
+            <span className="mt-1 block text-xs text-slate-500">
+              Use vírgula para centavos (ex.: 1.234,56)
+            </span>
           </label>
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">
@@ -731,12 +742,26 @@ export function ProdutoCadastroForm({
               {editId
                 ? fotos.map((f, i) => (
                     <div key={f} className="relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={resolveAssetUrl(f)!}
-                        alt=""
-                        className="h-20 w-20 rounded-lg object-cover ring-1 ring-slate-200"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const images = fotos
+                            .map((x) => resolveAssetUrl(x))
+                            .filter((u): u is string => Boolean(u));
+                          if (images.length === 0) return;
+                          setFotoLightbox({ images, initialIndex: i });
+                        }}
+                        className="block cursor-zoom-in rounded-lg ring-1 ring-slate-200 transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand/40"
+                        title="Ampliar foto"
+                        aria-label={`Ampliar foto ${i + 1}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={resolveAssetUrl(f)!}
+                          alt=""
+                          className="h-20 w-20 rounded-lg object-cover"
+                        />
+                      </button>
                       {i === 0 && (
                         <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">
                           Capa
@@ -778,12 +803,25 @@ export function ProdutoCadastroForm({
                   ))
                 : pendingFotos.map((p, i) => (
                     <div key={p.key} className="relative">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={p.preview}
-                        alt=""
-                        className="h-20 w-20 rounded-lg object-cover ring-1 ring-slate-200"
-                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setFotoLightbox({
+                            images: pendingFotos.map((x) => x.preview),
+                            initialIndex: i,
+                          })
+                        }
+                        className="block cursor-zoom-in rounded-lg ring-1 ring-slate-200 transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand/40"
+                        title="Ampliar foto"
+                        aria-label={`Ampliar foto ${i + 1}`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={p.preview}
+                          alt=""
+                          className="h-20 w-20 rounded-lg object-cover"
+                        />
+                      </button>
                       {i === 0 && (
                         <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1 text-[10px] text-white">
                           Capa
@@ -899,6 +937,15 @@ export function ProdutoCadastroForm({
           </div>
         </div>
       )}
+
+      <ImageLightbox
+        open={fotoLightbox !== null}
+        onClose={() => setFotoLightbox(null)}
+        images={fotoLightbox?.images ?? []}
+        initialIndex={fotoLightbox?.initialIndex ?? 0}
+        title={form.descricao.trim() || form.codigo.trim() || "Produto"}
+        subtitle={form.codigo.trim() || undefined}
+      />
     </>
   );
 }
