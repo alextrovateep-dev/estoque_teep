@@ -1,8 +1,9 @@
 "use client";
 
+import { InventarioSerieAjuste } from "@/components/InventarioSerieAjuste";
+import type { SerieConfigLite } from "@/components/SerieCamposPrefixo";
 import { api } from "@/lib/api";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 
 type Filial = { id: string; nome: string; sigla: string };
 type Produto = {
@@ -26,6 +27,7 @@ type EstoqueRow = {
   seriesExistentes: string[] | null;
   /** Erro ao carregar a lista de séries desta linha. */
   seriesErro: string | null;
+  serieConfig?: SerieConfigLite;
 };
 
 type SerieDisponivel = { id: string; numeroSerie: string };
@@ -64,6 +66,7 @@ export default function InitEstoquePage() {
   const [expandSerie, setExpandSerie] = useState<string | null>(null);
   const [carregandoSeries, setCarregandoSeries] = useState<string | null>(null);
   const [produtoFiltro, setProdutoFiltro] = useState("");
+  const [somenteAlterados, setSomenteAlterados] = useState(false);
   const loadGen = useRef(0);
 
   useEffect(() => {
@@ -222,14 +225,39 @@ export default function InitEstoquePage() {
   }, [produtoFiltro, filialId, carregandoLista]);
 
   const rowsVisiveis = useMemo(() => {
+    let list = rows;
     const q = produtoFiltro.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter(
-      (r) =>
-        r.codigo.toLowerCase().includes(q) ||
-        r.descricao.toLowerCase().includes(q)
-    );
-  }, [rows, produtoFiltro]);
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.codigo.toLowerCase().includes(q) ||
+          r.descricao.toLowerCase().includes(q)
+      );
+    }
+    if (somenteAlterados) {
+      list = list.filter(
+        (r) => Number(r.novoSaldo) !== r.saldoAtual && r.novoSaldo !== ""
+      );
+    }
+    return list;
+  }, [rows, produtoFiltro, somenteAlterados]);
+
+  const precisaReinit = useMemo(
+    () =>
+      rows.some((r) => {
+        const d = Number(r.novoSaldo) - r.saldoAtual;
+        return Number.isFinite(d) && d !== 0 && r.saldoAtual > 0;
+      }),
+    [rows]
+  );
+
+  const qtdAlterados = useMemo(
+    () =>
+      rows.filter(
+        (r) => Number(r.novoSaldo) !== r.saldoAtual && r.novoSaldo !== ""
+      ).length,
+    [rows]
+  );
 
   async function carregarSeriesExistentes(produtoId: string) {
     if (!filialId) return;
@@ -268,6 +296,53 @@ export default function InitEstoquePage() {
       );
     } finally {
       setCarregandoSeries(null);
+    }
+  }
+
+  async function carregarSerieConfig(produtoId: string) {
+    try {
+      const c = await api<{ configuracao: SerieConfigLite }>(
+        `/series/contador/${produtoId}`
+      );
+      setRows((prev) =>
+        prev.map((x) =>
+          x.produtoId === produtoId
+            ? { ...x, serieConfig: c.configuracao ?? undefined }
+            : x
+        )
+      );
+    } catch {
+      /* config opcional — SerieCamposPrefixo usa padrão do código */
+    }
+  }
+
+  function prepararPainelSeries(produtoId: string, delta: number) {
+    setExpandSerie(produtoId);
+    void carregarSeriesExistentes(produtoId);
+    if (delta > 0) void carregarSerieConfig(produtoId);
+  }
+
+  function atualizarNovoSaldo(produtoId: string, novoSaldo: string) {
+    setRows((prev) =>
+      prev.map((x) => {
+        if (x.produtoId !== produtoId) return x;
+        const d = Number(novoSaldo) - x.saldoAtual;
+        const n =
+          x.controlaSerie && Number.isFinite(d) && d !== 0
+            ? Math.min(Math.abs(Math.trunc(d)), 200)
+            : 0;
+        return {
+          ...x,
+          novoSaldo,
+          series: Array.from({ length: n }, (_, i) => x.series[i] || ""),
+        };
+      })
+    );
+    const row = rows.find((r) => r.produtoId === produtoId);
+    if (!row?.controlaSerie) return;
+    const d = Number(novoSaldo) - row.saldoAtual;
+    if (Number.isFinite(d) && d !== 0) {
+      prepararPainelSeries(produtoId, d);
     }
   }
 
@@ -311,6 +386,12 @@ export default function InitEstoquePage() {
         })
         .filter((i) => !Number.isNaN(i.saldo));
 
+      if (precisaReinit && !confirmarReinit) {
+        throw new Error(
+          "Marque “Permitir alterar produtos que já têm saldo” para aplicar ajustes em itens com estoque existente."
+        );
+      }
+
       for (const r of rows) {
         const saldo = Number(r.novoSaldo);
         const delta = saldo - r.saldoAtual;
@@ -319,6 +400,12 @@ export default function InitEstoquePage() {
         if (r.series.length !== need) {
           throw new Error(
             `${r.codigo}: informe ${need} série(s) para o ajuste (Δ=${delta})`
+          );
+        }
+        const vazias = r.series.filter((s) => !s.trim()).length;
+        if (vazias > 0) {
+          throw new Error(
+            `${r.codigo}: preencha todas as ${need} série(s) do ajuste`
           );
         }
       }
@@ -390,9 +477,12 @@ export default function InitEstoquePage() {
     <>
       <h1 className="text-2xl font-semibold">Inventário / Saldo inicial</h1>
       <p className="mt-1 text-sm text-slate-500">
-        Escolha o estoque (filial), localize o produto e ajuste o saldo. Produtos
-        com série: use o botão para ver as unidades em estoque e informar as
-        séries do ajuste (1 série = 1 unidade).
+        Escolha o estoque, ajuste o saldo e aplique. Produtos com série: ao mudar
+        o saldo, o painel abre sozinho — na{" "}
+        <strong className="font-medium text-slate-700">entrada</strong> use
+        “Sugerir próximos” ou digite; na{" "}
+        <strong className="font-medium text-slate-700">saída</strong> clique nas
+        séries que serão retiradas (1 série = 1 unidade).
       </p>
 
       <form onSubmit={onSubmit} className="mt-4 space-y-4">
@@ -447,10 +537,26 @@ export default function InitEstoquePage() {
         <p className="text-xs text-slate-500">
           {carregandoLista
             ? `Carregando produtos de ${filialLabel}…`
-            : produtoFiltro.trim()
+            : produtoFiltro.trim() || somenteAlterados
               ? `Exibindo ${rowsVisiveis.length} de ${rows.length} produto(s) · estoque ${filialLabel}`
               : `${rowsVisiveis.length} produto(s) · estoque ${filialLabel}`}
+          {qtdAlterados > 0 ? (
+            <span className="ml-2 text-teal-800">
+              · {qtdAlterados} alteração(ões) pendente(s)
+            </span>
+          ) : null}
         </p>
+
+        {qtdAlterados > 0 ? (
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={somenteAlterados}
+              onChange={(e) => setSomenteAlterados(e.target.checked)}
+            />
+            Mostrar só produtos com saldo alterado
+          </label>
+        ) : null}
 
         <div className="overflow-x-auto rounded-xl border bg-white">
           <table className="min-w-full text-sm">
@@ -509,132 +615,107 @@ export default function InitEstoquePage() {
                         ) : null}
                       </td>
                       <td className="px-3 py-2">
-                        <input
-                          type="number"
-                          min={0}
-                          step={r.controlaSerie ? 1 : "any"}
-                          className="w-28 rounded border px-2 py-1"
-                          value={r.novoSaldo}
-                          onChange={(e) =>
-                            setRows((prev) =>
-                              prev.map((x) => {
-                                if (x.produtoId !== r.produtoId) return x;
-                                const novoSaldo = e.target.value;
-                                const d = Number(novoSaldo) - x.saldoAtual;
-                                const n =
-                                  x.controlaSerie &&
-                                  Number.isFinite(d) &&
-                                  d !== 0
-                                    ? Math.min(Math.abs(Math.trunc(d)), 200)
-                                    : 0;
-                                return {
-                                  ...x,
-                                  novoSaldo,
-                                  series: Array.from(
-                                    { length: n },
-                                    (_, i) => x.series[i] || ""
-                                  ),
-                                };
-                              })
-                            )
-                          }
-                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min={0}
+                            step={r.controlaSerie ? 1 : "any"}
+                            className="w-28 rounded border px-2 py-1"
+                            value={r.novoSaldo}
+                            onChange={(e) =>
+                              atualizarNovoSaldo(r.produtoId, e.target.value)
+                            }
+                          />
+                          {delta !== 0 && Number.isFinite(delta) ? (
+                            <span
+                              className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${
+                                delta > 0
+                                  ? "bg-emerald-100 text-emerald-800"
+                                  : "bg-amber-100 text-amber-900"
+                              }`}
+                            >
+                              {delta > 0 ? "+" : ""}
+                              {delta}
+                            </span>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-3 py-2 min-w-[16rem]">
                         {!r.controlaSerie ? (
                           <span className="text-slate-400">—</span>
+                        ) : needsSeries ? (
+                          <InventarioSerieAjuste
+                            produtoId={r.produtoId}
+                            codigo={r.codigo}
+                            delta={delta}
+                            filialLabel={filialLabel}
+                            series={r.series}
+                            seriesExistentes={r.seriesExistentes}
+                            seriesEmEstoque={r.seriesEmEstoque}
+                            seriesErro={r.seriesErro}
+                            carregando={carregandoSeries === r.produtoId}
+                            serieConfig={r.serieConfig}
+                            aberto={aberto}
+                            onToggle={() =>
+                              toggleExpand(r.produtoId, r.controlaSerie)
+                            }
+                            onReload={() =>
+                              void carregarSeriesExistentes(r.produtoId)
+                            }
+                            onSeriesChange={(series) =>
+                              setRows((prev) =>
+                                prev.map((x) =>
+                                  x.produtoId === r.produtoId
+                                    ? { ...x, series }
+                                    : x
+                                )
+                              )
+                            }
+                            onEnsureConfig={() =>
+                              void carregarSerieConfig(r.produtoId)
+                            }
+                          />
                         ) : (
-                          <div className="space-y-2">
-                            <button
-                              type="button"
-                              className="text-sm text-teal-800 underline"
-                              onClick={() =>
-                                toggleExpand(r.produtoId, r.controlaSerie)
-                              }
-                            >
-                              {aberto ? "Ocultar séries" : "Ver séries"}
-                              {qtdSeries > 0 ? ` (${qtdSeries})` : ""}
-                              {needsSeries
-                                ? ` · informar ${Math.abs(delta)} do ajuste`
-                                : ""}
-                            </button>
-
-                            {aberto ? (
-                              <div className="space-y-2 rounded-lg border border-teal-100 bg-teal-50/40 p-2">
-                                <div>
-                                  <p className="text-xs font-medium text-slate-600">
-                                    {(r.seriesExistentes?.length ??
-                                      r.seriesEmEstoque) > 0
-                                      ? `${r.seriesExistentes?.length ?? r.seriesEmEstoque} unidade(s) em ${filialLabel}`
-                                      : `Séries em ${filialLabel}`}
-                                  </p>
-                                  {carregandoSeries === r.produtoId ||
-                                  (r.seriesExistentes === null &&
-                                    !r.seriesErro) ? (
-                                    <p className="mt-1 text-xs text-slate-500">
-                                      Carregando…
-                                    </p>
-                                  ) : r.seriesErro ? (
-                                    <div className="mt-1 space-y-1">
-                                      <p className="text-xs text-rose-700">
-                                        {r.seriesErro}
-                                      </p>
-                                      <button
-                                        type="button"
-                                        className="text-xs text-teal-800 underline"
-                                        onClick={() =>
-                                          void carregarSeriesExistentes(
-                                            r.produtoId
-                                          )
-                                        }
-                                      >
-                                        Tentar de novo
-                                      </button>
-                                    </div>
-                                  ) : (r.seriesExistentes?.length ?? 0) ===
-                                    0 ? (
-                                    <p className="mt-1 text-xs text-slate-500">
-                                      Nenhuma série EM_ESTOQUE nesta filial.
-                                    </p>
-                                  ) : (
-                                    <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto">
-                                      {r.seriesExistentes!.map((sn) => (
-                                        <li
-                                          key={sn}
-                                          className="font-mono text-xs text-slate-800"
-                                        >
-                                          {sn}
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  )}
-                                </div>
-
-                                {needsSeries ? (
-                                  <SerieCamposPrefixo
-                                    codigoProduto={r.codigo}
-                                    config={null}
-                                    series={r.series}
-                                    validarNascimento={delta > 0}
-                                    onChangeSerie={(i, full) =>
-                                      setRows((prev) =>
-                                        prev.map((x) => {
-                                          if (x.produtoId !== r.produtoId)
-                                            return x;
-                                          const series = [...x.series];
-                                          while (series.length < i + 1)
-                                            series.push("");
-                                          series[i] = full;
-                                          return { ...x, series };
-                                        })
-                                      )
-                                    }
-                                  />
-                                ) : null}
-                              </div>
-                            ) : null}
-                          </div>
+                          <button
+                            type="button"
+                            className="text-sm text-teal-800 underline"
+                            onClick={() =>
+                              toggleExpand(r.produtoId, r.controlaSerie)
+                            }
+                          >
+                            {aberto ? "Ocultar séries" : "Ver séries"}
+                            {qtdSeries > 0 ? ` (${qtdSeries})` : ""}
+                          </button>
                         )}
+                        {aberto && !needsSeries && r.controlaSerie ? (
+                          <div className="mt-2 rounded-lg border border-slate-100 bg-slate-50 p-2">
+                            {carregandoSeries === r.produtoId ||
+                            (r.seriesExistentes === null && !r.seriesErro) ? (
+                              <p className="text-xs text-slate-500">
+                                Carregando…
+                              </p>
+                            ) : r.seriesErro ? (
+                              <p className="text-xs text-rose-700">
+                                {r.seriesErro}
+                              </p>
+                            ) : (r.seriesExistentes?.length ?? 0) === 0 ? (
+                              <p className="text-xs text-slate-500">
+                                Nenhuma série em estoque.
+                              </p>
+                            ) : (
+                              <ul className="max-h-32 space-y-0.5 overflow-y-auto">
+                                {r.seriesExistentes!.map((sn) => (
+                                  <li
+                                    key={sn}
+                                    className="font-mono text-xs text-slate-800"
+                                  >
+                                    {sn}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ) : null}
                       </td>
                     </tr>
                   );
@@ -659,6 +740,12 @@ export default function InitEstoquePage() {
               Sem este tique, só é possível definir saldo em produtos zerados.
               Marque apenas se quiser mesmo ajustar estoque já existente.
             </span>
+            {precisaReinit && !confirmarReinit ? (
+              <span className="mt-1 block text-xs font-medium text-amber-800">
+                Há ajustes em produtos com saldo — marque esta opção antes de
+                aplicar.
+              </span>
+            ) : null}
           </span>
         </label>
 
