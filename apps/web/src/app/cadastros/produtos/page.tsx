@@ -223,8 +223,7 @@ function ProdutosPageInner() {
         <table className="min-w-full text-sm">
           <thead className="bg-slate-50 text-left">
             <tr>
-              <th className="w-10 px-2 py-2" />
-              <th className="px-3 py-2">Capa</th>
+              <th className="w-12 pl-2 pr-1 py-2">Capa</th>
               <th className="px-3 py-2">Código</th>
               <th className="px-3 py-2">Descrição</th>
               <th className="px-3 py-2">Categoria</th>
@@ -259,75 +258,75 @@ function ProdutosPageInner() {
                         : rowTone
                     }
                   >
-                    <td className="px-2 py-2">
-                      {hist ? (
-                        <button
-                          type="button"
-                          onClick={() => void toggleExpand(p)}
-                          className={
-                            aberto
-                              ? "inline-flex h-7 w-7 items-center justify-center rounded-md border border-brand/40 bg-brand/15 text-brand"
-                              : "inline-flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-brand hover:bg-slate-50"
-                          }
-                          title={
-                            aberto
-                              ? "Recolher fornecedores/clientes"
-                              : "Ver fornecedores e clientes do histórico"
-                          }
-                          aria-expanded={aberto}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            viewBox="0 0 20 20"
-                            fill="currentColor"
-                            className={`h-4 w-4 transition-transform ${aberto ? "rotate-90" : ""}`}
+                    <td className="pl-2 pr-1 py-2">
+                      <div className="flex items-center gap-1">
+                        {hist ? (
+                          <button
+                            type="button"
+                            onClick={() => void toggleExpand(p)}
+                            className={
+                              aberto
+                                ? "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-brand/40 bg-brand/15 text-brand"
+                                : "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-slate-200 text-brand hover:bg-slate-50"
+                            }
+                            title={
+                              aberto
+                                ? "Recolher fornecedores/clientes"
+                                : "Ver fornecedores e clientes do histórico"
+                            }
+                            aria-expanded={aberto}
                           >
-                            <path
-                              fillRule="evenodd"
-                              d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
-                              clipRule="evenodd"
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                              className={`h-3.5 w-3.5 transition-transform ${aberto ? "rotate-90" : ""}`}
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M7.21 14.77a.75.75 0 0 1 .02-1.06L11.168 10 7.23 6.29a.75.75 0 1 1 1.04-1.08l4.5 4.25a.75.75 0 0 1 0 1.08l-4.5 4.25a.75.75 0 0 1-1.06-.02Z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </button>
+                        ) : null}
+                        {capaUrl ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setFotoLightbox({
+                                images: fotos,
+                                initialIndex: 0,
+                                titulo: p.descricao,
+                                codigo: p.codigo,
+                              })
+                            }
+                            className="block cursor-zoom-in rounded ring-offset-2 transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand/50"
+                            title={
+                              fotos.length > 1
+                                ? `Ampliar fotos (${fotos.length})`
+                                : "Ampliar foto"
+                            }
+                            aria-label={`Ampliar foto de ${p.descricao}`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={capaUrl}
+                              alt=""
+                              className="h-10 w-10 rounded object-cover"
                             />
-                          </svg>
-                        </button>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-2">
-                      {capaUrl ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setFotoLightbox({
-                              images: fotos,
-                              initialIndex: 0,
-                              titulo: p.descricao,
-                              codigo: p.codigo,
-                            })
-                          }
-                          className="block cursor-zoom-in rounded ring-offset-2 transition hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-brand/50"
-                          title={
-                            fotos.length > 1
-                              ? `Ampliar fotos (${fotos.length})`
-                              : "Ampliar foto"
-                          }
-                          aria-label={`Ampliar foto de ${p.descricao}`}
-                        >
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={capaUrl}
-                            alt=""
-                            className="h-10 w-10 rounded object-cover"
-                          />
-                          {fotos.length > 1 ? (
-                            <span className="sr-only">
-                              {fotos.length} fotos
-                            </span>
-                          ) : null}
-                        </button>
-                      ) : (
-                        <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">
-                          —
-                        </div>
-                      )}
+                            {fotos.length > 1 ? (
+                              <span className="sr-only">
+                                {fotos.length} fotos
+                              </span>
+                            ) : null}
+                          </button>
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-400">
+                            —
+                          </div>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs">
                       {p.codigo}
@@ -385,7 +384,7 @@ function ProdutosPageInner() {
                   </tr>
                   {aberto && (
                     <tr className="border-t border-brand/20 bg-brand/[0.04] shadow-[inset_4px_0_0_0_#5B8B83]">
-                      <td colSpan={10} className="px-4 py-4">
+                      <td colSpan={10} className="px-3 py-4">
                         {loadingRel === p.id && !rel && (
                           <p className="text-xs text-slate-400">Carregando…</p>
                         )}
