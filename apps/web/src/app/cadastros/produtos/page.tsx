@@ -3,6 +3,7 @@
 import { api, getStoredUser } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
 import { userCanEditCadastro } from "@/lib/access";
+import { formatMoney } from "@/lib/money";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
@@ -211,7 +212,7 @@ function ProdutosPageInner() {
               <th className="px-3 py-2">Código</th>
               <th className="px-3 py-2">Descrição</th>
               <th className="px-3 py-2">Categoria</th>
-              <th className="px-3 py-2">Preço</th>
+              <th className="px-3 py-2 text-right">Preço</th>
               <th className="px-3 py-2">Mín.</th>
               <th className="px-3 py-2">Máx.</th>
               <th className="px-3 py-2">Status</th>
@@ -313,8 +314,8 @@ function ProdutosPageInner() {
                       )}
                     </td>
                     <td className="px-3 py-2">{p.categoria?.nome}</td>
-                    <td className="px-3 py-2">
-                      {Number(p.precoUnitario).toFixed(2)}
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                      {formatMoney(p.precoUnitario)}
                     </td>
                     <td className="px-3 py-2">{p.estoqueMinimo || "—"}</td>
                     <td className="px-3 py-2">{p.estoqueMaximo || "—"}</td>

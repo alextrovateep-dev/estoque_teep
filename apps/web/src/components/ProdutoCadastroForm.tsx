@@ -3,6 +3,11 @@
 import { api, apiUpload } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
 import {
+  formatMoney,
+  formatMoneyPlain,
+  parseMoneyInput,
+} from "@/lib/money";
+import {
   FORMATOS_SERIE_PRESETS,
   anoDoisDigitos,
   formatarNumeroSerie,
@@ -39,7 +44,7 @@ const emptyForm = {
   codigo: "",
   descricao: "",
   categoriaId: "",
-  precoUnitario: "0",
+  precoUnitario: "0,00",
   estoqueMinimo: "0",
   estoqueMaximo: "0",
   controlaSerie: false,
@@ -107,7 +112,7 @@ export function ProdutoCadastroForm({
           codigo: p.codigo,
           descricao: p.descricao,
           categoriaId: p.categoriaId || p.categoria?.id || "",
-          precoUnitario: String(p.precoUnitario),
+          precoUnitario: formatMoneyPlain(p.precoUnitario),
           estoqueMinimo: String(p.estoqueMinimo ?? 0),
           estoqueMaximo: String(p.estoqueMaximo ?? 0),
           controlaSerie: Boolean(p.controlaSerie),
@@ -277,7 +282,7 @@ export function ProdutoCadastroForm({
       codigo: form.codigo.trim(),
       descricao: form.descricao.trim(),
       categoriaId: form.categoriaId,
-      precoUnitario: Number(form.precoUnitario),
+      precoUnitario: parseMoneyInput(form.precoUnitario),
       estoqueMinimo: Number(form.estoqueMinimo),
       estoqueMaximo: Number(form.estoqueMaximo),
       controlaSerie: form.controlaSerie,
@@ -453,13 +458,20 @@ export function ProdutoCadastroForm({
               Preço unitário (R$)
             </span>
             <input
-              type="number"
-              step="0.01"
-              min={0}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              type="text"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="0,00"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 tabular-nums outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
               value={form.precoUnitario}
               onChange={(e) =>
                 setForm({ ...form, precoUnitario: e.target.value })
+              }
+              onBlur={() =>
+                setForm((f) => ({
+                  ...f,
+                  precoUnitario: formatMoneyPlain(parseMoneyInput(f.precoUnitario)),
+                }))
               }
             />
           </label>
