@@ -144,10 +144,11 @@ export default function ArvoreProdutoPage() {
     }>
   >([]);
 
+  const [paiIdOriginal, setPaiIdOriginal] = useState<string | null>(null);
   const [trocandoPai, setTrocandoPai] = useState(false);
   const [trocaPaiBusca, setTrocaPaiBusca] = useState("");
   const [trocaPaiSugestoes, setTrocaPaiSugestoes] = useState<
-    Array<{ id: string; codigo: string; descricao: string }>
+    Array<{ id: string; codigo: string; descricao: string; unidade?: string; precoUnitario?: number }>
   >([]);
 
   const [showSim, setShowSim] = useState(false);
@@ -214,6 +215,7 @@ export default function ArvoreProdutoPage() {
       }>;
     }>(`/produtos/${id}/componentes`);
     setPaiId(r.produtoId);
+    setPaiIdOriginal(r.produtoId);
     setPaiLabel(`${r.codigo} — ${r.descricao}`);
     setPaiPreco(Number(r.precoUnitario) || 0);
     setPaiUnidade(normalizarUnidade(r.unidade || "UN"));
@@ -284,6 +286,7 @@ export default function ArvoreProdutoPage() {
       return;
     }
     setPaiId(null);
+    setPaiIdOriginal(null);
     setPaiLabel("");
     setPaiPreco(0);
     setPaiUnidade("UN");
@@ -319,6 +322,7 @@ export default function ArvoreProdutoPage() {
       setTrocandoPai(false);
       setTrocaPaiBusca("");
       setTrocaPaiSugestoes([]);
+      setPaiIdOriginal(paiId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao recarregar");
     }
@@ -345,6 +349,12 @@ export default function ArvoreProdutoPage() {
           return;
         }
       }
+      if (paiIdOriginal && paiIdOriginal !== paiId) {
+        await api(`/produtos/${paiIdOriginal}/componentes`, {
+          method: "PUT",
+          body: JSON.stringify({ itens: [] }),
+        });
+      }
       await api(`/produtos/${paiId}/componentes`, {
         method: "PUT",
         body: JSON.stringify({
@@ -361,6 +371,7 @@ export default function ArvoreProdutoPage() {
           : "Árvore removida (sem componentes)"
       );
       setItensSalvosJson(snapshotItens(itens));
+      setPaiIdOriginal(paiId);
       setEditando(false);
       setTrocandoPai(false);
       setTrocaPaiBusca("");
@@ -634,7 +645,7 @@ export default function ArvoreProdutoPage() {
                             setTrocaPaiSugestoes([]);
                             return;
                           }
-                          void api<Array<{ id: string; codigo: string; descricao: string }>>(
+                          void api<Array<{ id: string; codigo: string; descricao: string; unidade?: string; precoUnitario?: number }>>(
                             `/produtos/busca?q=${encodeURIComponent(q.trim())}`
                           )
                             .then((rows) =>
@@ -651,18 +662,17 @@ export default function ArvoreProdutoPage() {
                                 type="button"
                                 className="block w-full px-3 py-2 text-left hover:bg-brand/5"
                                 onClick={() => {
+                                  setPaiId(s.id);
+                                  setPaiLabel(`${s.codigo} — ${s.descricao}`);
+                                  setPaiPreco(Number(s.precoUnitario) || 0);
+                                  setPaiUnidade(normalizarUnidade(s.unidade || "UN"));
                                   setTrocandoPai(false);
                                   setTrocaPaiBusca("");
                                   setTrocaPaiSugestoes([]);
-                                  setItens([]);
-                                  setItensSalvosJson("");
                                   setSim(null);
                                   setShowSim(false);
                                   setError("");
                                   setMsg("");
-                                  void abrirArvore(s.id, { editar: true }).catch((e) =>
-                                    setError(e instanceof Error ? e.message : "Erro")
-                                  );
                                 }}
                               >
                                 <span className="font-medium">{s.codigo}</span>
