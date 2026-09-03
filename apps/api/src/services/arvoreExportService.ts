@@ -6,6 +6,7 @@ import { prisma } from "../lib/prisma";
 import { htmlToPdf } from "../lib/pdf";
 import { brandAssetBuffer, brandAssetDataUri } from "../lib/brandAssets";
 import { dateStampSaoPaulo } from "./saldosExportService";
+import { calcularCustoBom } from "./bomCustoService";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -112,6 +113,7 @@ export async function carregarArvoreExport(
             fantasma: true,
             produtoFilho: {
               select: {
+                id: true,
                 codigo: true,
                 descricao: true,
                 precoUnitario: true,
@@ -127,37 +129,43 @@ export async function carregarArvoreExport(
     }),
   ]);
 
-  const rows: ArvoreExportRow[] = pais.map((p) => {
-    const componentes: ArvoreComponenteRow[] = p.componentesComoPai.map((c) => {
-      const qtd = Number(c.quantidade);
-      const preco = Number(c.produtoFilho.precoUnitario);
-      return {
-        codigo: c.produtoFilho.codigo,
-        descricao: c.produtoFilho.descricao,
-        quantidade: qtd,
-        fantasma: c.fantasma,
-        precoUnitario: preco,
-        valorLinha: qtd * preco,
-        ativo: c.produtoFilho.ativo,
-      };
-    });
-    let totalComposicao = 0;
-    let totalBaixa = 0;
-    for (const c of componentes) {
-      totalComposicao += c.valorLinha;
-      if (!c.fantasma) totalBaixa += c.valorLinha;
-    }
-    return {
-      produtoPaiId: p.id,
-      codigo: p.codigo,
-      descricao: p.descricao,
-      precoUnitario: Number(p.precoUnitario),
-      qtdComponentes: componentes.length,
-      totalComposicao: Math.round(totalComposicao * 100) / 100,
-      totalBaixa: Math.round(totalBaixa * 100) / 100,
-      componentes,
-    };
-  });
+  const rows: ArvoreExportRow[] = await Promise.all(
+    pais.map((p) =>
+      prisma.$transaction(async (tx) => {
+        const componentes: ArvoreComponenteRow[] = [];
+        for (const c of p.componentesComoPai) {
+          const qtd = Number(c.quantidade);
+          const custoBom = await calcularCustoBom(c.produtoFilho.id, tx);
+          const preco = custoBom !== null ? custoBom : Number(c.produtoFilho.precoUnitario);
+          componentes.push({
+            codigo: c.produtoFilho.codigo,
+            descricao: c.produtoFilho.descricao,
+            quantidade: qtd,
+            fantasma: c.fantasma,
+            precoUnitario: preco,
+            valorLinha: qtd * preco,
+            ativo: c.produtoFilho.ativo,
+          });
+        }
+        let totalComposicao = 0;
+        let totalBaixa = 0;
+        for (const c of componentes) {
+          totalComposicao += c.valorLinha;
+          if (!c.fantasma) totalBaixa += c.valorLinha;
+        }
+        return {
+          produtoPaiId: p.id,
+          codigo: p.codigo,
+          descricao: p.descricao,
+          precoUnitario: Number(p.precoUnitario),
+          qtdComponentes: componentes.length,
+          totalComposicao: Math.round(totalComposicao * 100) / 100,
+          totalBaixa: Math.round(totalBaixa * 100) / 100,
+          componentes,
+        };
+      })
+    )
+  );
 
   const linhasComponente = rows.reduce((n, r) => n + r.componentes.length, 0);
 

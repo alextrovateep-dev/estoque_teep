@@ -29,6 +29,10 @@ type BomItem = {
   quantidade: string;
   fantasma: boolean;
   precoUnitario?: number;
+  /** Custo real explodido (recursivo). Igual a precoUnitario quando temBom=false. */
+  custoExplodido?: number;
+  /** true quando o filho tem BOM própria e o custo foi calculado recursivamente. */
+  temBom?: boolean;
   unidadeFilho: string;
   /** Unidade usada ao digitar (converte para unidadeFilho ao salvar). */
   unidadeEntrada: string;
@@ -206,6 +210,8 @@ export default function ArvoreProdutoPage() {
         produtoFilhoId: string;
         quantidade: number;
         fantasma: boolean;
+        temBom?: boolean;
+        custoExplodido?: number;
         produtoFilho: {
           codigo: string;
           descricao: string;
@@ -228,6 +234,8 @@ export default function ArvoreProdutoPage() {
         quantidade: String(i.quantidade),
         fantasma: i.fantasma,
         precoUnitario: Number(i.produtoFilho.precoUnitario) || 0,
+        custoExplodido: i.custoExplodido ?? Number(i.produtoFilho.precoUnitario) ?? 0,
+        temBom: i.temBom ?? false,
         unidadeFilho,
         unidadeEntrada: unidadeFilho,
       };
@@ -264,7 +272,7 @@ export default function ArvoreProdutoPage() {
     let totalBaixa = 0;
     const linhas = itens.map((b) => {
       const q = Number(b.quantidade);
-      const preco = Number(b.precoUnitario) || 0;
+      const preco = b.custoExplodido ?? Number(b.precoUnitario) ?? 0;
       const valorLinha =
         Number.isFinite(q) && q > 0 ? q * preco : 0;
       if (valorLinha > 0) {
@@ -986,6 +994,11 @@ export default function ArvoreProdutoPage() {
                           <span className="block text-[10px] font-normal text-slate-400">
                             / {b.unidadeFilho}
                           </span>
+                          {b.temBom && (
+                            <span className="block text-[10px] font-medium text-teal-700">
+                              via BOM
+                            </span>
+                          )}
                         </div>
                         <div className="text-right tabular-nums font-semibold text-slate-900">
                           {money(b.valorLinha)}

@@ -60,6 +60,7 @@ import {
   exportarSimulacaoArvoreExcel,
   exportarSimulacaoArvorePdf,
 } from "../services/simulacaoArvoreService";
+import { calcularCustoBom } from "../services/bomCustoService";
 import { Prisma } from "@prisma/client";
 
 export const cadastrosRouter = Router();
@@ -1131,53 +1132,63 @@ cadastrosRouter.patch(
 /** BOM / árvore de componentes do produto (leitura — também usada no lançamento). */
 cadastrosRouter.get("/produtos/:id/componentes", async (req, res, next) => {
   try {
-    const pai = await prisma.produto.findUnique({
-      where: { id: req.params.id },
-      select: {
-        id: true,
-        codigo: true,
-        descricao: true,
-        unidade: true,
-        precoUnitario: true,
-        ativo: true,
-      },
-    });
-    if (!pai) throw new AppError(404, "Produto não encontrado");
-    const itens = await prisma.produtoComponente.findMany({
-      where: { produtoPaiId: pai.id },
-      include: {
-        produtoFilho: {
-          select: {
-            id: true,
-            codigo: true,
-            descricao: true,
-            unidade: true,
-            controlaSerie: true,
-            ativo: true,
-            precoUnitario: true,
+    const result = await prisma.$transaction(async (tx) => {
+      const pai = await tx.produto.findUnique({
+        where: { id: req.params.id },
+        select: {
+          id: true,
+          codigo: true,
+          descricao: true,
+          unidade: true,
+          precoUnitario: true,
+          ativo: true,
+        },
+      });
+      if (!pai) throw new AppError(404, "Produto não encontrado");
+      const itens = await tx.produtoComponente.findMany({
+        where: { produtoPaiId: pai.id },
+        include: {
+          produtoFilho: {
+            select: {
+              id: true,
+              codigo: true,
+              descricao: true,
+              unidade: true,
+              controlaSerie: true,
+              ativo: true,
+              precoUnitario: true,
+            },
           },
         },
-      },
-      orderBy: { produtoFilho: { codigo: "asc" } },
+        orderBy: { produtoFilho: { codigo: "asc" } },
+      });
+      const itensMapped = [];
+      for (const i of itens) {
+        const custoBom = await calcularCustoBom(i.produtoFilhoId, tx);
+        itensMapped.push({
+          id: i.id,
+          produtoFilhoId: i.produtoFilhoId,
+          quantidade: Number(i.quantidade),
+          fantasma: i.fantasma,
+          temBom: custoBom !== null,
+          custoExplodido: custoBom !== null ? custoBom : Number(i.produtoFilho.precoUnitario),
+          produtoFilho: {
+            ...i.produtoFilho,
+            precoUnitario: Number(i.produtoFilho.precoUnitario),
+          },
+        });
+      }
+      return {
+        produtoId: pai.id,
+        codigo: pai.codigo,
+        descricao: pai.descricao,
+        unidade: pai.unidade,
+        precoUnitario: Number(pai.precoUnitario),
+        ativo: pai.ativo,
+        itens: itensMapped,
+      };
     });
-    res.json({
-      produtoId: pai.id,
-      codigo: pai.codigo,
-      descricao: pai.descricao,
-      unidade: pai.unidade,
-      precoUnitario: Number(pai.precoUnitario),
-      ativo: pai.ativo,
-      itens: itens.map((i) => ({
-        id: i.id,
-        produtoFilhoId: i.produtoFilhoId,
-        quantidade: Number(i.quantidade),
-        fantasma: i.fantasma,
-        produtoFilho: {
-          ...i.produtoFilho,
-          precoUnitario: Number(i.produtoFilho.precoUnitario),
-        },
-      })),
-    });
+    res.json(result);
   } catch (e) {
     next(e);
   }

@@ -7,6 +7,7 @@ import { htmlToPdf } from "../lib/pdf";
 import { brandAssetBuffer, brandAssetDataUri } from "../lib/brandAssets";
 import { qtyReservadaTransferenciaPendente } from "./estoqueService";
 import { dateStampSaoPaulo } from "./saldosExportService";
+import { calcularCustoBom } from "./bomCustoService";
 
 export type SimulacaoLinha = {
   produtoFilhoId: string;
@@ -98,82 +99,88 @@ export async function calcularSimulacaoArvore(opts: {
   });
   if (!filial) throw new AppError(400, "Estoque inválido");
 
-  const bom = await prisma.produtoComponente.findMany({
-    where: { produtoPaiId: pai.id },
-    include: {
-      produtoFilho: {
-        select: {
-          id: true,
-          codigo: true,
-          descricao: true,
-          unidade: true,
-          precoUnitario: true,
-          ativo: true,
+  const { linhas, valorNecessario, valorFaltante, itensComFalta } =
+    await prisma.$transaction(async (tx) => {
+      const bom = await tx.produtoComponente.findMany({
+        where: { produtoPaiId: pai.id },
+        include: {
+          produtoFilho: {
+            select: {
+              id: true,
+              codigo: true,
+              descricao: true,
+              unidade: true,
+              precoUnitario: true,
+              ativo: true,
+            },
+          },
         },
-      },
-    },
-    orderBy: { produtoFilho: { codigo: "asc" } },
-  });
-  if (!bom.length) {
-    throw new AppError(400, "Produto sem árvore de componentes");
-  }
+        orderBy: { produtoFilho: { codigo: "asc" } },
+      });
+      if (!bom.length) {
+        throw new AppError(400, "Produto sem árvore de componentes");
+      }
 
-  const filhoIds = bom.map((b) => b.produtoFilhoId);
-  const estoques = await prisma.estoque.findMany({
-    where: { filialId, produtoId: { in: filhoIds } },
-    select: { produtoId: true, saldoAtual: true },
-  });
-  const saldoMap = new Map(
-    estoques.map((e) => [e.produtoId, Number(e.saldoAtual)])
-  );
+      const filhoIds = bom.map((b) => b.produtoFilhoId);
+      const estoques = await tx.estoque.findMany({
+        where: { filialId, produtoId: { in: filhoIds } },
+        select: { produtoId: true, saldoAtual: true },
+      });
+      const saldoMap = new Map(
+        estoques.map((e) => [e.produtoId, Number(e.saldoAtual)])
+      );
 
-  let valorNecessario = 0;
-  let valorFaltante = 0;
-  let itensComFalta = 0;
-  const linhas: SimulacaoLinha[] = [];
+      let valorNecessario = 0;
+      let valorFaltante = 0;
+      let itensComFalta = 0;
+      const linhas: SimulacaoLinha[] = [];
 
-  for (const b of bom) {
-    const qtdPorUnidade = Number(b.quantidade);
-    const qtdNecessaria = qtdPorUnidade * opts.quantidade;
-    const preco = Number(b.produtoFilho.precoUnitario);
-    const saldoBruto = saldoMap.get(b.produtoFilhoId) ?? 0;
-    const reservada = b.fantasma
-      ? 0
-      : await qtyReservadaTransferenciaPendente(
-          prisma,
-          b.produtoFilhoId,
-          filialId
-        );
-    const saldoDisponivel = Math.max(0, saldoBruto - reservada);
-    const fantasma = b.fantasma;
-    const faltante = fantasma
-      ? 0
-      : Math.max(0, qtdNecessaria - saldoDisponivel);
-    const valorLinha = fantasma ? 0 : qtdNecessaria * preco;
-    const valorFaltaLinha = faltante * preco;
-    if (!fantasma) {
-      valorNecessario += valorLinha;
-      valorFaltante += valorFaltaLinha;
-      if (faltante > 0) itensComFalta += 1;
-    }
-    linhas.push({
-      produtoFilhoId: b.produtoFilhoId,
-      codigo: b.produtoFilho.codigo,
-      descricao: b.produtoFilho.descricao,
-      unidade: b.produtoFilho.unidade,
-      ativo: b.produtoFilho.ativo,
-      fantasma,
-      qtdPorUnidade,
-      qtdNecessaria,
-      saldoAtual: saldoBruto,
-      saldoDisponivel,
-      reservadoTransferencia: reservada,
-      faltante,
-      precoUnitario: preco,
-      valorNecessario: valorLinha,
-      valorFaltante: valorFaltaLinha,
+      for (const b of bom) {
+        const qtdPorUnidade = Number(b.quantidade);
+        const qtdNecessaria = qtdPorUnidade * opts.quantidade;
+        const custoBom = await calcularCustoBom(b.produtoFilhoId, tx);
+        const preco = custoBom !== null ? custoBom : Number(b.produtoFilho.precoUnitario);
+        const saldoBruto = saldoMap.get(b.produtoFilhoId) ?? 0;
+        const reservada = b.fantasma
+          ? 0
+          : await qtyReservadaTransferenciaPendente(
+              tx,
+              b.produtoFilhoId,
+              filialId
+            );
+        const saldoDisponivel = Math.max(0, saldoBruto - reservada);
+        const fantasma = b.fantasma;
+        const faltante = fantasma
+          ? 0
+          : Math.max(0, qtdNecessaria - saldoDisponivel);
+        const valorLinha = fantasma ? 0 : qtdNecessaria * preco;
+        const valorFaltaLinha = faltante * preco;
+        if (!fantasma) {
+          valorNecessario += valorLinha;
+          valorFaltante += valorFaltaLinha;
+          if (faltante > 0) itensComFalta += 1;
+        }
+        linhas.push({
+          produtoFilhoId: b.produtoFilhoId,
+          codigo: b.produtoFilho.codigo,
+          descricao: b.produtoFilho.descricao,
+          unidade: b.produtoFilho.unidade,
+          ativo: b.produtoFilho.ativo,
+          fantasma,
+          qtdPorUnidade,
+          qtdNecessaria,
+          saldoAtual: saldoBruto,
+          saldoDisponivel,
+          reservadoTransferencia: reservada,
+          faltante,
+          precoUnitario: preco,
+          valorNecessario: valorLinha,
+          valorFaltante: valorFaltaLinha,
+        });
+      }
+
+      return { linhas, valorNecessario, valorFaltante, itensComFalta };
     });
-  }
 
   return {
     produto: {
