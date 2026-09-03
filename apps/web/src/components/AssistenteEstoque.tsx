@@ -304,21 +304,28 @@ export function AssistenteEstoque({
         <div className="min-w-0">
           <h2 className="flex items-center gap-2 text-base font-semibold text-slate-800">
             <span
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white text-brand shadow-sm ring-1 ring-brand/20"
+              className="relative inline-flex h-9 w-9 shrink-0 items-center justify-center"
               aria-hidden
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="h-4 w-4 animate-teep-spark"
-              >
-                <path d="M12 2.5c.25 0 .46.16.54.4l1.2 3.55c.38 1.13 1.27 2.02 2.4 2.4l3.55 1.2a.56.56 0 0 1 0 1.07l-3.55 1.2c-1.13.38-2.02 1.27-2.4 2.4l-1.2 3.55a.56.56 0 0 1-1.07 0l-1.2-3.55a3.84 3.84 0 0 0-2.4-2.4l-3.55-1.2a.56.56 0 0 1 0-1.07l3.55-1.2a3.84 3.84 0 0 0 2.4-2.4l1.2-3.55A.56.56 0 0 1 12 2.5Z" />
-                <path
-                  d="M18.5 3.2c.12 0 .22.07.26.18l.45 1.25c.14.4.45.71.85.85l1.25.45a.27.27 0 0 1 0 .52l-1.25.45c-.4.14-.71.45-.85.85l-.45 1.25a.27.27 0 0 1-.52 0l-.45-1.25a1.6 1.6 0 0 0-.85-.85l-1.25-.45a.27.27 0 0 1 0-.52l1.25-.45c.4-.14.71-.45.85-.85l.45-1.25a.27.27 0 0 1 .26-.18Z"
-                  opacity="0.85"
-                />
-              </svg>
+              {/* Trilha + pontinho verde orbitando a moldura */}
+              <span className="pointer-events-none absolute inset-0 rounded-[10px] ring-1 ring-emerald-400/35" />
+              <span className="pointer-events-none absolute inset-0 animate-teep-orbit">
+                <span className="absolute left-1/2 top-0 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500 shadow-[0_0_8px_2px_rgba(16,185,129,0.65)]" />
+              </span>
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-white text-brand shadow-sm ring-1 ring-brand/20">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="h-4 w-4 animate-teep-spark"
+                >
+                  <path d="M12 2.5c.25 0 .46.16.54.4l1.2 3.55c.38 1.13 1.27 2.02 2.4 2.4l3.55 1.2a.56.56 0 0 1 0 1.07l-3.55 1.2c-1.13.38-2.02 1.27-2.4 2.4l-1.2 3.55a.56.56 0 0 1-1.07 0l-1.2-3.55a3.84 3.84 0 0 0-2.4-2.4l-3.55-1.2a.56.56 0 0 1 0-1.07l3.55-1.2a3.84 3.84 0 0 0 2.4-2.4l1.2-3.55A.56.56 0 0 1 12 2.5Z" />
+                  <path
+                    d="M18.5 3.2c.12 0 .22.07.26.18l.45 1.25c.14.4.45.71.85.85l1.25.45a.27.27 0 0 1 0 .52l-1.25.45c-.4.14-.71.45-.85.85l-.45 1.25a.27.27 0 0 1-.52 0l-.45-1.25a1.6 1.6 0 0 0-.85-.85l-1.25-.45a.27.27 0 0 1 0-.52l1.25-.45c.4-.14.71-.45.85-.85l.45-1.25a.27.27 0 0 1 .26-.18Z"
+                    opacity="0.85"
+                  />
+                </svg>
+              </span>
             </span>
             Assistente de estoque
           </h2>

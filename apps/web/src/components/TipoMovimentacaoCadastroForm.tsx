@@ -520,6 +520,7 @@ export function TipoMovimentacaoCadastroForm({
                   value={form.nome}
                   onChange={(e) => setForm({ ...form, nome: e.target.value })}
                   placeholder="Ex: Saída Demonstração PLN"
+                  maxLength={100}
                 />
               </label>
             </div>
@@ -742,14 +743,15 @@ export function TipoMovimentacaoCadastroForm({
             title="Saída de pedido de venda"
             hint={
               isSaida
-                ? "Usada na separação de pedidos eGestor. Conclui a saída na hora (sem aprovação). Só um tipo pode ter esta opção."
+                ? "Usada na separação de pedidos eGestor. O estoque de saída é escolhido na tela Pedidos (estoques marcados como acabados). Conclui na hora — só um tipo pode ter esta opção."
                 : "Disponível apenas para natureza Saída."
             }
           />
           {form.saidaPedidoVenda ? (
-            <p className="mt-2 text-xs text-slate-500">
-              Com esta flag, «Requer aprovação» fica desligado — a separação na
-              tela Pedidos baixa o estoque imediatamente.
+            <p className="mt-2 rounded-md border border-amber-100 bg-amber-50/80 px-2.5 py-2 text-xs text-amber-950">
+              Com esta opção, o estoque <strong>não</strong> fica fixo neste
+              cadastro. Na tela <strong>Pedidos</strong>, ao separar, o
+              operador escolhe de qual estoque de acabados sai o produto.
             </p>
           ) : null}
         </SectionCard>

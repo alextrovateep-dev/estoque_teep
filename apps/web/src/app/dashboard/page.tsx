@@ -469,14 +469,12 @@ export default function DashboardPage() {
               value={qty(data.kpis.quantidadeTotal)}
             />
             <Kpi
-              label="Valor estimado"
+              label="Valor de estoque"
               value={money(data.kpis.valorTotal)}
-              hint="Saldo × preço cadastrado"
             />
             <Kpi
               label="Movimentos (30 dias)"
               value={String(data.kpis.movimentos30d)}
-              hint="Concluídos — ver linha do tempo"
               href={
                 user && userHas(user, "movimentacoes")
                   ? "/movimentacoes"
@@ -1017,10 +1015,33 @@ function Kpi({
   href?: string;
   onClick?: () => void;
 }) {
+  const clickable = Boolean(href || onClick);
   const inner = (
     <>
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-        {label}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+          {label}
+        </div>
+        {clickable ? (
+          <span
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+            aria-hidden
+            title="Abrir detalhes"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="h-3 w-3"
+            >
+              <path
+                fillRule="evenodd"
+                d="M3 10a.75.75 0 0 1 .75-.75h10.638l-3.96-3.96a.75.75 0 1 1 1.06-1.06l5.25 5.25a.75.75 0 0 1 0 1.06l-5.25 5.25a.75.75 0 1 1-1.06-1.06l3.96-3.96H3.75A.75.75 0 0 1 3 10Z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </span>
+        ) : null}
       </div>
       <div
         className={
@@ -1034,11 +1055,12 @@ function Kpi({
       {hint && <div className="mt-0.5 text-[11px] text-slate-400">{hint}</div>}
     </>
   );
-  const cls =
-    "rounded-lg border border-slate-200 bg-white px-3 py-2.5 block text-left w-full hover:border-brand/40";
+  const cls = clickable
+    ? "rounded-lg border border-slate-200 bg-white px-3 py-2.5 block text-left w-full hover:border-brand/40 hover:bg-slate-50/60 transition-colors"
+    : "rounded-lg border border-slate-200 bg-white px-3 py-2.5 block text-left w-full";
   if (href) {
     return (
-      <Link href={href} className={cls}>
+      <Link href={href} className={cls} title="Ver movimentações">
         {inner}
       </Link>
     );

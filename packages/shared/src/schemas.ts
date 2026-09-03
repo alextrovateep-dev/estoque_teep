@@ -369,7 +369,7 @@ export const tipoMovimentacaoObjectSchema = z.object({
     .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, {
       message: "Código: use letras, números, ponto, hífen ou underscore",
     }),
-  nome: z.string().min(1).max(50),
+  nome: z.string().min(1).max(100),
   /** ENTRADA = entra em 1 estoque; SAIDA = sai de 1 estoque; TRANSFERENCIA = sai de A e entra em B */
   operacao: z.enum(OPERACOES),
   requerCliente: z.boolean().optional(),
