@@ -500,14 +500,7 @@ export default function ArvoreProdutoPage() {
                 <button
                   type="button"
                   onClick={() => {
-                    if (
-                      paiId !== a.id &&
-                      editando &&
-                      rascunhoSujo &&
-                      !confirm("Descartar alterações não salvas?")
-                    ) {
-                      return;
-                    }
+                    if (editando) return;
                     void abrirArvore(a.id, { editar: false }).catch((e) =>
                       setError(e.message)
                     );
@@ -666,6 +659,8 @@ export default function ArvoreProdutoPage() {
                                   setPaiLabel(`${s.codigo} — ${s.descricao}`);
                                   setPaiPreco(Number(s.precoUnitario) || 0);
                                   setPaiUnidade(normalizarUnidade(s.unidade || "UN"));
+                                  // Marca rascunho sujo sem apagar os itens filhos
+                                  setItensSalvosJson("");
                                   setTrocandoPai(false);
                                   setTrocaPaiBusca("");
                                   setTrocaPaiSugestoes([]);
