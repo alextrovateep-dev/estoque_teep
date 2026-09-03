@@ -49,7 +49,7 @@ const emptyForm = {
   codigo: "",
   descricao: "",
   categoriaId: "",
-  unidade: "UN",
+  unidade: "PC",
   precoUnitario: "0,00",
   estoqueMinimo: "0",
   estoqueMaximo: "0",
@@ -475,7 +475,7 @@ export function ProdutoCadastroForm({
               onChange={(unidade) => setForm({ ...form, unidade })}
             />
             <span className="mt-1 block text-xs text-slate-500">
-              Estoque, lançamentos e árvore usam esta unidade. Preço é por{" "}
+              Padrão PC (componente). Use UN para produto acabado. Preço é por{" "}
               {form.unidade} ({unidadeLabel(form.unidade)}).
             </span>
           </label>

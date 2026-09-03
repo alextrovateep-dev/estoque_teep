@@ -240,7 +240,7 @@ export const createProdutoSchema = z
     codigo: z.string().min(1).max(50),
     descricao: z.string().min(1).max(150),
     categoriaId: z.string().uuid(),
-    unidade: unidadeField.default("UN"),
+    unidade: unidadeField.default("PC"),
     precoUnitario: z.coerce.number().min(0).default(0),
     estoqueMinimo: z.coerce.number().int().min(0).default(0),
     estoqueMaximo: z.coerce.number().int().min(0).default(0),
