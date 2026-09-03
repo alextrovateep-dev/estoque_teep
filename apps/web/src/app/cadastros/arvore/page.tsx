@@ -144,6 +144,12 @@ export default function ArvoreProdutoPage() {
     }>
   >([]);
 
+  const [trocandoPai, setTrocandoPai] = useState(false);
+  const [trocaPaiBusca, setTrocaPaiBusca] = useState("");
+  const [trocaPaiSugestoes, setTrocaPaiSugestoes] = useState<
+    Array<{ id: string; codigo: string; descricao: string }>
+  >([]);
+
   const [showSim, setShowSim] = useState(false);
   const [simQtd, setSimQtd] = useState("1");
   const [simFilialId, setSimFilialId] = useState("");
@@ -310,6 +316,9 @@ export default function ArvoreProdutoPage() {
       await abrirArvore(paiId, { editar: false });
       setMsg("");
       setError("");
+      setTrocandoPai(false);
+      setTrocaPaiBusca("");
+      setTrocaPaiSugestoes([]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao recarregar");
     }
@@ -353,6 +362,9 @@ export default function ArvoreProdutoPage() {
       );
       setItensSalvosJson(snapshotItens(itens));
       setEditando(false);
+      setTrocandoPai(false);
+      setTrocaPaiBusca("");
+      setTrocaPaiSugestoes([]);
       await loadLista(buscaLista);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao salvar");
@@ -604,20 +616,101 @@ export default function ArvoreProdutoPage() {
           ) : (
             <form onSubmit={onSalvar} className="space-y-5">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
                     Produto pai
                   </p>
-                  <p className="mt-0.5 truncate text-base font-semibold text-slate-900">
-                    {paiLabel}
-                  </p>
-                  <p className="mt-0.5 text-xs text-slate-500">
-                    Unidade do pai:{" "}
-                    <span className="font-mono font-medium text-slate-700">
-                      {paiUnidade}
-                    </span>{" "}
-                    ({unidadeLabel(paiUnidade)})
-                  </p>
+                  {editando && trocandoPai ? (
+                    <div className="mt-1 space-y-1">
+                      <input
+                        autoFocus
+                        className="w-full rounded-lg border border-brand px-3 py-1.5 text-sm outline-none"
+                        placeholder="Buscar novo produto pai…"
+                        value={trocaPaiBusca}
+                        onChange={(e) => {
+                          const q = e.target.value;
+                          setTrocaPaiBusca(q);
+                          if (q.trim().length < 2) {
+                            setTrocaPaiSugestoes([]);
+                            return;
+                          }
+                          void api<Array<{ id: string; codigo: string; descricao: string }>>(
+                            `/produtos/busca?q=${encodeURIComponent(q.trim())}`
+                          )
+                            .then((rows) =>
+                              setTrocaPaiSugestoes(rows.filter((r) => r.id !== paiId).slice(0, 10))
+                            )
+                            .catch(() => setTrocaPaiSugestoes([]));
+                        }}
+                      />
+                      {trocaPaiSugestoes.length > 0 && (
+                        <ul className="max-h-48 overflow-auto rounded-lg border border-slate-200 text-sm">
+                          {trocaPaiSugestoes.map((s) => (
+                            <li key={s.id} className="border-b border-slate-100 last:border-0">
+                              <button
+                                type="button"
+                                className="block w-full px-3 py-2 text-left hover:bg-brand/5"
+                                onClick={() => {
+                                  setTrocandoPai(false);
+                                  setTrocaPaiBusca("");
+                                  setTrocaPaiSugestoes([]);
+                                  setItens([]);
+                                  setItensSalvosJson("");
+                                  setSim(null);
+                                  setShowSim(false);
+                                  setError("");
+                                  setMsg("");
+                                  void abrirArvore(s.id, { editar: true }).catch((e) =>
+                                    setError(e instanceof Error ? e.message : "Erro")
+                                  );
+                                }}
+                              >
+                                <span className="font-medium">{s.codigo}</span>
+                                <span className="text-slate-500"> — {s.descricao}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <button
+                        type="button"
+                        className="text-xs text-slate-500 hover:text-slate-700"
+                        onClick={() => {
+                          setTrocandoPai(false);
+                          setTrocaPaiBusca("");
+                          setTrocaPaiSugestoes([]);
+                        }}
+                      >
+                        Cancelar troca
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="mt-0.5 truncate text-base font-semibold text-slate-900">
+                        {paiLabel}
+                        {editando && (
+                          <button
+                            type="button"
+                            className="ml-2 text-xs font-normal text-brand hover:underline"
+                            onClick={() => {
+                              setTrocandoPai(true);
+                              setTrocaPaiBusca("");
+                              setTrocaPaiSugestoes([]);
+                            }}
+                          >
+                            trocar
+                          </button>
+                        )}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500">
+                        Unidade do pai:{" "}
+                        <span className="font-mono font-medium text-slate-700">
+                          {paiUnidade}
+                        </span>{" "}
+                        ({unidadeLabel(paiUnidade)})
+                      </p>
+                    </>
+                  )}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   {canEdit &&
