@@ -322,9 +322,6 @@ export function AssistenteEstoque({
             </span>
             Assistente de estoque
           </h2>
-          <p className="mt-0.5 pl-10 text-[11px] text-slate-500">
-            Estoque, movimentações e processos RMA
-          </p>
         </div>
         {turns.length > 0 && (
           <button

@@ -421,53 +421,49 @@ export default function DashboardPage() {
 
   return (
     <>
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
             Dashboard / Saldos
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-0.5 truncate text-xs text-slate-500">
             {user ? `Olá, ${user.nome}` : "Carregando…"}
             {data?.escopo.consolidado
-              ? " · visão consolidada (todas as filiais)"
+              ? " · visão consolidada"
               : filialLabel
                 ? ` · ${filialLabel.sigla} — ${filialLabel.nome}`
                 : ""}
           </p>
         </div>
         {isOpsManager && data && (
-          <label className="block sm:w-56">
-            <span className="mb-1 block text-xs font-medium text-slate-500">
-              Escopo (KPIs e saldos)
-            </span>
-            <select
-              className="w-full rounded-lg border px-3 py-2 text-sm"
-              value={filialId}
-              onChange={(e) => setFilialId(e.target.value)}
-            >
-              <option value="">Todas (consolidado)</option>
-              {data.filiais.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.sigla} — {f.nome}
-                </option>
-              ))}
-            </select>
-          </label>
+          <select
+            className="min-w-[11rem] rounded-md border border-slate-200 bg-white px-2 py-1.5 text-sm text-slate-800"
+            value={filialId}
+            onChange={(e) => setFilialId(e.target.value)}
+            aria-label="Escopo dos KPIs e saldos"
+          >
+            <option value="">Todos os estoques</option>
+            {data.filiais.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.sigla} — {f.nome}
+              </option>
+            ))}
+          </select>
         )}
       </div>
 
       {error && (
-        <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+        <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
         </p>
       )}
       {loading && (
-        <p className="mt-4 text-sm text-slate-500">Carregando indicadores…</p>
+        <p className="mt-2 text-sm text-slate-500">Carregando indicadores…</p>
       )}
 
       {data && !loading && (
         <>
-          <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
             <Kpi
               label="Qtd. total em estoque"
               value={qty(data.kpis.quantidadeTotal)}
@@ -533,10 +529,10 @@ export default function DashboardPage() {
           )}
 
           <section className="mt-8">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">Saldos</h2>
-                <p className="mt-0.5 text-xs text-slate-400">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                <h2 className="text-lg font-semibold text-slate-900">Saldos</h2>
+                <p className="text-xs text-slate-400">
                   {selecionados.size > 0
                     ? `Exporta ${selecionados.size} item(ns) selecionado(s)`
                     : "Exporta o que estiver filtrado na tabela"}
@@ -702,14 +698,14 @@ export default function DashboardPage() {
               {mostrarFiltroFilialTabela && (
                 <label className="block lg:col-span-3">
                   <span className="mb-1 block text-xs font-medium text-slate-500">
-                    Filial
+                    Estoque
                   </span>
                   <select
                     className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                     value={filialTabelaId}
                     onChange={(e) => setFilialTabelaId(e.target.value)}
                   >
-                    <option value="">Todas</option>
+                    <option value="">Todos</option>
                     {data.filiais.map((f) => (
                       <option key={f.id} value={f.id}>
                         {f.sigla} — {f.nome}
@@ -790,7 +786,7 @@ export default function DashboardPage() {
                 {data.saldosMeta.total} posições (limite{" "}
                 {data.saldosMeta.limite}).
                 {data.escopo.consolidado
-                  ? " Use o filtro Filial abaixo para ver o restante."
+                  ? " Use o filtro Estoque abaixo para ver o restante."
                   : " Refine os filtros ou escolha outro escopo."}
               </p>
             )}
@@ -816,7 +812,7 @@ export default function DashboardPage() {
                         title="Selecionar todos visíveis"
                       />
                     </th>
-                    <th className="px-3 py-2">Filial</th>
+                    <th className="px-3 py-2">Estoque</th>
                     <th className="px-3 py-2">Código</th>
                     <th className="px-3 py-2">Descrição</th>
                     <th className="px-3 py-2">Categoria</th>
@@ -912,7 +908,7 @@ export default function DashboardPage() {
                                   ) : (serieState?.numeros.length ?? 0) ===
                                     0 ? (
                                     <p className="text-xs text-slate-500">
-                                      Nenhuma série EM_ESTOQUE nesta filial
+                                      Nenhuma série EM_ESTOQUE neste estoque
                                       {s.saldoAtual > 0
                                         ? ` (saldo ${qty(s.saldoAtual)} — divergência)`
                                         : ""}
@@ -1023,21 +1019,23 @@ function Kpi({
 }) {
   const inner = (
     <>
-      <div className="text-sm text-slate-500">{label}</div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
+        {label}
+      </div>
       <div
         className={
           accent === "warn"
-            ? "mt-1 text-xl font-semibold text-amber-800"
-            : "mt-1 text-xl font-semibold text-slate-900"
+            ? "mt-0.5 text-lg font-semibold tabular-nums text-amber-800"
+            : "mt-0.5 text-lg font-semibold tabular-nums text-slate-900"
         }
       >
         {value}
       </div>
-      {hint && <div className="mt-0.5 text-xs text-slate-400">{hint}</div>}
+      {hint && <div className="mt-0.5 text-[11px] text-slate-400">{hint}</div>}
     </>
   );
   const cls =
-    "rounded-xl border border-slate-200 bg-white p-4 block text-left w-full hover:border-brand/40";
+    "rounded-lg border border-slate-200 bg-white px-3 py-2.5 block text-left w-full hover:border-brand/40";
   if (href) {
     return (
       <Link href={href} className={cls}>
