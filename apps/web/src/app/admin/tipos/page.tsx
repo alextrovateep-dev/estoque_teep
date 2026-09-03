@@ -48,7 +48,7 @@ function formatDiasChip(dias?: number[] | null): string | null {
 
 function alertaChipLabel(dias?: number[] | null): string {
   const fmt = formatDiasChip(dias);
-  return fmt ? `Alertas: ${fmt}` : "Alertas retorno";
+  return fmt ? `Lembrete de retorno: ${fmt}` : "Lembrete de retorno";
 }
 
 function FlagChip({
@@ -96,8 +96,8 @@ function TiposPageInner() {
 
   useEffect(() => {
     const ok = searchParams.get("ok");
-    if (ok === "criado") setMsg("Tipo cadastrado");
-    else if (ok === "atualizado") setMsg("Tipo atualizado");
+    if (ok === "criado") setMsg("Operação cadastrada");
+    else if (ok === "atualizado") setMsg("Operação atualizada");
     load().catch((e) =>
       setError(e instanceof Error ? e.message : "Erro ao carregar")
     );
@@ -120,16 +120,9 @@ function TiposPageInner() {
   return (
     <>
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Tipos de Movimentação
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Cadastre operações com código e estoque(s) fixos. No lançamento só se
-            escolhe o tipo. Para RMA, marque a flag «entrada automática» ou «saída
-            ao devolver/trocar».
-          </p>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Tipos de operação
+        </h1>
         <Link
           href="/admin/tipos/novo"
           className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white"
@@ -152,7 +145,7 @@ function TiposPageInner() {
       <section className="mt-6">
         {lista.length === 0 ? (
           <p className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
-            Nenhum tipo de movimentação cadastrado. Use{" "}
+            Nenhuma operação cadastrada. Use{" "}
             <span className="font-medium text-slate-700">Cadastrar</span> para
             criar Compra, Venda, etc.
           </p>
@@ -163,10 +156,10 @@ function TiposPageInner() {
               <tr>
                 <th className="px-3 py-2.5 font-medium">Código</th>
                 <th className="px-3 py-2.5 font-medium">Nome</th>
-                <th className="px-3 py-2.5 font-medium">Natureza</th>
+                <th className="px-3 py-2.5 font-medium">Tipo</th>
                 <th className="px-3 py-2.5 font-medium">Estoque</th>
-                <th className="px-3 py-2.5 font-medium">Flags</th>
-                <th className="px-3 py-2.5 font-medium">Status</th>
+                <th className="px-3 py-2.5 font-medium">Opções</th>
+                <th className="px-3 py-2.5 font-medium">Situação</th>
                 <th className="px-3 py-2.5 font-medium" />
               </tr>
             </thead>
@@ -195,7 +188,7 @@ function TiposPageInner() {
                       <div className="font-medium text-slate-800">{t.nome}</div>
                       {t.sistema && (
                         <div className="mt-0.5 text-[11px] text-slate-400">
-                          Sistema
+                          Uso interno
                         </div>
                       )}
                       {t.descricao && (
@@ -219,13 +212,13 @@ function TiposPageInner() {
                             t.saidaPedidoVenda
                           ? "—"
                           : (
-                              <span className="text-amber-700">Pendente</span>
+                              <span className="text-amber-700">Sem estoque</span>
                             )}
                     </td>
                     <td className="px-3 py-3 align-top">
                       <div className="flex flex-wrap gap-1">
                         {t.requerAprovacao && (
-                          <FlagChip tone="amber">Aprovação</FlagChip>
+                          <FlagChip tone="amber">Precisa aprovação</FlagChip>
                         )}
                         {t.geraAlertaRetorno && (
                           <FlagChip tone="amber">
@@ -233,23 +226,25 @@ function TiposPageInner() {
                           </FlagChip>
                         )}
                         {t.requerTermoComodato && (
-                          <FlagChip tone="brand">Termo comodato</FlagChip>
+                          <FlagChip tone="brand">Termo de comodato</FlagChip>
                         )}
                         {t.baixaPorArvore && (
-                          <FlagChip tone="amber">Baixa árvore</FlagChip>
+                          <FlagChip tone="amber">Consome componentes</FlagChip>
                         )}
                         {t.rmaEntradaEstoque && (
-                          <FlagChip tone="brand">RMA entrada</FlagChip>
+                          <FlagChip tone="brand">RMA — entrada</FlagChip>
                         )}
                         {t.rmaSaidaCliente && (
-                          <FlagChip tone="brand">RMA saída</FlagChip>
+                          <FlagChip tone="brand">RMA — devolução</FlagChip>
                         )}
                         {origemNome && (
                           <FlagChip tone="emerald">
                             Retorno de: {origemNome}
                           </FlagChip>
                         )}
-                        {t.requerCliente && <FlagChip>Cliente</FlagChip>}
+                        {t.requerCliente && (
+                          <FlagChip>Exige cliente</FlagChip>
+                        )}
                         {!t.requerAprovacao &&
                           !t.geraAlertaRetorno &&
                           !t.requerTermoComodato &&

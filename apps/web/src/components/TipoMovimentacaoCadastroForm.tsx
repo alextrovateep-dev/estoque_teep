@@ -441,7 +441,7 @@ export function TipoMovimentacaoCadastroForm({
       <>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">
-            Editar tipo de movimentação
+            Editar tipo de operação
           </h1>
           <Link
             href="/admin/tipos"
@@ -463,15 +463,15 @@ export function TipoMovimentacaoCadastroForm({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
             {emEdicao
-              ? "Editar tipo de movimentação"
-              : "Novo tipo de movimentação"}
+              ? "Editar tipo de operação"
+              : "Novo tipo de operação"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {soRmaFlags
-              ? "Tipo de sistema: só a associação ao RMA pode ser alterada."
+              ? "Operação interna: só a associação ao RMA pode ser alterada."
               : emEdicao
-                ? `Alterando: ${form.nome || "tipo selecionado"}`
-                : "Preencha os dados para criar um novo tipo de movimentação."}
+                ? `Alterando: ${form.nome || "operação selecionada"}`
+                : "Defina como a operação entra, sai ou transfere estoque."}
           </p>
         </div>
         <Link
@@ -540,7 +540,7 @@ export function TipoMovimentacaoCadastroForm({
 
             <div>
               <span className="mb-1.5 block text-sm font-medium">
-                Natureza <span className="font-normal text-rose-600">*</span>
+                Tipo <span className="font-normal text-rose-600">*</span>
               </span>
               <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
                 {OPERACOES.map((op) => {
@@ -574,7 +574,7 @@ export function TipoMovimentacaoCadastroForm({
               )}
               {editId && (
                 <p className="mt-1.5 text-[11px] text-slate-400">
-                  Natureza travada após criar.
+                  Tipo travado após criar.
                 </p>
               )}
             </div>

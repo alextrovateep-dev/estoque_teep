@@ -344,7 +344,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         },
         {
           href: "/admin/tipos",
-          label: "Tipos de Movimentação",
+          label: "Tipos de operação",
           section: "admin",
         },
         {
