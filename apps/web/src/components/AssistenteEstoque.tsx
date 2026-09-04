@@ -300,7 +300,7 @@ export function AssistenteEstoque({
                 <TeepLogo variant="icon" height={18} className="object-contain" />
               </span>
             </span>
-            TeepIA
+            TeepAI
           </h2>
         </div>
         {turns.length > 0 && (
@@ -456,7 +456,7 @@ export function AssistenteEstoque({
             disabled={!enabled}
             readOnly={busy || isRecording}
             rows={1}
-            placeholder="Digite aqui o que você quer saber, ou fale."
+            placeholder="Pergunte sobre estoque, produto, movimento…"
             className="min-h-10 min-w-0 flex-1 resize-none bg-transparent px-2.5 py-2 text-sm leading-snug outline-none read-only:text-slate-600"
             aria-label="Mensagem para o assistente"
             aria-busy={busy}

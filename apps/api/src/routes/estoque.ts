@@ -14,7 +14,7 @@ import {
   requirePerfil,
   AuthedRequest,
 } from "../middleware/auth";
-import { requirePermissao } from "../middleware/permissoes";
+import { requirePermissao, loadPermissoes } from "../middleware/permissoes";
 import { validateBody, AppError } from "../middleware/error";
 import { requireEstoqueParaOperar } from "../lib/estoqueGate";
 import {
@@ -27,7 +27,10 @@ import {
   anexarTermoComodato,
 } from "../services/movimentacaoService";
 import { mapaQtyOcupadaPorSaidas } from "../services/retornoVinculoHelper";
-import { obterDashboard } from "../services/dashboardService";
+import {
+  obterDashboard,
+  maskDashboardForPermissoes,
+} from "../services/dashboardService";
 import {
   exportarSaldosExcel,
   exportarSaldosPdf,
@@ -58,7 +61,8 @@ estoqueRouter.get(
       ? String(req.query.filialId)
       : undefined;
     const data = await obterDashboard(req.user!, filialId);
-    res.json(data);
+    const perms = await loadPermissoes(req);
+    res.json(maskDashboardForPermissoes(data, req.user!.perfil, perms));
   } catch (e) {
     next(e);
   }
@@ -94,9 +98,11 @@ estoqueRouter.get(
   requirePermissao("dashboard"),
   async (req: AuthedRequest, res, next) => {
     try {
+      const perms = await loadPermissoes(req);
+      const incluirValor = Boolean(perms.dashboard_kpi_valor);
       const { buffer, filename } = await exportarSaldosPdf(
         req.user!,
-        parseSaldosExportQuery(req)
+        { ...parseSaldosExportQuery(req), incluirValor }
       );
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(
@@ -115,9 +121,11 @@ estoqueRouter.get(
   requirePermissao("dashboard"),
   async (req: AuthedRequest, res, next) => {
     try {
+      const perms = await loadPermissoes(req);
+      const incluirValor = Boolean(perms.dashboard_kpi_valor);
       const { buffer, filename } = await exportarSaldosExcel(
         req.user!,
-        parseSaldosExportQuery(req)
+        { ...parseSaldosExportQuery(req), incluirValor }
       );
       res.setHeader(
         "Content-Type",

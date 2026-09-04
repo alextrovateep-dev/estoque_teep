@@ -48,6 +48,8 @@ export type SaldosExportOpts = {
   categoriaId?: string | null;
   /** Se informado, exporta só esses estoque.id (ignora demais filtros de tela). */
   ids?: string[] | null;
+  /** Incluir coluna/totais de valor monetário (default true). */
+  incluirValor?: boolean;
 };
 
 export type SaldosExportMeta = {
@@ -69,6 +71,8 @@ export type SaldosExportMeta = {
   quantidadeTotal: number;
   valorTotal: number;
   linhas: number;
+  /** false = omitir colunas/totais monetários */
+  incluirValor: boolean;
 };
 
 /** Resolve filtro de alerta a partir de opts (alerta tem prioridade sobre soAlertas). */
@@ -335,7 +339,10 @@ export async function carregarSaldosExport(
   });
 
   // Filtros já aplicados em SQL (ou via ids manuais)
-  const rows = mapped;
+  const incluirValor = opts.incluirValor !== false;
+  const rows = incluirValor
+    ? mapped
+    : mapped.map((r) => ({ ...r, valor: 0 }));
   const totais = totaisDasLinhas(rows);
 
   const filialFound = filialId
@@ -368,8 +375,9 @@ export async function carregarSaldosExport(
       totalPosicoes: selecao.totalFiltrado,
       limite: DASHBOARD_SALDOS_LIMITE,
       quantidadeTotal: totais.quantidadeTotal,
-      valorTotal: totais.valorTotal,
+      valorTotal: incluirValor ? totais.valorTotal : 0,
       linhas: rows.length,
+      incluirValor,
     },
   };
 }
@@ -399,7 +407,11 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
         <td class="num">${escapeHtml(qtyBr(r.saldoAtual))}</td>
         <td class="num muted">${r.estoqueMinimo || "—"}</td>
         <td class="num muted">${r.estoqueMaximo || "—"}</td>
-        <td class="num">${escapeHtml(moneyBr(r.valor))}</td>
+        ${
+          meta.incluirValor
+            ? `<td class="num">${escapeHtml(moneyBr(r.valor))}</td>`
+            : ""
+        }
       </tr>`;
     })
     .join("\n");
@@ -494,7 +506,11 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
   </div>
   <div class="kpis">
     <div class="kpi"><div class="l">Qtd. no relatório</div><div class="v">${escapeHtml(qtyBr(meta.quantidadeTotal))}</div></div>
-    <div class="kpi"><div class="l">Valor no relatório</div><div class="v">${escapeHtml(moneyBr(meta.valorTotal))}</div></div>
+    ${
+      meta.incluirValor
+        ? `<div class="kpi"><div class="l">Valor no relatório</div><div class="v">${escapeHtml(moneyBr(meta.valorTotal))}</div></div>`
+        : ""
+    }
     <div class="kpi"><div class="l">Linhas</div><div class="v">${meta.linhas}</div></div>
   </div>
   <table>
@@ -507,14 +523,19 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
         <th class="num">Saldo</th>
         <th class="num">Mín.</th>
         <th class="num">Máx.</th>
-        <th class="num">Valor</th>
+        ${meta.incluirValor ? `<th class="num">Valor</th>` : ""}
       </tr>
     </thead>
     <tbody>
-      ${bodyRows || `<tr><td colspan="8" style="text-align:center;padding:16px;color:#64748b">Nenhum saldo para exibir.</td></tr>`}
+      ${
+        bodyRows ||
+        `<tr><td colspan="${meta.incluirValor ? 8 : 7}" style="text-align:center;padding:16px;color:#64748b">Nenhum saldo para exibir.</td></tr>`
+      }
     </tbody>
   </table>
-  <div class="foot">Totais = soma das linhas deste relatório (após filtros). Valor = saldo × preço cadastrado. Destaque = fora do mín./máx.</div>
+  <div class="foot">Totais = soma das linhas deste relatório (após filtros).${
+    meta.incluirValor ? " Valor = saldo × preço cadastrado." : ""
+  } Destaque = fora do mín./máx.</div>
 </body>
 </html>`;
 }
@@ -587,7 +608,9 @@ export async function exportarSaldosExcel(
     ["Produto", meta.busca || "—"],
     ["Linhas no relatório", meta.linhas],
     ["Qtd. no relatório", meta.quantidadeTotal],
-    ["Valor no relatório (R$)", meta.valorTotal],
+    ...(meta.incluirValor
+      ? ([["Valor no relatório (R$)", meta.valorTotal]] as [string, string | number][])
+      : []),
   ];
   if (meta.truncado) {
     infoRows.push([
@@ -620,7 +643,9 @@ export async function exportarSaldosExcel(
     { header: "Saldo", key: "saldo", width: 12 },
     { header: "Mín.", key: "min", width: 10 },
     { header: "Máx.", key: "max", width: 10 },
-    { header: "Valor (R$)", key: "valor", width: 14 },
+    ...(meta.incluirValor
+      ? [{ header: "Valor (R$)", key: "valor", width: 14 }]
+      : []),
     { header: "Alerta", key: "alerta", width: 14 },
     { header: "Produto ativo", key: "ativo", width: 12 },
   ];
@@ -648,12 +673,16 @@ export async function exportarSaldosExcel(
       saldo: r.saldoAtual,
       min: r.estoqueMinimo || null,
       max: r.estoqueMaximo || null,
-      valor: Math.round(r.valor * 100) / 100,
+      ...(meta.incluirValor
+        ? { valor: Math.round(r.valor * 100) / 100 }
+        : {}),
       alerta,
       ativo: r.produtoAtivo ? "Sim" : "Não",
     });
     row.getCell("saldo").numFmt = "#,##0.####";
-    row.getCell("valor").numFmt = "R$ #,##0.00";
+    if (meta.incluirValor) {
+      row.getCell("valor").numFmt = "R$ #,##0.00";
+    }
     if (alerta) {
       row.fill = {
         type: "pattern",

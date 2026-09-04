@@ -1,6 +1,8 @@
 import {
   isAbaixoMinimo,
   isAcimaMaximo,
+  hasPermissao,
+  PermissoesUsuario,
   TIPO_TRANSF_ENVIADA,
   TIPO_TRANSF_RECEBIDA,
 } from "@teep/shared";
@@ -437,4 +439,48 @@ export async function obterDashboard(
     },
     filiais,
   };
+}
+
+/**
+ * Remove KPIs sensíveis conforme ACL (cards + preço/valor na tabela).
+ * Admin (hasPermissao) passa sem máscara.
+ */
+export function maskDashboardForPermissoes<T extends {
+  kpis: {
+    quantidadeTotal: number;
+    valorTotal: number;
+    movimentosHoje: number;
+    movimentos30d: number;
+  };
+  saldos: Array<{ valor: number; precoUnitario?: number }>;
+  porOperacao30d?: Record<string, number>;
+}>(
+  data: T,
+  perfil: AuthUser["perfil"],
+  permissoes: PermissoesUsuario | Partial<Record<string, boolean>> | null | undefined
+): T {
+  const podeQtd = hasPermissao(perfil, permissoes, "dashboard_kpi_quantidade");
+  const podeValor = hasPermissao(perfil, permissoes, "dashboard_kpi_valor");
+  const podeMov = hasPermissao(perfil, permissoes, "dashboard_kpi_movimentos");
+  if (podeQtd && podeValor && podeMov) return data;
+
+  return {
+    ...data,
+    kpis: {
+      ...data.kpis,
+      ...(podeQtd ? {} : { quantidadeTotal: null }),
+      ...(podeValor ? {} : { valorTotal: null }),
+      ...(podeMov
+        ? {}
+        : { movimentosHoje: null, movimentos30d: null }),
+    },
+    ...(podeMov ? {} : { porOperacao30d: undefined }),
+    saldos: podeValor
+      ? data.saldos
+      : data.saldos.map((s) => ({
+          ...s,
+          valor: null,
+          precoUnitario: null,
+        })),
+  } as T;
 }

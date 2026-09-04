@@ -43,14 +43,14 @@ type Dashboard = {
   kpis: {
     posicoesComSaldo: number;
     skusComSaldo: number;
-    quantidadeTotal: number;
-    valorTotal: number;
+    quantidadeTotal: number | null;
+    valorTotal: number | null;
     alertasMinimo: number;
     alertasMaximo?: number;
     alertasEstoque?: number;
     pendentes: number;
-    movimentosHoje: number;
-    movimentos30d: number;
+    movimentosHoje: number | null;
+    movimentos30d: number | null;
   };
   porOperacao30d?: Record<string, number>;
   alertas: Array<{
@@ -83,7 +83,7 @@ type Dashboard = {
     saldoAtual: number;
     estoqueMinimo: number;
     estoqueMaximo?: number;
-    valor: number;
+    valor: number | null;
     abaixoMinimo: boolean;
     acimaMaximo?: boolean;
     produtoAtivo: boolean;
@@ -472,23 +472,29 @@ export default function DashboardPage() {
       {data && !loading && (
         <>
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <Kpi
-              label="Qtd. total em estoque"
-              value={qty(data.kpis.quantidadeTotal)}
-            />
-            <Kpi
-              label="Valor de estoque"
-              value={money(data.kpis.valorTotal)}
-            />
-            <Kpi
-              label="Movimentos (30 dias)"
-              value={String(data.kpis.movimentos30d)}
-              href={
-                user && userHas(user, "movimentacoes")
-                  ? "/movimentacoes"
-                  : undefined
-              }
-            />
+            {user && userHas(user, "dashboard_kpi_quantidade") && (
+              <Kpi
+                label="Qtd. total em estoque"
+                value={qty(data.kpis.quantidadeTotal ?? 0)}
+              />
+            )}
+            {user && userHas(user, "dashboard_kpi_valor") && (
+              <Kpi
+                label="Valor de estoque"
+                value={money(data.kpis.valorTotal ?? 0)}
+              />
+            )}
+            {user && userHas(user, "dashboard_kpi_movimentos") && (
+              <Kpi
+                label="Movimentos (30 dias)"
+                value={String(data.kpis.movimentos30d ?? 0)}
+                href={
+                  userHas(user, "movimentacoes")
+                    ? "/movimentacoes"
+                    : undefined
+                }
+              />
+            )}
           </div>
 
           {user && userHas(user, "assistente") && (
@@ -826,7 +832,9 @@ export default function DashboardPage() {
                     <th className="px-3 py-2">Séries</th>
                     <th className="px-3 py-2 text-right">Mín.</th>
                     <th className="px-3 py-2 text-right">Máx.</th>
-                    <th className="px-3 py-2 text-right">Valor</th>
+                    {user && userHas(user, "dashboard_kpi_valor") && (
+                      <th className="px-3 py-2 text-right">Valor</th>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
@@ -949,16 +957,20 @@ export default function DashboardPage() {
                         <td className="px-3 py-2 text-right text-slate-500">
                           {s.estoqueMaximo || "—"}
                         </td>
-                        <td className="px-3 py-2 text-right">
-                          {money(s.valor)}
-                        </td>
+                        {user && userHas(user, "dashboard_kpi_valor") && (
+                          <td className="px-3 py-2 text-right">
+                            {money(s.valor ?? 0)}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
                   {saldosFiltrados.length === 0 && (
                     <tr>
                       <td
-                        colSpan={10}
+                        colSpan={
+                          user && userHas(user, "dashboard_kpi_valor") ? 10 : 9
+                        }
                         className="px-3 py-8 text-center text-slate-500"
                       >
                         {serieAtiva && serieLoading

@@ -22,6 +22,7 @@ import {
   consultarContadorSerie,
   desfazerAlocacaoSerie,
 } from "../services/geracaoSerieService";
+import { historicoTransformacaoPorSerie } from "../services/transformacaoService";
 
 export const seriesRouter = Router();
 
@@ -384,6 +385,7 @@ seriesRouter.get("/:id/historico", async (req: AuthedRequest, res, next) => {
     res.json({
       unidade,
       historico: movs.map((m) => m.movimentacao),
+      transformacoes: await historicoTransformacaoPorSerie(unidade.id),
     });
   } catch (e) {
     next(e);

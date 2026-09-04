@@ -70,3 +70,4 @@ Smoke: `apps/api/scripts/smoke-montagem.ts`.
 
 - Lançamento / exceção multi-SKU: [lancamento.md](./lancamento.md)
 - Relatórios (export de árvores, se usado na tela Relatórios): ver UI `/relatorios`
+- Transformação A→B (série morre / nasce): [transformacao-produto.md](./transformacao-produto.md)

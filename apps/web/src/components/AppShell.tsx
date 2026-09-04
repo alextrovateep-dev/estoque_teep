@@ -247,6 +247,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         perm: "lancamentos",
       },
       {
+        href: "/lancamentos/transformacao",
+        label: "Transformação",
+        section: "ops",
+        group: "operacoes",
+        perm: "lancamentos",
+      },
+      {
         href: "/pedidos",
         label: "Pedidos",
         section: "ops",

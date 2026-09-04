@@ -92,15 +92,26 @@ const TIPOS_SISTEMA: TipoSistema[] = [
     descricao: "Gerado pelo sistema ao estornar",
   },
   {
-    codigo: "SYS-TR-LEGADO",
-    nome: "Transferência entre estoques",
-    operacao: "TRANSFERENCIA",
+    codigo: "SYS-TRF-SAI",
+    nome: "Transformação — saída origem",
+    operacao: "SAIDA",
     requerCliente: false,
     requerAprovacao: false,
     permitidoOperador: false,
     permitidoGerente: false,
     descricao:
-      "Legado interno. No lançamento use tipos de transferência com estoques fixos no cadastro.",
+      "Gerado pela transformação de produto: baixa o acabado origem (série morre)",
+  },
+  {
+    codigo: "SYS-TRF-ENT",
+    nome: "Transformação — entrada destino",
+    operacao: "ENTRADA",
+    requerCliente: false,
+    requerAprovacao: false,
+    permitidoOperador: false,
+    permitidoGerente: false,
+    descricao:
+      "Gerado pela transformação de produto: entra o produto destino (série nasce)",
   },
 ];
 

@@ -44,6 +44,10 @@ export const TIPO_SAIDA_RMA = "Saída RMA";
  * Nome no banco (histórico pode ter sido "Consumo Montagem" — o seed renomeia).
  */
 export const TIPO_CONSUMO_MONTAGEM = "Baixa de componente (árvore)";
+/** Sistema: saída do acabado origem na transformação A→B */
+export const TIPO_TRANSFORMACAO_SAIDA = "Transformação — saída origem";
+/** Sistema: entrada do produto destino na transformação A→B */
+export const TIPO_TRANSFORMACAO_ENTRADA = "Transformação — entrada destino";
 
 /** Locais de estoque especiais (Filial.sigla) */
 export const SIGLA_ESTOQUE_RMA = "RMA";
@@ -454,6 +458,9 @@ export const DIAS_ALERTA_RETORNO_DEFAULT = [15, 30, 45, 60] as const;
  */
 export const PERMISSAO_KEYS = [
   "dashboard",
+  "dashboard_kpi_quantidade",
+  "dashboard_kpi_valor",
+  "dashboard_kpi_movimentos",
   "assistente",
   "lancamentos",
   "transferencias",
@@ -474,6 +481,15 @@ export const PERMISSAO_KEYS = [
 export type PermissaoKey = (typeof PERMISSAO_KEYS)[number];
 
 export type PermissoesUsuario = Record<PermissaoKey, boolean>;
+
+/** Cards de KPI do Dashboard (exigem `dashboard`). */
+export const DASHBOARD_KPI_KEYS = [
+  "dashboard_kpi_quantidade",
+  "dashboard_kpi_valor",
+  "dashboard_kpi_movimentos",
+] as const satisfies readonly PermissaoKey[];
+
+export type DashboardKpiKey = (typeof DASHBOARD_KPI_KEYS)[number];
 
 /** Páginas de cadastro (moderação por tela). */
 export const CADASTROS_PAGINAS = [
@@ -508,10 +524,22 @@ export const PERMISSAO_LABELS: Record<
 > = {
   dashboard: {
     label: "Dashboard / Saldos",
-    descricao: "Ver saldos, KPIs e gráficos",
+    descricao: "Ver saldos por produto/estoque (tabela)",
+  },
+  dashboard_kpi_quantidade: {
+    label: "Card — Qtd. total em estoque",
+    descricao: "Exibir o card de quantidade total (exige Dashboard)",
+  },
+  dashboard_kpi_valor: {
+    label: "Card — Valor de estoque",
+    descricao: "Exibir valor em R$ nos cards e na tabela (exige Dashboard)",
+  },
+  dashboard_kpi_movimentos: {
+    label: "Card — Movimentos (30 dias)",
+    descricao: "Exibir o card de movimentos dos últimos 30 dias (exige Dashboard)",
   },
   assistente: {
-    label: "Assistente de estoque (IA)",
+    label: "TeepAI (assistente IA)",
     descricao: "Usar o chat de IA no Dashboard (exige Dashboard)",
   },
   lancamentos: {
@@ -587,6 +615,9 @@ export function defaultPermissoes(perfil: Perfil): PermissoesUsuario {
   if (perfil === "GERENTE") {
     return {
       dashboard: true,
+      dashboard_kpi_quantidade: true,
+      dashboard_kpi_valor: true,
+      dashboard_kpi_movimentos: true,
       assistente: true,
       lancamentos: true,
       transferencias: true,
@@ -607,6 +638,9 @@ export function defaultPermissoes(perfil: Perfil): PermissoesUsuario {
   }
   return {
     dashboard: false,
+    dashboard_kpi_quantidade: false,
+    dashboard_kpi_valor: false,
+    dashboard_kpi_movimentos: false,
     assistente: false,
     lancamentos: true,
     transferencias: true,
@@ -675,6 +709,15 @@ export function resolvePermissoes(
   }
   applyCadastrosCompat(out, overrides);
   if (out.assistente && !out.dashboard) out.assistente = false;
+  // KPIs exigem dashboard; se não há override explícito e dashboard está on, herdam true
+  // (compat: usuários antigos com só `dashboard: true` continuam vendo os cards).
+  if (!out.dashboard) {
+    for (const k of DASHBOARD_KPI_KEYS) out[k] = false;
+  } else {
+    for (const k of DASHBOARD_KPI_KEYS) {
+      if (typeof overrides[k] !== "boolean") out[k] = true;
+    }
+  }
   for (const p of CADASTROS_PAGINAS) {
     if (out[p.editar] && !out[p.ver]) out[p.ver] = true;
   }

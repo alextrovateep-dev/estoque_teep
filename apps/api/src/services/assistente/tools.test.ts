@@ -133,6 +133,7 @@ describe("assistente toolsForUser ACL", () => {
   it("omite RMA/relatórios/transferências/prepare sem permissão", () => {
     const names = toolsForUser("OPERADOR", {
       dashboard: true,
+      dashboard_kpi_valor: false,
       assistente: true,
       rma: false,
       relatorios: false,
@@ -145,6 +146,7 @@ describe("assistente toolsForUser ACL", () => {
     assert.ok(!names.includes("export_arvore_report"));
     assert.ok(!names.includes("list_transfers"));
     assert.ok(!names.includes("prepare_transfer"));
+    assert.ok(!names.includes("list_stock_by_value"));
     assert.ok(names.includes("get_product_stock"));
     assert.ok(names.includes("get_product_tree"));
   });
@@ -152,6 +154,7 @@ describe("assistente toolsForUser ACL", () => {
   it("inclui tools sensíveis quando a ACL libera", () => {
     const names = toolsForUser("OPERADOR", {
       dashboard: true,
+      dashboard_kpi_valor: true,
       assistente: true,
       rma: true,
       relatorios: true,
@@ -163,6 +166,7 @@ describe("assistente toolsForUser ACL", () => {
     assert.ok(names.includes("export_arvore_report"));
     assert.ok(names.includes("list_transfers"));
     assert.ok(names.includes("prepare_transfer"));
+    assert.ok(names.includes("list_stock_by_value"));
     assert.ok(names.length <= TOOL_DEFINITIONS.length);
   });
 });
@@ -343,6 +347,18 @@ describe("assistente system prompt transferência", () => {
     assert.match(p, /Tom e estilo/);
     assert.match(p, /estou à disposição/);
     assert.match(p, /Filial no TEEP = estoque/);
+  });
+
+  it("restringe escopo ao TEEP Estoque e proíbe uso como IA geral", () => {
+    const p = buildSystemPrompt({
+      user: operador,
+      permissoes: { lancamentos: true, assistente: true, dashboard: true },
+    });
+    assert.match(p, /ESCOPO ESTRITO/);
+    assert.match(p, /NÃO é uma IA de uso geral/);
+    assert.match(p, /corrigir\/redigir texto/);
+    assert.match(p, /chorei de saldade/);
+    assert.match(p, /Regra[s]?[\s\S]*0\. Escopo/);
   });
 
   it("instrui ranking de saídas com periodo e proíbe somenteAbertos", () => {

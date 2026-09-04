@@ -8,6 +8,7 @@ import {
   AlertaEvento,
   CADASTROS_PAGINAS,
   CadastrosPaginaId,
+  DASHBOARD_KPI_KEYS,
   PERMISSAO_KEYS,
   PERMISSAO_LABELS,
   PermissaoKey,
@@ -24,8 +25,12 @@ const CADASTRO_KEYS = new Set<string>(
   CADASTROS_PAGINAS.flatMap((p) => [p.ver, p.editar])
 );
 
-/** Keys simples (páginas de cadastro têm UI própria). */
-const PERMISSAO_KEYS_LISTA = PERMISSAO_KEYS.filter((k) => !CADASTRO_KEYS.has(k));
+const KPI_KEYS = new Set<string>(DASHBOARD_KPI_KEYS);
+
+/** Keys simples (páginas de cadastro e KPIs do dashboard têm UI própria). */
+const PERMISSAO_KEYS_LISTA = PERMISSAO_KEYS.filter(
+  (k) => !CADASTRO_KEYS.has(k) && !KPI_KEYS.has(k)
+);
 
 type Filial = {
   id: string;
@@ -174,8 +179,20 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
   function togglePermissao(key: PermissaoKey) {
     setForm((prev) => {
       const next = { ...prev.permissoes, [key]: !prev.permissoes[key] };
-      if (key === "dashboard" && !next.dashboard) next.assistente = false;
+      if (key === "dashboard" && !next.dashboard) {
+        next.assistente = false;
+        for (const k of DASHBOARD_KPI_KEYS) next[k] = false;
+      }
+      if (key === "dashboard" && next.dashboard) {
+        for (const k of DASHBOARD_KPI_KEYS) next[k] = true;
+      }
       if (key === "assistente" && next.assistente) next.dashboard = true;
+      if (
+        (DASHBOARD_KPI_KEYS as readonly string[]).includes(key) &&
+        next[key]
+      ) {
+        next.dashboard = true;
+      }
       for (const p of CADASTROS_PAGINAS) {
         if (key === p.ver && !next[p.ver]) next[p.editar] = false;
         if (key === p.editar && next[p.editar]) next[p.ver] = true;
@@ -682,8 +699,8 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
           <p className="mt-0.5 text-xs text-slate-500">
             Selecione um ou mais. O primeiro marcado vira o estoque principal.
             {form.perfil === "OPERADOR"
-              ? " Obrigatório para Operador."
-              : " Opcional para Gerente."}
+              ? " Obrigatório: o Operador só vê saldos e opera nos estoques marcados."
+              : " Opcional para Gerente (hoje Gerente vê todos os estoques ativos)."}
           </p>
           <div className="mt-3 flex flex-wrap gap-3">
             {filiaisForm.map((f) => {
@@ -789,29 +806,68 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
               const editaveis = permissoesEditaveisParaPerfil(form.perfil);
               const locked = isAdminForm || !editaveis.includes(key);
               return (
-                <label
-                  key={key}
-                  className={`flex items-start gap-2 text-sm ${
-                    locked ? "opacity-60" : ""
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    className="mt-0.5"
-                    checked={Boolean(form.permissoes[key])}
-                    disabled={locked}
-                    onChange={() => togglePermissao(key)}
-                  />
-                  <span>
-                    <span className="font-medium">
-                      {PERMISSAO_LABELS[key].label}
+                <div key={key} className="space-y-1.5">
+                  <label
+                    className={`flex items-start gap-2 text-sm ${
+                      locked ? "opacity-60" : ""
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={Boolean(form.permissoes[key])}
+                      disabled={locked}
+                      onChange={() => togglePermissao(key)}
+                    />
+                    <span>
+                      <span className="font-medium">
+                        {PERMISSAO_LABELS[key].label}
+                      </span>
+                      <span className="mt-0.5 block text-xs text-slate-500">
+                        {PERMISSAO_LABELS[key].descricao}
+                        {locked && !isAdminForm ? " (exige Gerente)" : ""}
+                      </span>
                     </span>
-                    <span className="mt-0.5 block text-xs text-slate-500">
-                      {PERMISSAO_LABELS[key].descricao}
-                      {locked && !isAdminForm ? " (exige Gerente)" : ""}
-                    </span>
-                  </span>
-                </label>
+                  </label>
+                  {key === "dashboard" && (
+                    <div className="ml-6 space-y-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-2">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                        Cards do Dashboard
+                      </p>
+                      {DASHBOARD_KPI_KEYS.map((kpi) => {
+                        const kpiLocked =
+                          locked ||
+                          isAdminForm ||
+                          !editaveis.includes(kpi) ||
+                          !form.permissoes.dashboard;
+                        return (
+                          <label
+                            key={kpi}
+                            className={`flex items-start gap-2 text-sm ${
+                              kpiLocked ? "opacity-60" : ""
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="mt-0.5"
+                              checked={Boolean(form.permissoes[kpi])}
+                              disabled={kpiLocked}
+                              onChange={() => togglePermissao(kpi)}
+                            />
+                            <span>
+                              <span className="font-medium">
+                                {PERMISSAO_LABELS[kpi].label}
+                              </span>
+                              <span className="mt-0.5 block text-xs text-slate-500">
+                                {PERMISSAO_LABELS[kpi].descricao}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>

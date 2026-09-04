@@ -34,6 +34,7 @@ import { seriesRouter } from "./routes/series";
 import { rmaRouter } from "./routes/rma";
 import { pedidosRouter } from "./routes/pedidos";
 import { relatoriosRouter } from "./routes/relatorios";
+import { transformacoesRouter } from "./routes/transformacoes";
 
 assertProductionEnv();
 ensureUploadDirs();
@@ -114,6 +115,7 @@ app.use("/series", seriesRouter);
 app.use("/rma", rmaRouter);
 app.use("/pedidos", pedidosRouter);
 app.use("/relatorios", relatoriosRouter);
+app.use("/transformacoes", transformacoesRouter);
 app.use("/notificacoes", notificacoesRouter);
 app.use("/admin/email", emailAdminRouter);
 app.use("/assistente", assistenteRouter);

@@ -246,18 +246,18 @@ export async function carregarDossieProduto(
   };
 }
 
-function buildDossieHtml(d: DossieProduto): string {
+function buildDossieHtml(d: DossieProduto, incluirValor = true): string {
   const p = d.produto;
   const saldoRows =
     d.saldos.length === 0
-      ? `<tr><td colspan="4" class="empty">Sem posição de estoque</td></tr>`
+      ? `<tr><td colspan="${incluirValor ? 4 : 3}" class="empty">Sem posição de estoque</td></tr>`
       : d.saldos
           .map(
             (s) => `<tr>
         <td>${escapeHtml(s.filialSigla)}</td>
         <td>${escapeHtml(s.filialNome)}</td>
         <td class="num">${qtyBr(s.qty)}</td>
-        <td class="num">${moneyBr(s.valorEstoque)}</td>
+        ${incluirValor ? `<td class="num">${moneyBr(s.valorEstoque)}</td>` : ""}
       </tr>`
           )
           .join("");
@@ -335,18 +335,26 @@ function buildDossieHtml(d: DossieProduto): string {
     Gerado em ${escapeHtml(d.geradoEm)} · ${escapeHtml(d.usuario)} (${escapeHtml(d.perfil)}) · ${escapeHtml(d.escopo)}
   </div>
   <p><strong>${escapeHtml(p.codigo)}</strong> — ${escapeHtml(p.descricao)}<br/>
-  Unidade: ${escapeHtml(p.unidade)} · Categoria: ${escapeHtml(p.categoria)} · Preço: ${moneyBr(p.precoUnitario)}</p>
+  Unidade: ${escapeHtml(p.unidade)} · Categoria: ${escapeHtml(p.categoria)}${
+    incluirValor ? ` · Preço: ${moneyBr(p.precoUnitario)}` : ""
+  }</p>
 
   <div class="kpis">
     <div class="kpi"><b>Qtd. total</b><span>${qtyBr(d.qtyTotal)}</span></div>
-    <div class="kpi"><b>Valor estoque</b><span>${moneyBr(d.valorTotal)}</span></div>
+    ${
+      incluirValor
+        ? `<div class="kpi"><b>Valor estoque</b><span>${moneyBr(d.valorTotal)}</span></div>`
+        : ""
+    }
     <div class="kpi"><b>Fornecedores</b><span>${d.fornecedores.length}</span></div>
     <div class="kpi"><b>Clientes</b><span>${d.clientes.length}</span></div>
   </div>
 
   <h2>Estoque por filial</h2>
   <table>
-    <thead><tr><th>Sigla</th><th>Filial</th><th>Saldo</th><th>Valor</th></tr></thead>
+    <thead><tr><th>Sigla</th><th>Filial</th><th>Saldo</th>${
+      incluirValor ? "<th>Valor</th>" : ""
+    }</tr></thead>
     <tbody>${saldoRows}</tbody>
   </table>
 
@@ -362,7 +370,9 @@ function buildDossieHtml(d: DossieProduto): string {
     <tbody>${cliRows}</tbody>
   </table>
 
-  <div class="foot">Fornecedores = ENTRADA de compra; clientes = SAÍDA de venda/entrega. Ignora estornos e devoluções. Valor = saldo × preço cadastrado.</div>
+  <div class="foot">Fornecedores = ENTRADA de compra; clientes = SAÍDA de venda/entrega. Ignora estornos e devoluções.${
+    incluirValor ? " Valor = saldo × preço cadastrado." : ""
+  }</div>
 </body>
 </html>`;
 }
@@ -374,22 +384,39 @@ function safeFilenamePart(codigo: string): string {
 export async function exportarDossieProdutoPdf(
   user: AuthUser,
   codigoOuNome: string,
-  opts: { filialId?: string | null; filialHint?: string | null } = {}
+  opts: {
+    filialId?: string | null;
+    filialHint?: string | null;
+    incluirValor?: boolean;
+  } = {}
 ): Promise<{ buffer: Buffer; filename: string; dossie: DossieProduto }> {
+  const incluirValor = opts.incluirValor !== false;
   const dossie = await carregarDossieProduto(user, codigoOuNome, opts);
-  const buffer = await htmlToPdf(buildDossieHtml(dossie));
+  const buffer = await htmlToPdf(buildDossieHtml(dossie, incluirValor));
   return {
     buffer,
     filename: `teep-dossie-${safeFilenamePart(dossie.produto.codigo)}-${dateStampSaoPaulo()}.pdf`,
-    dossie,
+    dossie: incluirValor
+      ? dossie
+      : {
+          ...dossie,
+          valorTotal: 0,
+          produto: { ...dossie.produto, precoUnitario: 0 },
+          saldos: dossie.saldos.map((s) => ({ ...s, valorEstoque: 0 })),
+        },
   };
 }
 
 export async function exportarDossieProdutoExcel(
   user: AuthUser,
   codigoOuNome: string,
-  opts: { filialId?: string | null; filialHint?: string | null } = {}
+  opts: {
+    filialId?: string | null;
+    filialHint?: string | null;
+    incluirValor?: boolean;
+  } = {}
 ): Promise<{ buffer: Buffer; filename: string; dossie: DossieProduto }> {
+  const incluirValor = opts.incluirValor !== false;
   const dossie = await carregarDossieProduto(user, codigoOuNome, opts);
   const wb = new ExcelJS.Workbook();
   wb.creator = "TEEP Estoque";
@@ -424,9 +451,13 @@ export async function exportarDossieProdutoExcel(
     ["Descrição", dossie.produto.descricao],
     ["Unidade", dossie.produto.unidade],
     ["Categoria", dossie.produto.categoria],
-    ["Preço unitário (R$)", dossie.produto.precoUnitario],
-    ["Qtd. total estoque", dossie.qtyTotal],
-    ["Valor estoque (R$)", dossie.valorTotal],
+    ...(incluirValor
+      ? ([
+          ["Preço unitário (R$)", dossie.produto.precoUnitario],
+          ["Qtd. total estoque", dossie.qtyTotal],
+          ["Valor estoque (R$)", dossie.valorTotal],
+        ] as [string, string | number][])
+      : ([["Qtd. total estoque", dossie.qtyTotal]] as [string, string | number][])),
     ["Fornecedores", dossie.fornecedores.length],
     ["Clientes", dossie.clientes.length],
   ];
@@ -461,7 +492,9 @@ export async function exportarDossieProdutoExcel(
     { header: "Sigla", key: "sigla", width: 10 },
     { header: "Filial", key: "filial", width: 24 },
     { header: "Saldo", key: "saldo", width: 12 },
-    { header: "Valor (R$)", key: "valor", width: 14 },
+    ...(incluirValor
+      ? [{ header: "Valor (R$)", key: "valor", width: 14 }]
+      : []),
   ];
   styleHeader(estoque);
   for (const s of dossie.saldos) {
@@ -469,10 +502,10 @@ export async function exportarDossieProdutoExcel(
       sigla: s.filialSigla,
       filial: s.filialNome,
       saldo: s.qty,
-      valor: s.valorEstoque,
+      ...(incluirValor ? { valor: s.valorEstoque } : {}),
     });
     row.getCell("saldo").numFmt = "#,##0.####";
-    row.getCell("valor").numFmt = "R$ #,##0.00";
+    if (incluirValor) row.getCell("valor").numFmt = "R$ #,##0.00";
   }
 
   const forn = wb.addWorksheet("Fornecedores", {
@@ -520,10 +553,18 @@ export async function exportarDossieProdutoExcel(
   }
 
   const buffer = Buffer.from(await wb.xlsx.writeBuffer());
+  const dossieOut = incluirValor
+    ? dossie
+    : {
+        ...dossie,
+        valorTotal: 0,
+        produto: { ...dossie.produto, precoUnitario: 0 },
+        saldos: dossie.saldos.map((s) => ({ ...s, valorEstoque: 0 })),
+      };
   return {
     buffer,
     filename: `teep-dossie-${safeFilenamePart(dossie.produto.codigo)}-${dateStampSaoPaulo()}.xlsx`,
-    dossie,
+    dossie: dossieOut,
   };
 }
 
@@ -531,7 +572,11 @@ export async function gerarExportDossieProduto(
   user: AuthUser,
   codigoOuNome: string,
   format: AssistenteExportFormat,
-  opts: { filialId?: string | null; filialHint?: string | null } = {}
+  opts: {
+    filialId?: string | null;
+    filialHint?: string | null;
+    incluirValor?: boolean;
+  } = {}
 ): Promise<{ buffer: Buffer; filename: string; label: string; dossie: DossieProduto }> {
   if (format === "pdf") {
     const r = await exportarDossieProdutoPdf(user, codigoOuNome, opts);

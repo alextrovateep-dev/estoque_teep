@@ -12,7 +12,7 @@ import {
 import { AuthUser } from "../../middleware/auth";
 import { AppError } from "../../middleware/error";
 import { prisma } from "../../lib/prisma";
-import { obterDashboard } from "../dashboardService";
+import { obterDashboard, maskDashboardForPermissoes } from "../dashboardService";
 import {
   relacionamentosDoCliente,
   relacionamentosDoProduto,
@@ -560,7 +560,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_inventory_balance",
     description:
-      "Resumo: KPIs (inclui valorTotal acumulado do estoque) e alertas mín/máx. Use para 'valor total acumulado', visão geral, abaixo do mínimo.",
+      "Resumo: KPIs e alertas mín/máx (quantidade/valor/movimentos só se ACL liberar). Use para visão geral e abaixo do mínimo.",
     parameters: {
       type: "object",
       properties: {
@@ -825,7 +825,14 @@ export type ToolName = (typeof TOOL_DEFINITIONS)[number]["name"];
 
 /** Permissão exigida para anunciar a tool ao LLM (null = sempre). */
 const TOOL_REQUIRED_PERM: Partial<
-  Record<ToolName, "relatorios" | "rma" | "transferencias" | "lancamentos">
+  Record<
+    ToolName,
+    | "relatorios"
+    | "rma"
+    | "transferencias"
+    | "lancamentos"
+    | "dashboard_kpi_valor"
+  >
 > = {
   export_produtos_report: "relatorios",
   export_saldos_report: "relatorios",
@@ -834,6 +841,7 @@ const TOOL_REQUIRED_PERM: Partial<
   get_rma_process: "rma",
   list_transfers: "transferencias",
   prepare_transfer: "lancamentos",
+  list_stock_by_value: "dashboard_kpi_valor",
 };
 
 /** Tools visíveis ao modelo conforme ACL do usuário. */
@@ -849,6 +857,11 @@ export function toolsForUser(
   });
 }
 
+function ctxPodeKpiValor(ctx: ToolContext): boolean {
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  return hasPermissao(ctx.user.perfil, perms, "dashboard_kpi_valor");
+}
+
 export async function executeTool(
   name: string,
   rawArgs: unknown,
@@ -858,13 +871,13 @@ export async function executeTool(
     case "list_stock_by_value":
       return listStockByValue(stockValueArgs.parse(rawArgs), ctx);
     case "list_products":
-      return listProducts(listProductsArgs.parse(rawArgs));
+      return listProducts(listProductsArgs.parse(rawArgs), ctx);
     case "list_product_trees":
-      return listProductTrees(listProductTreesArgs.parse(rawArgs));
+      return listProductTrees(listProductTreesArgs.parse(rawArgs), ctx);
     case "get_product_tree":
-      return getProductTree(getProductTreeArgs.parse(rawArgs));
+      return getProductTree(getProductTreeArgs.parse(rawArgs), ctx);
     case "search_products":
-      return searchProducts(searchProductsArgs.parse(rawArgs));
+      return searchProducts(searchProductsArgs.parse(rawArgs), ctx);
     case "get_product_stock":
       return getProductStock(getProductStockArgs.parse(rawArgs), ctx);
     case "list_product_series":
@@ -1425,11 +1438,16 @@ async function exportProductReport(
   ctx: ToolContext
 ) {
   try {
+    const incluirValor = ctxPodeKpiValor(ctx);
     const { buffer, filename, label, dossie } = await gerarExportDossieProduto(
       ctx.user,
       args.codigoOuNome,
       args.format,
-      { filialId: args.filialId, filialHint: ctx.filialHint }
+      {
+        filialId: args.filialId,
+        filialHint: ctx.filialHint,
+        incluirValor,
+      }
     );
     const downloadToken = putAssistenteExport({
       userId: ctx.user.id,
@@ -1450,7 +1468,7 @@ async function exportProductReport(
       },
       resumo: {
         qtyTotal: dossie.qtyTotal,
-        valorTotal: dossie.valorTotal,
+        ...(incluirValor ? { valorTotal: dossie.valorTotal } : {}),
         fornecedores: dossie.fornecedores.length,
         clientes: dossie.clientes.length,
         filiaisComSaldo: dossie.saldos.filter((s) => s.qty > 0).length,
@@ -1475,6 +1493,13 @@ async function exportProdutosReport(
 ) {
   const denied = assertPermRelatorios(ctx);
   if (denied) return denied;
+  if (!ctxPodeKpiValor(ctx)) {
+    return {
+      ok: false,
+      error:
+        "Sem permissão para exportar relatório de produtos com preços (dashboard_kpi_valor).",
+    };
+  }
   try {
     const fn =
       args.format === "pdf" ? exportarProdutosPdf : exportarProdutosExcel;
@@ -1538,6 +1563,7 @@ async function exportSaldosReport(
       q: args.q,
       categoriaId: args.categoriaId,
       alerta: args.alerta ?? null,
+      incluirValor: ctxPodeKpiValor(ctx),
     });
     const label = `Relatório de estoque/saldos (${args.format.toUpperCase()})`;
     const downloadToken = putAssistenteExport({
@@ -1579,6 +1605,13 @@ async function exportArvoreReport(
 ) {
   const denied = assertPermRelatorios(ctx);
   if (denied) return denied;
+  if (!ctxPodeKpiValor(ctx)) {
+    return {
+      ok: false,
+      error:
+        "Sem permissão para exportar árvore com custos/preços (dashboard_kpi_valor).",
+    };
+  }
   try {
     let produtoPaiId: string | undefined;
     const codigoOuNome = args.codigoOuNome?.trim();
@@ -1650,6 +1683,13 @@ async function listStockByValue(
   args: z.infer<typeof stockValueArgs>,
   ctx: ToolContext
 ) {
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  if (!hasPermissao(ctx.user.perfil, perms, "dashboard_kpi_valor")) {
+    return {
+      error:
+        "Sem permissão para consultar valor de estoque (dashboard_kpi_valor).",
+    };
+  }
   const filialId = resolveFilialId(ctx.user, args.filialId, ctx.filialHint);
   if (filialId) await assertFilialAtiva(filialId);
 
@@ -1816,11 +1856,15 @@ async function listStockByValue(
   };
 }
 
-async function listProducts(args: z.infer<typeof listProductsArgs>) {
+async function listProducts(
+  args: z.infer<typeof listProductsArgs>,
+  ctx: ToolContext
+) {
+  const podeValor = ctxPodeKpiValor(ctx);
   const orderBy =
-    args.orderBy === "preco_desc"
+    podeValor && args.orderBy === "preco_desc"
       ? ({ precoUnitario: "desc" } as const)
-      : args.orderBy === "preco_asc"
+      : podeValor && args.orderBy === "preco_asc"
         ? ({ precoUnitario: "asc" } as const)
         : ({ codigo: "asc" } as const);
 
@@ -1837,20 +1881,26 @@ async function listProducts(args: z.infer<typeof listProductsArgs>) {
     orderBy,
   });
 
+  const produtos = rows.map((p) => ({
+    codigo: p.codigo,
+    descricao: p.descricao,
+    unidade: p.unidade,
+    ...(podeValor ? { precoUnitario: Number(p.precoUnitario) } : {}),
+    categoria: p.categoria.nome,
+  }));
+
   return {
-    orderBy: args.orderBy,
-    encontrados: rows.length,
-    produtos: rows.map((p) => ({
-      codigo: p.codigo,
-      descricao: p.descricao,
-      unidade: p.unidade,
-      precoUnitario: Number(p.precoUnitario),
-      categoria: p.categoria.nome,
-    })),
+    orderBy: podeValor ? args.orderBy : "codigo",
+    encontrados: produtos.length,
+    produtos,
   };
 }
 
-async function listProductTrees(args: z.infer<typeof listProductTreesArgs>) {
+async function listProductTrees(
+  args: z.infer<typeof listProductTreesArgs>,
+  ctx: ToolContext
+) {
+  const podeValor = ctxPodeKpiValor(ctx);
   const q = args.q?.trim() || "";
   const where = {
     ativo: true,
@@ -1882,7 +1932,7 @@ async function listProductTrees(args: z.infer<typeof listProductTreesArgs>) {
       produtos: rows.map((p) => ({
         codigo: p.codigo,
         descricao: p.descricao,
-        precoUnitario: Number(p.precoUnitario),
+        ...(podeValor ? { precoUnitario: Number(p.precoUnitario) } : {}),
         qtdComponentes: p._count.componentesComoPai,
       })),
     };
@@ -1920,21 +1970,27 @@ async function listProductTrees(args: z.infer<typeof listProductTreesArgs>) {
     produtos: rows.map((p) => ({
       codigo: p.codigo,
       descricao: p.descricao,
-      precoUnitario: Number(p.precoUnitario),
+      ...(podeValor ? { precoUnitario: Number(p.precoUnitario) } : {}),
       qtdComponentes: p._count.componentesComoPai,
       componentes: p.componentesComoPai.map((c) => ({
         codigo: c.produtoFilho.codigo,
         descricao: c.produtoFilho.descricao,
         quantidade: Number(c.quantidade),
         fantasma: c.fantasma,
-        precoUnitario: Number(c.produtoFilho.precoUnitario),
+        ...(podeValor
+          ? { precoUnitario: Number(c.produtoFilho.precoUnitario) }
+          : {}),
         ativo: c.produtoFilho.ativo,
       })),
     })),
   };
 }
 
-async function getProductTree(args: z.infer<typeof getProductTreeArgs>) {
+async function getProductTree(
+  args: z.infer<typeof getProductTreeArgs>,
+  ctx: ToolContext
+) {
+  const podeValor = ctxPodeKpiValor(ctx);
   const produto = await findProdutoByCodigoOuNome(args.codigoOuNome);
   if (!produto) {
     return {
@@ -1952,8 +2008,8 @@ async function getProductTree(args: z.infer<typeof getProductTreeArgs>) {
     descricao: string;
     quantidade: number;
     fantasma: boolean;
-    precoUnitario: number;
-    valorLinha: number;
+    precoUnitario?: number;
+    valorLinha?: number;
     ativo: boolean;
     temBom: boolean;
     subarvore: {
@@ -2005,7 +2061,9 @@ async function getProductTree(args: z.infer<typeof getProductTreeArgs>) {
         nosCarregados += 1;
         const temBom = c.produtoFilho._count.componentesComoPai > 0;
         const qtd = Number(c.quantidade);
-        const custoBom = await calcularCustoBom(c.produtoFilho.id, tx);
+        const custoBom = podeValor
+          ? await calcularCustoBom(c.produtoFilho.id, tx)
+          : null;
         const preco =
           custoBom !== null ? custoBom : Number(c.produtoFilho.precoUnitario);
         let subarvore: CompNode["subarvore"] = null;
@@ -2036,8 +2094,12 @@ async function getProductTree(args: z.infer<typeof getProductTreeArgs>) {
           descricao: c.produtoFilho.descricao,
           quantidade: qtd,
           fantasma: c.fantasma,
-          precoUnitario: preco,
-          valorLinha: Math.round(qtd * preco * 100) / 100,
+          ...(podeValor
+            ? {
+                precoUnitario: preco,
+                valorLinha: Math.round(qtd * preco * 100) / 100,
+              }
+            : {}),
           ativo: c.produtoFilho.ativo,
           temBom,
           subarvore,
@@ -2057,20 +2119,26 @@ async function getProductTree(args: z.infer<typeof getProductTreeArgs>) {
       produto: {
         codigo: produto.codigo,
         descricao: produto.descricao,
-        precoUnitario: Number(produto.precoUnitario),
+        ...(podeValor
+          ? { precoUnitario: Number(produto.precoUnitario) }
+          : {}),
       },
       qtdComponentes: componentes.length,
       componentes,
       aviso: truncado
         ? "Árvore parcial (limite de profundidade/itens). Não invente componentes; diga que veio incompleta e sugira o relatório PDF estendido se fizer sentido."
-        : estendido
+        : estendido && podeValor
           ? "Preços de composição usam custo BOM (igual ao relatório). Componentes com subarvore têm BOM própria — narre em português natural."
           : undefined,
     };
   });
 }
 
-async function searchProducts(args: z.infer<typeof searchProductsArgs>) {
+async function searchProducts(
+  args: z.infer<typeof searchProductsArgs>,
+  ctx: ToolContext
+) {
+  const podeValor = ctxPodeKpiValor(ctx);
   const q = args.q.trim();
   const rows = await prisma.produto.findMany({
     where: {
@@ -2098,7 +2166,7 @@ async function searchProducts(args: z.infer<typeof searchProductsArgs>) {
       codigo: p.codigo,
       descricao: p.descricao,
       unidade: p.unidade,
-      precoUnitario: Number(p.precoUnitario),
+      ...(podeValor ? { precoUnitario: Number(p.precoUnitario) } : {}),
       categoria: p.categoria.nome,
     })),
   };
@@ -2167,6 +2235,12 @@ async function getProductStock(
     return { encontrado: false, mensagem: "Produto não encontrado no cadastro" };
   }
 
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  const podeValor = hasPermissao(
+    ctx.user.perfil,
+    perms,
+    "dashboard_kpi_valor"
+  );
   const preco = Number(produto.precoUnitario);
   const estoques = await prisma.estoque.findMany({
     where: {
@@ -2186,7 +2260,9 @@ async function getProductStock(
       filialSigla: e.filial.sigla,
       filialNome: e.filial.nome,
       qty,
-      valorEstoque: Math.round(qty * preco * 100) / 100,
+      ...(podeValor
+        ? { valorEstoque: Math.round(qty * preco * 100) / 100 }
+        : {}),
     };
   });
   const qtyTotal = saldos.reduce((s, r) => s + r.qty, 0);
@@ -2199,12 +2275,12 @@ async function getProductStock(
       codigo: produto.codigo,
       descricao: produto.descricao,
       unidade: produto.unidade,
-      precoUnitario: preco,
+      ...(podeValor ? { precoUnitario: preco } : {}),
       controlaSerie: produto.controlaSerie === true,
     },
     saldos,
     qtyTotal,
-    valorTotal,
+    ...(podeValor ? { valorTotal } : {}),
     mensagem:
       saldos.length === 0 || qtyTotal === 0
         ? "Produto cadastrado, mas sem saldo em estoque (qty 0)."
@@ -3039,7 +3115,29 @@ async function getInventoryBalance(
   const filialId = resolveFilialId(ctx.user, args.filialId, ctx.filialHint);
   if (filialId) await assertFilialAtiva(filialId);
 
-  const dash = await obterDashboard(ctx.user, filialId);
+  const dashRaw = await obterDashboard(ctx.user, filialId);
+  const dash = maskDashboardForPermissoes(
+    dashRaw,
+    ctx.user.perfil,
+    ctx.permissoes
+  );
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  const podeQtd = hasPermissao(
+    ctx.user.perfil,
+    perms,
+    "dashboard_kpi_quantidade"
+  );
+  const podeValor = hasPermissao(
+    ctx.user.perfil,
+    perms,
+    "dashboard_kpi_valor"
+  );
+  const podeMov = hasPermissao(
+    ctx.user.perfil,
+    perms,
+    "dashboard_kpi_movimentos"
+  );
+
   const alertas = (dash.alertas || []).slice(0, 15).map((a) => ({
     codigo: a.codigo,
     descricao: a.descricao,
@@ -3050,18 +3148,28 @@ async function getInventoryBalance(
     tipo: a.tipo,
   }));
 
+  const kpis: Record<string, number | null> = {
+    posicoesComSaldo: dash.kpis.posicoesComSaldo,
+    skusComSaldo: dash.kpis.skusComSaldo,
+    alertasMinimo: dash.kpis.alertasMinimo,
+    alertasMaximo: dash.kpis.alertasMaximo,
+    pendentes: dash.kpis.pendentes,
+  };
+  if (podeQtd) kpis.quantidadeTotal = dash.kpis.quantidadeTotal;
+  if (podeValor) kpis.valorTotal = dash.kpis.valorTotal;
+  if (podeMov) {
+    kpis.movimentosHoje = dash.kpis.movimentosHoje;
+    kpis.movimentos30d = dash.kpis.movimentos30d;
+  }
+
   return {
     asOf: new Date().toISOString(),
     escopo: dash.escopo,
-    kpis: {
-      posicoesComSaldo: dash.kpis.posicoesComSaldo,
-      skusComSaldo: dash.kpis.skusComSaldo,
-      quantidadeTotal: dash.kpis.quantidadeTotal,
-      valorTotal: dash.kpis.valorTotal,
-      alertasMinimo: dash.kpis.alertasMinimo,
-      alertasMaximo: dash.kpis.alertasMaximo,
-      movimentosHoje: dash.kpis.movimentosHoje,
-      pendentes: dash.kpis.pendentes,
+    kpis,
+    kpisDisponiveis: {
+      quantidadeTotal: podeQtd,
+      valorTotal: podeValor,
+      movimentos: podeMov,
     },
     alertas: args.somenteAlertas
       ? alertas

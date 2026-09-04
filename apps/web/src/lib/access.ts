@@ -1,6 +1,7 @@
 import {
   CADASTROS_PAGINAS,
   CadastrosPaginaId,
+  DASHBOARD_KPI_KEYS,
   hasCadastroEditar,
   hasCadastroPagina,
   hasPermissao,
@@ -106,6 +107,7 @@ export function permissoesEditaveisParaPerfil(
   if (perfil === "ADMIN" || perfil === "GERENTE") {
     return [
       "dashboard",
+      ...DASHBOARD_KPI_KEYS,
       "assistente",
       "relatorios",
       "lancamentos",
@@ -121,6 +123,7 @@ export function permissoesEditaveisParaPerfil(
   }
   return [
     "dashboard",
+    ...DASHBOARD_KPI_KEYS,
     "assistente",
     "relatorios",
     "lancamentos",

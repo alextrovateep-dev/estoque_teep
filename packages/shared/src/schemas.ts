@@ -1078,6 +1078,20 @@ export const alocarSeriesSchema = z.object({
   quantidade: z.coerce.number().int().min(1).max(500),
 });
 
+/**
+ * Transforma acabado A (série) em produto B (série nova).
+ * Baixa componentes da árvore de B (exceto o próprio A, se estiver na BOM).
+ */
+export const createTransformacaoSchema = z.object({
+  filialId: z.string().uuid(),
+  produtoOrigemId: z.string().uuid(),
+  numeroSerieOrigem: z.string().trim().min(1).max(80),
+  produtoDestinoId: z.string().uuid(),
+  /** Se omitido, a API aloca 1 série automática do destino. */
+  numeroSerieDestino: z.string().trim().min(1).max(80).optional().nullable(),
+  observacao: z.string().trim().max(500).optional().nullable(),
+});
+
 /** Substitui a BOM (árvore) do produto. */
 export const putProdutoComponentesSchema = z.object({
   itens: z.array(produtoComponenteItemSchema).max(200),

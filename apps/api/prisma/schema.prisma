@@ -30,6 +30,7 @@ model Filial {
   pedidosVendaAcabado   PedidoVenda[]
   tiposMovimentacao     TipoMovimentacao[] @relation("TipoFilial")
   tiposMovimentacaoDestino TipoMovimentacao[] @relation("TipoFilialDestino")
+  transformacoes        ProdutoTransformacao[]
 
   @@map("filiais")
 }
@@ -76,6 +77,7 @@ model Usuario {
   serieAlocacoes      SerieAlocacao[]
   pedidosVendaSeparados PedidoVenda[] @relation("PedidoSeparadoPor")
   pedidosVendaDestinatarios PedidoVendaDestinatario[]
+  transformacoes      ProdutoTransformacao[]
 
   @@map("usuarios")
 }
@@ -144,6 +146,8 @@ model Produto {
   rmaManutencaoPecas    RmaManutencaoPeca[]
   rmaOrcamentoLinhas    RmaOrcamentoLinha[]
   pedidoVendaItens      PedidoVendaItem[]
+  transformacoesOrigem  ProdutoTransformacao[] @relation("TransformacaoOrigem")
+  transformacoesDestino ProdutoTransformacao[] @relation("TransformacaoDestino")
 
   @@map("produtos")
 }
@@ -314,6 +318,8 @@ model Movimentacao {
   rmaItensEntrada     RmaItem[] @relation("RmaItemEntrada")
   rmaItensSaida       RmaItem[] @relation("RmaItemSaida")
   rmaItensDescarte    RmaItem[] @relation("RmaItemDescarte")
+  transformacoesSaidaOrigem   ProdutoTransformacao[] @relation("TransformacaoMovSaida")
+  transformacoesEntradaDestino ProdutoTransformacao[] @relation("TransformacaoMovEntrada")
 
   @@index([produtoId])
   @@index([filialId])
@@ -437,6 +443,8 @@ model UnidadeSerie {
   transferenciaItens TransferenciaItemSerie[]
   rmaItens      RmaItem[] @relation("RmaItemSerieOriginal")
   rmaItensSubstituicao RmaItem[] @relation("RmaItemSerieSubstituicao")
+  transformacoesOrigem  ProdutoTransformacao[] @relation("TransformacaoSerieOrigem")
+  transformacoesDestino ProdutoTransformacao[] @relation("TransformacaoSerieDestino")
 
   @@unique([produtoId, numeroSerie], name: "uniq_produto_serie")
   @@index([produtoId, status])
@@ -927,4 +935,38 @@ model PedidoVendaDestinatario {
   @@unique([pedidoId, usuarioId])
   @@index([usuarioId])
   @@map("pedido_venda_destinatarios")
+}
+
+/// Histórico: acabado A (série) → produto B (série nova), com baixa da árvore de B.
+model ProdutoTransformacao {
+  id                         String       @id @default(uuid()) @db.Uuid
+  criadoEm                   DateTime     @default(now()) @map("criado_em") @db.Timestamptz
+  usuarioId                  String       @map("usuario_id") @db.Uuid
+  filialId                   String       @map("filial_id") @db.Uuid
+  produtoOrigemId            String       @map("produto_origem_id") @db.Uuid
+  unidadeSerieOrigemId       String       @map("unidade_serie_origem_id") @db.Uuid
+  numeroSerieOrigem          String       @map("numero_serie_origem") @db.VarChar(80)
+  produtoDestinoId           String       @map("produto_destino_id") @db.Uuid
+  unidadeSerieDestinoId      String       @map("unidade_serie_destino_id") @db.Uuid
+  numeroSerieDestino         String       @map("numero_serie_destino") @db.VarChar(80)
+  movimentacaoSaidaOrigemId  String       @map("movimentacao_saida_origem_id") @db.Uuid
+  movimentacaoEntradaDestinoId String     @map("movimentacao_entrada_destino_id") @db.Uuid
+  observacao                 String?      @db.Text
+  usuario                    Usuario      @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+  filial                     Filial       @relation(fields: [filialId], references: [id], onDelete: Restrict)
+  produtoOrigem              Produto      @relation("TransformacaoOrigem", fields: [produtoOrigemId], references: [id], onDelete: Restrict)
+  produtoDestino             Produto      @relation("TransformacaoDestino", fields: [produtoDestinoId], references: [id], onDelete: Restrict)
+  unidadeSerieOrigem         UnidadeSerie @relation("TransformacaoSerieOrigem", fields: [unidadeSerieOrigemId], references: [id], onDelete: Restrict)
+  unidadeSerieDestino        UnidadeSerie @relation("TransformacaoSerieDestino", fields: [unidadeSerieDestinoId], references: [id], onDelete: Restrict)
+  movimentacaoSaidaOrigem    Movimentacao @relation("TransformacaoMovSaida", fields: [movimentacaoSaidaOrigemId], references: [id], onDelete: Restrict)
+  movimentacaoEntradaDestino Movimentacao @relation("TransformacaoMovEntrada", fields: [movimentacaoEntradaDestinoId], references: [id], onDelete: Restrict)
+
+  @@index([filialId, criadoEm])
+  @@index([produtoOrigemId])
+  @@index([produtoDestinoId])
+  @@index([unidadeSerieOrigemId])
+  @@index([unidadeSerieDestinoId])
+  @@index([numeroSerieOrigem])
+  @@index([numeroSerieDestino])
+  @@map("produto_transformacoes")
 }

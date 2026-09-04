@@ -106,7 +106,7 @@ export async function assertFormatoSeriesNascimento(
   }
 }
 
-async function assertSerieNaoExisteNoProduto(
+export async function assertSerieNaoExisteNoProduto(
   tx: Tx,
   produtoId: string,
   numeroSerie: string
