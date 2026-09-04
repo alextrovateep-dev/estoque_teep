@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { api, apiDownload, displayName, getStoredUser } from "@/lib/api";
+import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { TeepLogo } from "@/components/TeepLogo";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import {
@@ -62,19 +62,6 @@ function composeInput(base: string, interim: string, recording: boolean) {
   return appendTranscript(base, interim);
 }
 
-/** Saudação por horário local (calendário do browser). */
-function saudacaoPorHora(date = new Date()): "Bom dia" | "Boa tarde" | "Boa noite" {
-  const h = date.getHours();
-  if (h >= 5 && h < 12) return "Bom dia";
-  if (h >= 12 && h < 18) return "Boa tarde";
-  return "Boa noite";
-}
-
-function primeiroNome(nomeCompleto: string): string {
-  const p = nomeCompleto.trim().split(/\s+/)[0];
-  return p || "olá";
-}
-
 function historyForApi(turns: ChatTurn[]) {
   return turns.map(({ role, content }) => ({ role, content }));
 }
@@ -85,10 +72,6 @@ export function AssistenteEstoque({
   filialId?: string;
 }) {
   const user = useMemo(() => getStoredUser(), []);
-  const nomeSaudacao = user ? primeiroNome(displayName(user)) : "";
-  const saudacao = nomeSaudacao
-    ? `${saudacaoPorHora()} ${nomeSaudacao},`
-    : `${saudacaoPorHora()},`;
   const [status, setStatus] = useState<Status | null>(null);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -347,7 +330,6 @@ export function AssistenteEstoque({
       {empty ? (
         <div className="px-4 pt-2 pb-0">
           <p className="text-sm leading-snug text-slate-700">
-            <span className="font-semibold text-slate-800">{saudacao}</span>{" "}
             Como posso ajudar você hoje?
           </p>
         </div>

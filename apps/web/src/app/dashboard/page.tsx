@@ -11,6 +11,14 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+/** Saudação por horário local (calendário do browser). */
+function saudacaoPorHora(date = new Date()): "Bom dia" | "Boa tarde" | "Boa noite" {
+  const h = date.getHours();
+  if (h >= 5 && h < 12) return "Bom dia";
+  if (h >= 12 && h < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
 type SerieUnidade = {
   id: string;
   numeroSerie: string;
@@ -427,12 +435,12 @@ export default function DashboardPage() {
             Dashboard / Saldos
           </h1>
           <p className="mt-0.5 truncate text-xs text-slate-500">
-            {user ? `Olá, ${user.nome}` : "Carregando…"}
-            {data?.escopo.consolidado
-              ? " · visão consolidada"
-              : filialLabel
-                ? ` · ${filialLabel.sigla} — ${filialLabel.nome}`
-                : ""}
+            {user
+              ? `${saudacaoPorHora()} ${user.nome}`
+              : "Carregando…"}
+            {!data?.escopo.consolidado && filialLabel
+              ? ` · ${filialLabel.sigla} — ${filialLabel.nome}`
+              : ""}
           </p>
         </div>
         {isOpsManager && data && (
