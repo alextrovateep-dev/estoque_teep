@@ -305,7 +305,15 @@ export function ProdutoCadastroForm({
   }
 
   async function onExcluirProduto() {
-    if (!editId || !isAdmin || !exclusao?.podeExcluir) return;
+    if (!editId || !isAdmin) return;
+    if (exclusao && !exclusao.podeExcluir) {
+      setError(
+        `Não é possível excluir: ${exclusao.bloqueios
+          .map((b) => `${b.motivo} (${b.quantidade})`)
+          .join("; ")}`
+      );
+      return;
+    }
     if (
       !confirm(
         `Excluir permanentemente o produto «${form.codigo}»?\n\nSó é permitido se não houver árvore, movimentação ou outros vínculos.`
@@ -441,13 +449,11 @@ export function ProdutoCadastroForm({
                 : "Editar produto"
               : "Novo produto"}
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            {readOnly
-              ? "Somente visualização — sem permissão para alterar cadastros."
-              : editId
-                ? "Fotos e configuração de série. Estoque mín./máx. = 0 desliga o alerta."
-                : "Cadastre o item, adicione fotos se quiser e, se tiver número de série físico, ative o rastreio."}
-          </p>
+          {readOnly ? (
+            <p className="mt-1 max-w-2xl text-sm text-slate-500">
+              Somente visualização — sem permissão para alterar cadastros.
+            </p>
+          ) : null}
         </div>
         <Link
           href="/cadastros/produtos"
@@ -964,26 +970,35 @@ export function ProdutoCadastroForm({
           >
             {readOnly ? "Voltar" : "Cancelar"}
           </Link>
-          {editId && isAdmin && exclusao?.podeExcluir && (
+          {editId && isAdmin && (
             <button
               type="button"
-              disabled={excluindo || saving}
+              disabled={
+                excluindo ||
+                saving ||
+                (exclusao !== null && !exclusao.podeExcluir)
+              }
               onClick={() => void onExcluirProduto()}
-              className="ml-auto rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+              className="ml-auto rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title={
+                exclusao && !exclusao.podeExcluir
+                  ? exclusao.bloqueios.map((b) => b.motivo).join("; ")
+                  : "Excluir produto sem vínculos"
+              }
             >
               {excluindo ? "Excluindo…" : "Excluir produto"}
             </button>
           )}
         </div>
-        {editId && isAdmin && exclusao && !exclusao.podeExcluir && (
-          <p className="text-xs text-slate-500">
+        {editId && isAdmin && exclusao && !exclusao.podeExcluir ? (
+          <p className="text-xs text-amber-800">
             Exclusão bloqueada:{" "}
             {exclusao.bloqueios
               .map((b) => `${b.motivo} (${b.quantidade})`)
               .join("; ")}
-            . Inative o produto se não quiser mais usá-lo.
+            . Use Desativar na lista se não quiser mais usá-lo.
           </p>
-        )}
+        ) : null}
       </form>
 
       {posCriacaoOpen && (

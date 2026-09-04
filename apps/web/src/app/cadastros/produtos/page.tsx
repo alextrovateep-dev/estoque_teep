@@ -93,6 +93,7 @@ function ProdutosPageInner() {
     const u = getStoredUser();
     return u ? userCanEditCadastro(u, "produtos") : false;
   })();
+  const isAdmin = getStoredUser()?.perfil === "ADMIN";
   const [lista, setLista] = useState<Produto[]>([]);
   const [busca, setBusca] = useState("");
   const [error, setError] = useState("");
@@ -102,6 +103,7 @@ function ProdutosPageInner() {
   const [relCache, setRelCache] = useState<Record<string, RelProduto>>({});
   const [loadingRel, setLoadingRel] = useState<string | null>(null);
   const [fotoLightbox, setFotoLightbox] = useState<FotoLightbox | null>(null);
+  const [excluindoId, setExcluindoId] = useState<string | null>(null);
 
   async function load() {
     const [p, resumos] = await Promise.all([
@@ -150,6 +152,29 @@ function ProdutosPageInner() {
     }
   }
 
+  async function excluirProduto(p: Produto) {
+    if (!isAdmin) return;
+    if (
+      !confirm(
+        `Excluir permanentemente «${p.codigo}»?\n\nSó funciona se não houver árvore, movimentação ou outros vínculos.`
+      )
+    ) {
+      return;
+    }
+    setExcluindoId(p.id);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/produtos/${p.id}`, { method: "DELETE" });
+      setMsg(`Produto ${p.codigo} excluído`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir");
+    } finally {
+      setExcluindoId(null);
+    }
+  }
+
   async function toggleExpand(p: Produto) {
     if (expandidoId === p.id) {
       setExpandidoId(null);
@@ -182,11 +207,6 @@ function ProdutosPageInner() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Produtos</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-500">
-            Cadastre o item e, se ele tiver número de série físico, ative o
-            rastreio. A operação digita as séries nos lançamentos; o sistema só
-            valida se estão no estoque certo e se a movimentação é permitida.
-          </p>
         </div>
         {canEdit && (
           <Link
@@ -378,6 +398,16 @@ function ProdutosPageInner() {
                           className="text-brand hover:underline"
                         >
                           {p.ativo ? "Desativar" : "Ativar"}
+                        </button>
+                      )}
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          disabled={excluindoId === p.id}
+                          onClick={() => void excluirProduto(p)}
+                          className="text-red-700 hover:underline disabled:opacity-50"
+                        >
+                          {excluindoId === p.id ? "Excluindo…" : "Excluir"}
                         </button>
                       )}
                     </td>

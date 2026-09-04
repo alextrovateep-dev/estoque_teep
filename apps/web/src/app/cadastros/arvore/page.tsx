@@ -775,12 +775,12 @@ export default function ArvoreProdutoPage() {
                         Cancelar edição
                       </button>
                     ))}
-                  {isAdmin && itens.length > 0 && (
+                  {isAdmin && (
                     <button
                       type="button"
-                      disabled={saving}
+                      disabled={saving || itens.length === 0}
                       onClick={() => void onExcluirArvore()}
-                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+                      className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-sm font-semibold text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
                       title="Remove todos os componentes desta BOM (somente Admin)"
                     >
                       Excluir árvore
