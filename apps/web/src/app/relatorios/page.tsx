@@ -48,6 +48,8 @@ type ArvoreRow = {
   produtoPaiId: string;
   codigo: string;
   descricao: string;
+  categoriaNome?: string;
+  grupo?: "acabado" | "semi" | "outro";
   precoUnitario: number;
   qtdComponentes: number;
   totalComposicao: number;
@@ -57,6 +59,7 @@ type ArvoreRow = {
     descricao: string;
     quantidade: number;
     fantasma: boolean;
+    temBom?: boolean;
     precoUnitario: number;
     valorLinha: number;
   }>;
@@ -74,6 +77,12 @@ function money(n: number) {
 
 function qty(n: number) {
   return n.toLocaleString("pt-BR", { maximumFractionDigits: 4 });
+}
+
+function labelGrupoArvore(grupo: "acabado" | "semi" | "outro" | undefined) {
+  if (grupo === "semi") return "Semi-acabados";
+  if (grupo === "outro") return "Outros";
+  return "Produtos acabados";
 }
 
 function parseAba(raw: string | null): Aba {
@@ -106,6 +115,12 @@ function RelatoriosInner() {
   const [produtoPaiId, setProdutoPaiId] = useState(
     searchParams.get("produtoPaiId") || ""
   );
+  const [explodir, setExplodir] = useState(
+    () =>
+      searchParams.get("explodir") === "1" ||
+      searchParams.get("explodir") === "true" ||
+      Boolean(searchParams.get("produtoPaiId"))
+  );
 
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -131,6 +146,15 @@ function RelatoriosInner() {
     const ativoParam = searchParams.get("ativo");
     setAtivo(ativoParam === null && nextAba === "produtos" ? "true" : ativoParam || "");
     setProdutoPaiId(searchParams.get("produtoPaiId") || "");
+    const exp = searchParams.get("explodir");
+    const pai = searchParams.get("produtoPaiId");
+    if (exp === "0" || exp === "false") {
+      setExplodir(false);
+    } else if (exp === "1" || exp === "true") {
+      setExplodir(true);
+    } else {
+      setExplodir(Boolean(pai));
+    }
     setPage(1);
   }, [searchParams]);
 
@@ -179,16 +203,22 @@ function RelatoriosInner() {
       if (next === "arvores" && produtoPaiId) {
         params.set("produtoPaiId", produtoPaiId);
       }
+      if (next === "arvores") {
+        params.set("explodir", explodir ? "1" : "0");
+      }
       router.replace(`/relatorios?${params.toString()}`, { scroll: false });
     },
-    [q, filialId, categoriaId, alerta, ativo, produtoPaiId, router]
+    [q, filialId, categoriaId, alerta, ativo, produtoPaiId, explodir, router]
   );
 
   function selectAba(next: Aba) {
     setAba(next);
     setPage(1);
     setError("");
-    if (next !== "arvores") setProdutoPaiId("");
+    if (next !== "arvores") {
+      setProdutoPaiId("");
+      setExplodir(false);
+    }
     syncUrl(next);
   }
 
@@ -209,6 +239,9 @@ function RelatoriosInner() {
     if (aba === "arvores" && produtoPaiId) {
       p.set("produtoPaiId", produtoPaiId);
     }
+    if (aba === "arvores") {
+      p.set("explodir", explodir ? "1" : "0");
+    }
     p.set("page", String(page));
     p.set("pageSize", String(pageSize));
     return p.toString();
@@ -220,6 +253,7 @@ function RelatoriosInner() {
     alerta,
     ativo,
     produtoPaiId,
+    explodir,
     page,
     pageSize,
   ]);
@@ -274,15 +308,28 @@ function RelatoriosInner() {
         const r = await api<{
           rows: ArvoreRow[];
           total: number;
-          meta: { linhasPai: number; linhasComponente: number };
+          meta: {
+            linhasPai: number;
+            linhasComponente: number;
+            truncado?: boolean;
+            multinivel?: boolean;
+            limite?: number;
+          };
         }>(`/relatorios/arvores?${queryString}`);
         if (gen !== fetchGen.current) return;
         setArvores(r.rows);
         setProdutos([]);
         setSaldos([]);
         setTotal(r.total);
+        const nivel = r.meta.multinivel ? "multinível" : "1 nível";
+        const trunc =
+          r.meta.truncado && r.meta.limite
+            ? ` · truncado (limite ${r.meta.limite})`
+            : r.meta.truncado
+              ? " · truncado"
+              : "";
         setMetaLinhas(
-          `${r.meta.linhasPai} pai(s) · ${r.meta.linhasComponente} componente(s)`
+          `${r.meta.linhasPai} árvore(s) · ${r.meta.linhasComponente} componente(s) · ${nivel}${trunc}`
         );
       }
     } catch (e) {
@@ -490,6 +537,26 @@ function RelatoriosInner() {
           </>
         )}
 
+        {aba === "arvores" && (
+          <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              className="rounded border-slate-300"
+              checked={explodir}
+              onChange={(e) => {
+                setExplodir(e.target.checked);
+                setPage(1);
+              }}
+            />
+            <span>
+              Multinível
+              <span className="ml-1 text-slate-400">
+                (inclui subárvores, ex. KIT)
+              </span>
+            </span>
+          </label>
+        )}
+
         <button
           type="button"
           onClick={() => {
@@ -654,112 +721,162 @@ function RelatoriosInner() {
       )}
 
       {aba === "arvores" && (
-        <div className="mt-3 space-y-3">
+        <div className="mt-4 space-y-6">
           {arvores.length === 0 && !loading && (
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-8 text-center text-sm text-slate-500">
               Nenhuma árvore encontrada.
             </div>
           )}
-          {arvores.map((p) => {
-            const somaQtd = p.componentes.reduce(
-              (s, c) => s + Number(c.quantidade || 0),
-              0
+          {(["acabado", "semi", "outro"] as const).map((grupoId) => {
+            const doGrupo = arvores.filter(
+              (p) => (p.grupo || "acabado") === grupoId
             );
-            const somaValor = p.componentes.reduce(
-              (s, c) => s + Number(c.valorLinha || 0),
-              0
-            );
+            if (doGrupo.length === 0) return null;
             return (
-              <article
-                key={p.produtoPaiId}
-                className="overflow-x-auto rounded-xl border border-slate-200 bg-white px-3 py-3"
-              >
-                <h2 className="text-sm font-semibold text-slate-900">
-                  <span className="font-mono">{p.codigo}</span>
-                  <span className="font-normal text-slate-600">
-                    {" "}
-                    — {p.descricao}
-                  </span>
-                </h2>
-
-                <table className="mt-2 min-w-full text-xs">
-                  <thead className="border-b border-slate-200 text-left text-[10px] uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="py-2 pr-3">Código</th>
-                      <th className="py-2 pr-3">Componente</th>
-                      <th className="py-2 pr-3 text-right">Qtd</th>
-                      <th className="py-2 pr-3 text-right">Preço</th>
-                      <th className="py-2 pr-3 text-right">Valor</th>
-                      <th className="py-2">Fantasma</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {p.componentes.map((c) => (
-                      <tr
-                        key={`${p.produtoPaiId}-${c.codigo}`}
-                        className="border-b border-slate-100"
-                      >
-                        <td className="py-1.5 pr-3 font-mono text-slate-800">
-                          {c.codigo}
-                        </td>
-                        <td className="py-1.5 pr-3 text-slate-700">
-                          {c.descricao}
-                        </td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums text-slate-800">
-                          {qty(c.quantidade)}
-                        </td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums text-slate-800">
-                          {money(c.precoUnitario)}
-                        </td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums text-slate-800">
-                          {money(c.valorLinha)}
-                        </td>
-                        <td className="py-1.5 text-slate-600">
-                          {c.fantasma ? "Sim" : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-t border-slate-200 bg-slate-50/50 font-medium text-slate-900">
-                    <tr>
-                      <td className="py-2 pr-3" colSpan={2}>
-                        Total de itens: {p.qtdComponentes}
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums">
-                        {qty(somaQtd)}
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums text-slate-400">
-                        —
-                      </td>
-                      <td className="py-2 pr-3 text-right tabular-nums">
-                        {money(somaValor)}
-                      </td>
-                      <td className="py-2" />
-                    </tr>
-                  </tfoot>
-                </table>
-
-                <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-2 text-xs text-slate-600">
-                  <span>
-                    Preço pai{" "}
-                    <strong className="tabular-nums text-slate-900">
-                      {money(p.precoUnitario)}
-                    </strong>
-                  </span>
-                  <span>
-                    Composição{" "}
-                    <strong className="tabular-nums text-slate-900">
-                      {money(p.totalComposicao)}
-                    </strong>
-                  </span>
-                  <span>
-                    Só baixa{" "}
-                    <strong className="tabular-nums text-slate-900">
-                      {money(p.totalBaixa)}
-                    </strong>
+              <section key={grupoId} className="space-y-3">
+                <div className="flex items-baseline justify-between gap-2 border-b border-slate-200 pb-2">
+                  <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                    {labelGrupoArvore(grupoId)}
+                  </h2>
+                  <span className="text-xs tabular-nums text-slate-400">
+                    {doGrupo.length} árvore(s)
                   </span>
                 </div>
-              </article>
+                {doGrupo.map((p) => {
+                  const somaQtd = p.componentes.reduce(
+                    (s, c) => s + Number(c.quantidade || 0),
+                    0
+                  );
+                  const somaValor = p.componentes.reduce(
+                    (s, c) => s + Number(c.valorLinha || 0),
+                    0
+                  );
+                  return (
+                    <article
+                      key={p.produtoPaiId}
+                      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                    >
+                      <header className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="font-mono text-sm font-semibold text-slate-900">
+                            {p.codigo}
+                          </p>
+                          <p className="mt-0.5 text-sm text-slate-600">
+                            {p.descricao}
+                          </p>
+                          {p.categoriaNome ? (
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {p.categoriaNome}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap gap-3 text-right text-xs text-slate-500">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                              Preço pai
+                            </p>
+                            <p className="tabular-nums font-medium text-slate-800">
+                              {money(p.precoUnitario)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                              Composição
+                            </p>
+                            <p className="tabular-nums font-medium text-slate-800">
+                              {money(p.totalComposicao)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
+                              Só baixa
+                            </p>
+                            <p className="tabular-nums font-medium text-slate-800">
+                              {money(p.totalBaixa)}
+                            </p>
+                          </div>
+                        </div>
+                      </header>
+
+                      <div className="overflow-x-auto px-2 sm:px-3">
+                        <table className="min-w-full text-xs">
+                          <thead className="border-b border-slate-100 text-left text-[10px] uppercase tracking-wide text-slate-400">
+                            <tr>
+                              <th className="px-2 py-2.5">Código</th>
+                              <th className="px-2 py-2.5">Componente</th>
+                              <th className="px-2 py-2.5 text-right">Qtd</th>
+                              <th className="px-2 py-2.5 text-right">Preço</th>
+                              <th className="px-2 py-2.5 text-right">Valor</th>
+                              <th className="px-2 py-2.5">Fantasma</th>
+                              <th className="px-2 py-2.5">Subárvore</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {p.componentes.map((c) => (
+                              <tr
+                                key={`${p.produtoPaiId}-${c.codigo}`}
+                                className="border-b border-slate-50 last:border-0"
+                              >
+                                <td className="px-2 py-2 font-mono text-slate-800">
+                                  {c.codigo}
+                                </td>
+                                <td className="px-2 py-2 text-slate-700">
+                                  {c.descricao}
+                                </td>
+                                <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                                  {qty(c.quantidade)}
+                                </td>
+                                <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                                  {money(c.precoUnitario)}
+                                </td>
+                                <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                                  {money(c.valorLinha)}
+                                </td>
+                                <td className="px-2 py-2 text-slate-500">
+                                  {c.fantasma ? (
+                                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                                      Sim
+                                    </span>
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
+                                <td className="px-2 py-2 text-slate-500">
+                                  {c.temBom ? (
+                                    <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-800">
+                                      Sim
+                                    </span>
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="border-t border-slate-100 bg-slate-50/60 font-medium text-slate-800">
+                            <tr>
+                              <td className="px-2 py-2.5" colSpan={2}>
+                                {p.qtdComponentes} item(ns)
+                              </td>
+                              <td className="px-2 py-2.5 text-right tabular-nums">
+                                {qty(somaQtd)}
+                              </td>
+                              <td className="px-2 py-2.5 text-right text-slate-400">
+                                —
+                              </td>
+                              <td className="px-2 py-2.5 text-right tabular-nums">
+                                {money(somaValor)}
+                              </td>
+                              <td className="px-2 py-2.5" />
+                              <td className="px-2 py-2.5" />
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </article>
+                  );
+                })}
+              </section>
             );
           })}
         </div>

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { executeTool } from "./tools";
+import { executeTool, toolsForUser, TOOL_DEFINITIONS } from "./tools";
 import {
   collectActionLink,
+  packToolContentForLlm,
   redactActionLinkForLlm,
   type AssistenteActionLink,
 } from "./orchestrator";
@@ -125,6 +126,63 @@ describe("assistente tools authz", () => {
     assert.equal(r.ok, false);
     assert.match(String(r.error), /Transferências/i);
     assert.equal(r.transferencias, undefined);
+  });
+});
+
+describe("assistente toolsForUser ACL", () => {
+  it("omite RMA/relatórios/transferências/prepare sem permissão", () => {
+    const names = toolsForUser("OPERADOR", {
+      dashboard: true,
+      assistente: true,
+      rma: false,
+      relatorios: false,
+      transferencias: false,
+      lancamentos: false,
+    }).map((t) => t.name);
+
+    assert.ok(!names.includes("list_rma_processes"));
+    assert.ok(!names.includes("get_rma_process"));
+    assert.ok(!names.includes("export_arvore_report"));
+    assert.ok(!names.includes("list_transfers"));
+    assert.ok(!names.includes("prepare_transfer"));
+    assert.ok(names.includes("get_product_stock"));
+    assert.ok(names.includes("get_product_tree"));
+  });
+
+  it("inclui tools sensíveis quando a ACL libera", () => {
+    const names = toolsForUser("OPERADOR", {
+      dashboard: true,
+      assistente: true,
+      rma: true,
+      relatorios: true,
+      transferencias: true,
+      lancamentos: true,
+    }).map((t) => t.name);
+
+    assert.ok(names.includes("list_rma_processes"));
+    assert.ok(names.includes("export_arvore_report"));
+    assert.ok(names.includes("list_transfers"));
+    assert.ok(names.includes("prepare_transfer"));
+    assert.ok(names.length <= TOOL_DEFINITIONS.length);
+  });
+});
+
+describe("assistente packToolContentForLlm", () => {
+  it("marca truncado quando o payload estoura o limite", () => {
+    const huge = { itens: Array.from({ length: 400 }, (_, i) => ({
+      codigo: `SKU-${i}-${"x".repeat(40)}`,
+      descricao: "y".repeat(80),
+    })) };
+    const packed = packToolContentForLlm(huge);
+    assert.ok(packed.length <= 8000);
+    const parsed = JSON.parse(packed) as { truncado?: boolean; aviso?: string };
+    assert.equal(parsed.truncado, true);
+    assert.match(String(parsed.aviso), /truncado|incompleta/i);
+  });
+
+  it("não altera payload pequeno", () => {
+    const packed = packToolContentForLlm({ ok: true, n: 1 });
+    assert.equal(packed, JSON.stringify({ ok: true, n: 1 }));
   });
 });
 

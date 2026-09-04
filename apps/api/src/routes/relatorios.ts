@@ -73,11 +73,18 @@ function parseProdutosQuery(req: AuthedRequest) {
 }
 
 function parseArvoreQuery(req: AuthedRequest) {
+  const rawExplodir = req.query.explodir;
+  let explodir: boolean | undefined;
+  if (rawExplodir !== undefined) {
+    const v = String(rawExplodir).toLowerCase();
+    explodir = v === "1" || v === "true" || v === "sim";
+  }
   return {
     q: req.query.q ? String(req.query.q) : undefined,
     produtoPaiId: req.query.produtoPaiId
       ? String(req.query.produtoPaiId)
       : undefined,
+    explodir,
   };
 }
 

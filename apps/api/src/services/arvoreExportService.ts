@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { Prisma } from "@prisma/client";
 import { BRAND_COLOR } from "@teep/shared";
 import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
@@ -14,10 +15,13 @@ const UUID_RE =
 const LIMITE_PAIS = 200;
 
 export type ArvoreComponenteRow = {
+  produtoFilhoId: string;
   codigo: string;
   descricao: string;
   quantidade: number;
   fantasma: boolean;
+  /** Filho tem BOM própria (subárvore). */
+  temBom: boolean;
   precoUnitario: number;
   valorLinha: number;
   ativo: boolean;
@@ -27,6 +31,9 @@ export type ArvoreExportRow = {
   produtoPaiId: string;
   codigo: string;
   descricao: string;
+  categoriaNome: string;
+  /** Acabado primeiro, depois semi — para layout do relatório. */
+  grupo: "acabado" | "semi" | "outro";
   precoUnitario: number;
   qtdComponentes: number;
   totalComposicao: number;
@@ -37,6 +44,11 @@ export type ArvoreExportRow = {
 export type ArvoreExportOpts = {
   q?: string | null;
   produtoPaiId?: string | null;
+  /**
+   * Inclui subárvores (ex.: KIT dentro do acabado).
+   * Default: true quando há produtoPaiId (relatório de um item).
+   */
+  explodir?: boolean;
 };
 
 export type ArvoreExportMeta = {
@@ -49,6 +61,7 @@ export type ArvoreExportMeta = {
   truncado: boolean;
   totalPais: number;
   limite: number;
+  multinivel: boolean;
 };
 
 function moneyBr(n: number) {
@@ -67,6 +80,46 @@ function escapeHtml(s: string) {
     .replace(/"/g, "&quot;");
 }
 
+/** Ordem de exibição: produtos acabados → semi-acabados → demais. */
+export function classificarGrupoArvore(
+  categoriaNome: string,
+  codigo: string
+): "acabado" | "semi" | "outro" {
+  const n = categoriaNome
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase();
+  if (
+    /\bsemi/.test(n) ||
+    /semi[- ]?acabad/.test(n) ||
+    /\bkit\b/.test(n)
+  ) {
+    return "semi";
+  }
+  if (
+    /acabad/.test(n) ||
+    /produto.?final/.test(n) ||
+    /finished/.test(n)
+  ) {
+    return "acabado";
+  }
+  if (/^kit[-_]/i.test(codigo)) return "semi";
+  // Pai com BOM que não é kit → em geral produto acabado
+  return "acabado";
+}
+
+const GRUPO_ORDEM: Record<"acabado" | "semi" | "outro", number> = {
+  acabado: 0,
+  semi: 1,
+  outro: 2,
+};
+
+export function labelGrupoArvore(grupo: "acabado" | "semi" | "outro"): string {
+  if (grupo === "acabado") return "Produtos acabados";
+  if (grupo === "semi") return "Semi-acabados";
+  return "Outros";
+}
+
 function stampSaoPaulo() {
   return new Intl.DateTimeFormat("pt-BR", {
     timeZone: "America/Sao_Paulo",
@@ -83,6 +136,10 @@ export async function carregarArvoreExport(
     throw new AppError(400, "produtoPaiId inválido");
   }
   const q = (opts.q || "").trim();
+  const explodir =
+    opts.explodir !== undefined
+      ? opts.explodir
+      : Boolean(opts.produtoPaiId);
 
   const where = {
     ativo: true,
@@ -98,74 +155,42 @@ export async function carregarArvoreExport(
       : {}),
   };
 
-  const [totalPais, pais] = await Promise.all([
+  const [totalPais, paisRaiz] = await Promise.all([
     prisma.produto.count({ where }),
     prisma.produto.findMany({
       where,
-      select: {
-        id: true,
-        codigo: true,
-        descricao: true,
-        precoUnitario: true,
-        componentesComoPai: {
-          select: {
-            quantidade: true,
-            fantasma: true,
-            produtoFilho: {
-              select: {
-                id: true,
-                codigo: true,
-                descricao: true,
-                precoUnitario: true,
-                ativo: true,
-              },
-            },
-          },
-          orderBy: { produtoFilho: { codigo: "asc" } },
-        },
-      },
+      select: { id: true },
       orderBy: { codigo: "asc" },
       take: LIMITE_PAIS,
     }),
   ]);
 
-  const rows: ArvoreExportRow[] = await Promise.all(
-    pais.map((p) =>
-      prisma.$transaction(async (tx) => {
-        const componentes: ArvoreComponenteRow[] = [];
-        for (const c of p.componentesComoPai) {
-          const qtd = Number(c.quantidade);
-          const custoBom = await calcularCustoBom(c.produtoFilho.id, tx);
-          const preco = custoBom !== null ? custoBom : Number(c.produtoFilho.precoUnitario);
-          componentes.push({
-            codigo: c.produtoFilho.codigo,
-            descricao: c.produtoFilho.descricao,
-            quantidade: qtd,
-            fantasma: c.fantasma,
-            precoUnitario: preco,
-            valorLinha: qtd * preco,
-            ativo: c.produtoFilho.ativo,
-          });
-        }
-        let totalComposicao = 0;
-        let totalBaixa = 0;
-        for (const c of componentes) {
-          totalComposicao += c.valorLinha;
-          if (!c.fantasma) totalBaixa += c.valorLinha;
-        }
-        return {
-          produtoPaiId: p.id,
-          codigo: p.codigo,
-          descricao: p.descricao,
-          precoUnitario: Number(p.precoUnitario),
-          qtdComponentes: componentes.length,
-          totalComposicao: Math.round(totalComposicao * 100) / 100,
-          totalBaixa: Math.round(totalBaixa * 100) / 100,
-          componentes,
-        };
-      })
-    )
-  );
+  const rows: ArvoreExportRow[] = [];
+  const loaded = new Set<string>();
+  const queue: string[] = paisRaiz.map((p) => p.id);
+
+  while (queue.length > 0 && rows.length < LIMITE_PAIS) {
+    const paiId = queue.shift()!;
+    if (loaded.has(paiId)) continue;
+    loaded.add(paiId);
+
+    const row = await prisma.$transaction((tx) => montarLinhaArvore(tx, paiId));
+    if (!row) continue;
+    rows.push(row);
+
+    if (!explodir) continue;
+    for (const c of row.componentes) {
+      if (c.temBom && !loaded.has(c.produtoFilhoId)) {
+        queue.push(c.produtoFilhoId);
+      }
+    }
+  }
+
+  rows.sort((a, b) => {
+    const g = GRUPO_ORDEM[a.grupo] - GRUPO_ORDEM[b.grupo];
+    if (g !== 0) return g;
+    return a.codigo.localeCompare(b.codigo, "pt-BR");
+  });
 
   const linhasComponente = rows.reduce((n, r) => n + r.componentes.length, 0);
 
@@ -178,10 +203,84 @@ export async function carregarArvoreExport(
       busca: opts.produtoPaiId ? null : q || null,
       linhasPai: rows.length,
       linhasComponente,
-      truncado: totalPais > LIMITE_PAIS,
+      truncado: totalPais > LIMITE_PAIS || (explodir && queue.length > 0),
       totalPais,
       limite: LIMITE_PAIS,
+      multinivel: explodir,
     },
+  };
+}
+
+async function montarLinhaArvore(
+  tx: Prisma.TransactionClient,
+  paiId: string
+): Promise<ArvoreExportRow | null> {
+  const p = await tx.produto.findUnique({
+    where: { id: paiId },
+    select: {
+      id: true,
+      codigo: true,
+      descricao: true,
+      precoUnitario: true,
+      ativo: true,
+      categoria: { select: { nome: true } },
+      componentesComoPai: {
+        select: {
+          quantidade: true,
+          fantasma: true,
+          produtoFilho: {
+            select: {
+              id: true,
+              codigo: true,
+              descricao: true,
+              precoUnitario: true,
+              ativo: true,
+              _count: { select: { componentesComoPai: true } },
+            },
+          },
+        },
+        orderBy: { produtoFilho: { codigo: "asc" } },
+      },
+    },
+  });
+  if (!p || !p.ativo || p.componentesComoPai.length === 0) return null;
+
+  const componentes: ArvoreComponenteRow[] = [];
+  for (const c of p.componentesComoPai) {
+    const qtd = Number(c.quantidade);
+    const custoBom = await calcularCustoBom(c.produtoFilho.id, tx);
+    const preco =
+      custoBom !== null ? custoBom : Number(c.produtoFilho.precoUnitario);
+    componentes.push({
+      produtoFilhoId: c.produtoFilho.id,
+      codigo: c.produtoFilho.codigo,
+      descricao: c.produtoFilho.descricao,
+      quantidade: qtd,
+      fantasma: c.fantasma,
+      temBom: c.produtoFilho._count.componentesComoPai > 0,
+      precoUnitario: preco,
+      valorLinha: qtd * preco,
+      ativo: c.produtoFilho.ativo,
+    });
+  }
+  let totalComposicao = 0;
+  let totalBaixa = 0;
+  for (const c of componentes) {
+    totalComposicao += c.valorLinha;
+    if (!c.fantasma) totalBaixa += c.valorLinha;
+  }
+  const categoriaNome = p.categoria?.nome || "";
+  return {
+    produtoPaiId: p.id,
+    codigo: p.codigo,
+    descricao: p.descricao,
+    categoriaNome,
+    grupo: classificarGrupoArvore(categoriaNome, p.codigo),
+    precoUnitario: Number(p.precoUnitario),
+    qtdComponentes: componentes.length,
+    totalComposicao: Math.round(totalComposicao * 100) / 100,
+    totalBaixa: Math.round(totalBaixa * 100) / 100,
+    componentes,
   };
 }
 
@@ -189,6 +288,7 @@ function buildArvoreHtml(
   rows: ArvoreExportRow[],
   meta: ArvoreExportMeta
 ): string {
+  let lastGrupo: string | null = null;
   const sections = rows
     .map((p) => {
       const comps = p.componentes
@@ -200,13 +300,21 @@ function buildArvoreHtml(
             <td class="num">${escapeHtml(moneyBr(c.precoUnitario))}</td>
             <td class="num">${escapeHtml(moneyBr(c.valorLinha))}</td>
             <td>${c.fantasma ? "Sim" : "—"}</td>
+            <td>${c.temBom ? "Sim" : "—"}</td>
           </tr>`
         )
         .join("\n");
+      const grupoHeader =
+        p.grupo !== lastGrupo
+          ? `<h1 class="grupo">${escapeHtml(labelGrupoArvore(p.grupo))}</h1>`
+          : "";
+      lastGrupo = p.grupo;
       return `
+      ${grupoHeader}
       <section class="pai">
         <h2>${escapeHtml(p.codigo)} — ${escapeHtml(p.descricao)}</h2>
         <div class="pai-meta">
+          ${p.categoriaNome ? `Categoria: ${escapeHtml(p.categoriaNome)} · ` : ""}
           Preço pai: ${escapeHtml(moneyBr(p.precoUnitario))} ·
           Composição: ${escapeHtml(moneyBr(p.totalComposicao))} ·
           Só baixa: ${escapeHtml(moneyBr(p.totalBaixa))} ·
@@ -221,9 +329,10 @@ function buildArvoreHtml(
               <th class="num">Preço un.</th>
               <th class="num">Valor</th>
               <th>Fantasma</th>
+              <th>Subárvore</th>
             </tr>
           </thead>
-          <tbody>${comps || `<tr><td colspan="6" class="muted">Sem componentes</td></tr>`}</tbody>
+          <tbody>${comps || `<tr><td colspan="7" class="muted">Sem componentes</td></tr>`}</tbody>
         </table>
       </section>`;
     })
@@ -233,6 +342,16 @@ function buildArvoreHtml(
   const brandMark = logoUri
     ? `<img src="${logoUri}" alt="TEEP" />`
     : `<h1>TEEP Estoque</h1>`;
+  const bomLabel = meta.multinivel
+    ? "BOM multinível (subárvores)"
+    : "BOM 1 nível";
+  const contagemArvores = meta.multinivel
+    ? `<strong>Árvores no relatório:</strong> ${meta.linhasPai}${
+        meta.truncado ? ` · truncado (limite ${meta.limite})` : ""
+      }`
+    : `<strong>Produtos pai:</strong> ${meta.linhasPai}${
+        meta.truncado ? ` (de ${meta.totalPais})` : ""
+      }`;
 
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -250,6 +369,7 @@ function buildArvoreHtml(
     .pai { margin-bottom: 18px; page-break-inside: avoid; }
     .pai h2 { margin: 0 0 4px; font-size: 12px; color: ${BRAND_COLOR}; }
     .pai-meta { color: #64748b; margin-bottom: 6px; font-size: 9px; }
+    .grupo { margin: 16px 0 8px; font-size: 11px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
     table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
     th { background: #f1f5f9; text-align: left; padding: 4px 6px; border-bottom: 1px solid #cbd5e1; font-size: 9px; text-transform: uppercase; color: #475569; }
     th.num, td.num { text-align: right; }
@@ -265,7 +385,7 @@ function buildArvoreHtml(
       ${brandMark}
       <div>
         <div style="font-size:12px;font-weight:600;">Relatório — Árvore de produto</div>
-        <div style="font-size:9px;color:#64748b;margin-top:2px;">TEEP Estoque · BOM 1 nível</div>
+        <div style="font-size:9px;color:#64748b;margin-top:2px;">TEEP Estoque · ${escapeHtml(bomLabel)}</div>
       </div>
     </div>
     <div class="sub">
@@ -274,7 +394,7 @@ function buildArvoreHtml(
     </div>
   </div>
   <div class="meta">
-    <div><strong>Produtos pai:</strong> ${meta.linhasPai}${meta.truncado ? ` (de ${meta.totalPais})` : ""} · <strong>Componentes:</strong> ${meta.linhasComponente}</div>
+    <div>${contagemArvores} · <strong>Componentes:</strong> ${meta.linhasComponente}</div>
     ${meta.busca ? `<div><strong>Filtro:</strong> “${escapeHtml(meta.busca)}”</div>` : ""}
   </div>
   ${sections || `<p class="muted">Nenhuma árvore encontrada.</p>`}
@@ -322,6 +442,10 @@ export async function exportarArvoreExcel(
   }
   for (const [k, v] of [
     ["Relatório", "Árvore de produto — TEEP Estoque"],
+    [
+      "Nível",
+      meta.multinivel ? "Multinível (subárvores)" : "1 nível",
+    ],
     ["Gerado em", meta.geradoEm],
     ["Usuário", `${meta.usuario} (${meta.perfil})`],
     ["Busca", meta.busca || "—"],
@@ -338,6 +462,8 @@ export async function exportarArvoreExcel(
     views: [{ state: "frozen", ySplit: 1 }],
   });
   paisWs.columns = [
+    { header: "Grupo", key: "grupo", width: 18 },
+    { header: "Categoria", key: "categoria", width: 18 },
     { header: "Código pai", key: "codigo", width: 16 },
     { header: "Descrição", key: "descricao", width: 36 },
     { header: "Preço pai (R$)", key: "preco", width: 14 },
@@ -348,6 +474,8 @@ export async function exportarArvoreExcel(
   styleHeader(paisWs.getRow(1));
   for (const p of rows) {
     const row = paisWs.addRow({
+      grupo: labelGrupoArvore(p.grupo),
+      categoria: p.categoriaNome || "—",
       codigo: p.codigo,
       descricao: p.descricao,
       preco: p.precoUnitario,
@@ -371,6 +499,7 @@ export async function exportarArvoreExcel(
     { header: "Preço un. (R$)", key: "preco", width: 14 },
     { header: "Valor (R$)", key: "valor", width: 14 },
     { header: "Fantasma", key: "fantasma", width: 12 },
+    { header: "Subárvore", key: "sub", width: 12 },
     { header: "Ativo", key: "ativo", width: 10 },
   ];
   styleHeader(compWs.getRow(1));
@@ -384,6 +513,7 @@ export async function exportarArvoreExcel(
         preco: c.precoUnitario,
         valor: Math.round(c.valorLinha * 100) / 100,
         fantasma: c.fantasma ? "Sim" : "Não",
+        sub: c.temBom ? "Sim" : "Não",
         ativo: c.ativo ? "Sim" : "Não",
       });
       row.getCell("qtd").numFmt = "#,##0.####";

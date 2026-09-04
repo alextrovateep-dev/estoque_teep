@@ -9,7 +9,7 @@ import {
   LlmToolDef,
 } from "./llm";
 import { buildSystemPrompt, suggestedLinksFor, navAllowlist } from "./systemPrompt";
-import { executeTool, TOOL_DEFINITIONS } from "./tools";
+import { executeTool, toolsForUser } from "./tools";
 import { resolvePermissoes, PermissoesUsuario } from "@teep/shared";
 import type { AssistenteExportFormat } from "./assistenteExportTokenStore";
 
@@ -33,12 +33,57 @@ export type AssistenteChatResult = {
   downloads: AssistenteDownload[];
 };
 
-function parseArgs(raw: string): unknown {
+const TOOL_RESULT_MAX_CHARS = 8000;
+
+function parseArgs(
+  raw: string
+): { ok: true; args: unknown } | { ok: false; error: string } {
   try {
-    return JSON.parse(raw || "{}");
+    if (!raw || !raw.trim()) return { ok: true, args: {} };
+    return { ok: true, args: JSON.parse(raw) };
   } catch {
-    return {};
+    return {
+      ok: false,
+      error: "Argumentos da tool inválidos (JSON malformado).",
+    };
   }
+}
+
+/** Serializa resultado da tool; se passar do limite, marca truncado sem inventar dados. */
+export function packToolContentForLlm(toolContent: unknown): string {
+  const raw = JSON.stringify(toolContent);
+  if (raw.length <= TOOL_RESULT_MAX_CHARS) return raw;
+
+  const aviso =
+    "Payload truncado por tamanho. NÃO invente itens ausentes; diga que a lista veio incompleta e, se fizer sentido, sugira filtro mais específico ou relatório.";
+
+  if (
+    toolContent &&
+    typeof toolContent === "object" &&
+    !Array.isArray(toolContent)
+  ) {
+    const marked = {
+      ...(toolContent as Record<string, unknown>),
+      truncado: true,
+      aviso,
+    };
+    const s = JSON.stringify(marked);
+    if (s.length <= TOOL_RESULT_MAX_CHARS) return s;
+  }
+
+  const envelope = { truncado: true as const, aviso, preview: "" };
+  const overhead = JSON.stringify(envelope).length;
+  const budget = Math.max(200, TOOL_RESULT_MAX_CHARS - overhead - 10);
+  envelope.preview = raw.slice(0, budget);
+  let out = JSON.stringify(envelope);
+  while (out.length > TOOL_RESULT_MAX_CHARS && envelope.preview.length > 100) {
+    envelope.preview = envelope.preview.slice(
+      0,
+      Math.floor(envelope.preview.length * 0.9)
+    );
+    out = JSON.stringify(envelope);
+  }
+  return out.slice(0, TOOL_RESULT_MAX_CHARS);
 }
 
 function collectDownload(toolResult: unknown, out: AssistenteDownload[]): void {
@@ -186,11 +231,13 @@ export async function runAssistenteChat(input: {
     { role: "user", content: message.slice(0, 2000) },
   ];
 
-  const tools: LlmToolDef[] = TOOL_DEFINITIONS.map((t) => ({
-    name: t.name,
-    description: t.description,
-    parameters: t.parameters as Record<string, unknown>,
-  }));
+  const tools: LlmToolDef[] = toolsForUser(perfilEfetivo, permissoes).map(
+    (t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters as Record<string, unknown>,
+    })
+  );
 
   const cfg = getLlmConfig();
   const provider = getLlmProvider();
@@ -259,18 +306,22 @@ export async function runAssistenteChat(input: {
 
     for (const tc of result.toolCalls) {
       toolsUsed.push(tc.name);
-      const args = parseArgs(tc.arguments);
+      const parsed = parseArgs(tc.arguments);
       let toolResult: unknown;
-      try {
-        toolResult = await executeTool(tc.name, args, {
-          user: input.user,
-          filialHint: input.filialId,
-          permissoes,
-        });
-      } catch (e) {
-        toolResult = {
-          error: e instanceof Error ? e.message : "Falha na tool",
-        };
+      if (!parsed.ok) {
+        toolResult = { ok: false, error: parsed.error };
+      } else {
+        try {
+          toolResult = await executeTool(tc.name, parsed.args, {
+            user: input.user,
+            filialHint: input.filialId,
+            permissoes,
+          });
+        } catch (e) {
+          toolResult = {
+            error: e instanceof Error ? e.message : "Falha na tool",
+          };
+        }
       }
       collectDownload(toolResult, downloads);
       collectActionLink(toolResult, actionLinks, allowedActionHrefs);
@@ -278,7 +329,7 @@ export async function runAssistenteChat(input: {
         JSON.stringify({
           event: "assistente_tool",
           tool: tc.name,
-          args,
+          args: parsed.ok ? parsed.args : { parseError: true },
           userId: input.user.id,
         })
       );
@@ -306,7 +357,7 @@ export async function runAssistenteChat(input: {
         role: "tool",
         toolCallId: tc.id,
         toolName: tc.name,
-        content: JSON.stringify(toolContent).slice(0, 8000),
+        content: packToolContentForLlm(toolContent),
       });
     }
   }
@@ -315,7 +366,7 @@ export async function runAssistenteChat(input: {
   messages.push({
     role: "user",
     content:
-      "Com base apenas nos resultados das tools acima, responda agora a pergunta original de forma objetiva. Não peça mais dados se já tiver o suficiente.",
+      "Com base só no que as tools retornaram, responda a pergunta original em tom natural e direto (como colega de estoque). Não invente números nem itens. Não peça mais dados se já tiver o suficiente.",
   });
   try {
     const final = await provider.chatWithTools({

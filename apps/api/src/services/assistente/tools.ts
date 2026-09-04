@@ -34,6 +34,7 @@ import {
   exportarArvoreExcel,
   exportarArvorePdf,
 } from "../arvoreExportService";
+import { calcularCustoBom } from "../bomCustoService";
 import {
   janelaHojeSaoPaulo,
   janelaMesSaoPaulo,
@@ -124,6 +125,11 @@ const listProductTreesArgs = z.object({
 
 const getProductTreeArgs = z.object({
   codigoOuNome: z.string().min(1).max(120),
+  /**
+   * true = inclui subárvores (KIT dentro do pai).
+   * Default true — árvore “completa” no chat; false = só 1 nível.
+   */
+  estendido: z.boolean().optional().nullable(),
 });
 
 const getProductStockArgs = z.object({
@@ -291,6 +297,11 @@ const exportArvoreReportArgs = z.object({
   format: z.enum(["pdf", "xlsx"]),
   q: z.string().min(1).max(80).optional().nullable(),
   codigoOuNome: z.string().min(1).max(120).optional().nullable(),
+  /**
+   * true = inclui subárvores (KIT dentro do acabado).
+   * Default: true com codigoOuNome; false na listagem geral.
+   */
+  estendido: z.boolean().optional().nullable(),
 });
 
 const prepareTransferArgs = z.object({
@@ -375,13 +386,18 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_product_tree",
     description:
-      "Detalha a árvore (BOM) de UM produto pai: componentes, quantidade, fantasma e preços. Use para 'componentes do SKU X', 'árvore do produto Y'. Se o produto não tiver árvore, retorna temArvore=false.",
+      "Detalha a árvore (BOM) de UM produto pai: componentes, quantidade, fantasma e preços. Use para 'componentes do SKU X', 'árvore do produto Y'. estendido=true (padrão) inclui subárvores (ex. KIT dentro do acabado). estendido=false = só 1 nível. Se não tiver árvore, retorna temArvore=false.",
     parameters: {
       type: "object",
       properties: {
         codigoOuNome: {
           type: "string",
           description: "Código ou nome do produto pai",
+        },
+        estendido: {
+          type: "boolean",
+          description:
+            "true (padrão) = multinível; false = só filhos diretos. Use false só se o usuário pedir 'só o primeiro nível'.",
         },
       },
       required: ["codigoOuNome"],
@@ -649,7 +665,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "export_arvore_report",
     description:
-      "Gera relatório PDF/Excel da ÁRVORE de produto (BOM). Use para 'relatório da árvore', 'exportar BOM'. codigoOuNome filtra um pai; omitir = todas as árvores. Exige permissão Relatórios.",
+      "Gera relatório PDF/Excel da ÁRVORE de produto (BOM). Use para 'relatório da árvore', 'exportar BOM', 'árvore estendida/completa/multinível'. codigoOuNome = um pai; omitir = todas. Com produto específico (ou estendido=true) inclui subárvores (ex.: KIT dentro do acabado). Exige permissão Relatórios.",
     parameters: {
       type: "object",
       properties: {
@@ -658,6 +674,11 @@ export const TOOL_DEFINITIONS = [
         codigoOuNome: {
           type: "string",
           description: "Produto pai específico (código ou nome)",
+        },
+        estendido: {
+          type: "boolean",
+          description:
+            "true = BOM multinível (explode subárvores). Use quando o usuário pedir estendido/completo/tudo/árvore dentro de árvore. Default true se codigoOuNome informado.",
         },
       },
       required: ["format"],
@@ -801,6 +822,32 @@ export const TOOL_DEFINITIONS = [
 ] as const;
 
 export type ToolName = (typeof TOOL_DEFINITIONS)[number]["name"];
+
+/** Permissão exigida para anunciar a tool ao LLM (null = sempre). */
+const TOOL_REQUIRED_PERM: Partial<
+  Record<ToolName, "relatorios" | "rma" | "transferencias" | "lancamentos">
+> = {
+  export_produtos_report: "relatorios",
+  export_saldos_report: "relatorios",
+  export_arvore_report: "relatorios",
+  list_rma_processes: "rma",
+  get_rma_process: "rma",
+  list_transfers: "transferencias",
+  prepare_transfer: "lancamentos",
+};
+
+/** Tools visíveis ao modelo conforme ACL do usuário. */
+export function toolsForUser(
+  perfil: AuthUser["perfil"],
+  permissoes?: PermissoesUsuario | Partial<Record<string, boolean>> | null
+): (typeof TOOL_DEFINITIONS)[number][] {
+  const perms = resolvePermissoes(perfil, permissoes ?? null);
+  return TOOL_DEFINITIONS.filter((t) => {
+    const need = TOOL_REQUIRED_PERM[t.name as ToolName];
+    if (!need) return true;
+    return hasPermissao(perfil, perms, need);
+  });
+}
 
 export async function executeTool(
   name: string,
@@ -1545,12 +1592,23 @@ async function exportArvoreReport(
       }
       produtoPaiId = p.id;
     }
+    const explodir =
+      args.estendido === true
+        ? true
+        : args.estendido === false
+          ? false
+          : produtoPaiId
+            ? true
+            : false;
     const fn = args.format === "pdf" ? exportarArvorePdf : exportarArvoreExcel;
     const { buffer, filename } = await fn(ctx.user, {
       q: produtoPaiId ? null : args.q,
       produtoPaiId,
+      explodir,
     });
-    const label = `Relatório de árvore de produto (${args.format.toUpperCase()})`;
+    const label = explodir
+      ? `Relatório de árvore de produto multinível (${args.format.toUpperCase()})`
+      : `Relatório de árvore de produto (${args.format.toUpperCase()})`;
     const downloadToken = putAssistenteExport({
       userId: ctx.user.id,
       buffer,
@@ -1559,6 +1617,7 @@ async function exportArvoreReport(
       label,
     });
     const qs = new URLSearchParams({ aba: "arvores" });
+    qs.set("explodir", explodir ? "1" : "0");
     if (produtoPaiId) {
       qs.set("produtoPaiId", produtoPaiId);
       if (codigoOuNome) qs.set("q", codigoOuNome);
@@ -1884,41 +1943,131 @@ async function getProductTree(args: z.infer<typeof getProductTreeArgs>) {
     };
   }
 
-  const itens = await prisma.produtoComponente.findMany({
-    where: { produtoPaiId: produto.id },
-    select: {
-      quantidade: true,
-      fantasma: true,
-      produtoFilho: {
-        select: {
-          codigo: true,
-          descricao: true,
-          precoUnitario: true,
-          ativo: true,
-        },
-      },
-    },
-    orderBy: { produtoFilho: { codigo: "asc" } },
-  });
+  const estendido = args.estendido !== false;
+  const MAX_DEPTH = 5;
+  const MAX_NOS = 80;
 
-  return {
-    encontrado: true,
-    temArvore: itens.length > 0,
-    produto: {
-      codigo: produto.codigo,
-      descricao: produto.descricao,
-      precoUnitario: Number(produto.precoUnitario),
-    },
-    qtdComponentes: itens.length,
-    componentes: itens.map((c) => ({
-      codigo: c.produtoFilho.codigo,
-      descricao: c.produtoFilho.descricao,
-      quantidade: Number(c.quantidade),
-      fantasma: c.fantasma,
-      precoUnitario: Number(c.produtoFilho.precoUnitario),
-      ativo: c.produtoFilho.ativo,
-    })),
+  type CompNode = {
+    codigo: string;
+    descricao: string;
+    quantidade: number;
+    fantasma: boolean;
+    precoUnitario: number;
+    valorLinha: number;
+    ativo: boolean;
+    temBom: boolean;
+    subarvore: {
+      codigo: string;
+      descricao: string;
+      qtdComponentes: number;
+      componentes: CompNode[];
+    } | null;
   };
+
+  return prisma.$transaction(async (tx) => {
+    let nosCarregados = 0;
+    let truncado = false;
+
+    async function loadComponentes(
+      paiId: string,
+      depth: number,
+      visited: Set<string>
+    ): Promise<CompNode[]> {
+      if (nosCarregados >= MAX_NOS) {
+        truncado = true;
+        return [];
+      }
+      const itens = await tx.produtoComponente.findMany({
+        where: { produtoPaiId: paiId },
+        select: {
+          quantidade: true,
+          fantasma: true,
+          produtoFilho: {
+            select: {
+              id: true,
+              codigo: true,
+              descricao: true,
+              precoUnitario: true,
+              ativo: true,
+              _count: { select: { componentesComoPai: true } },
+            },
+          },
+        },
+        orderBy: { produtoFilho: { codigo: "asc" } },
+      });
+
+      const out: CompNode[] = [];
+      for (const c of itens) {
+        if (nosCarregados >= MAX_NOS) {
+          truncado = true;
+          break;
+        }
+        nosCarregados += 1;
+        const temBom = c.produtoFilho._count.componentesComoPai > 0;
+        const qtd = Number(c.quantidade);
+        const custoBom = await calcularCustoBom(c.produtoFilho.id, tx);
+        const preco =
+          custoBom !== null ? custoBom : Number(c.produtoFilho.precoUnitario);
+        let subarvore: CompNode["subarvore"] = null;
+        if (
+          estendido &&
+          temBom &&
+          depth < MAX_DEPTH &&
+          !visited.has(c.produtoFilho.id)
+        ) {
+          const nextVisited = new Set(visited);
+          nextVisited.add(c.produtoFilho.id);
+          const filhos = await loadComponentes(
+            c.produtoFilho.id,
+            depth + 1,
+            nextVisited
+          );
+          subarvore = {
+            codigo: c.produtoFilho.codigo,
+            descricao: c.produtoFilho.descricao,
+            qtdComponentes: filhos.length,
+            componentes: filhos,
+          };
+        } else if (estendido && temBom && depth >= MAX_DEPTH) {
+          truncado = true;
+        }
+        out.push({
+          codigo: c.produtoFilho.codigo,
+          descricao: c.produtoFilho.descricao,
+          quantidade: qtd,
+          fantasma: c.fantasma,
+          precoUnitario: preco,
+          valorLinha: Math.round(qtd * preco * 100) / 100,
+          ativo: c.produtoFilho.ativo,
+          temBom,
+          subarvore,
+        });
+      }
+      return out;
+    }
+
+    const visited = new Set<string>([produto.id]);
+    const componentes = await loadComponentes(produto.id, 0, visited);
+
+    return {
+      encontrado: true,
+      temArvore: componentes.length > 0,
+      multinivel: estendido,
+      truncado,
+      produto: {
+        codigo: produto.codigo,
+        descricao: produto.descricao,
+        precoUnitario: Number(produto.precoUnitario),
+      },
+      qtdComponentes: componentes.length,
+      componentes,
+      aviso: truncado
+        ? "Árvore parcial (limite de profundidade/itens). Não invente componentes; diga que veio incompleta e sugira o relatório PDF estendido se fizer sentido."
+        : estendido
+          ? "Preços de composição usam custo BOM (igual ao relatório). Componentes com subarvore têm BOM própria — narre em português natural."
+          : undefined,
+    };
+  });
 }
 
 async function searchProducts(args: z.infer<typeof searchProductsArgs>) {
