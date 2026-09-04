@@ -28,16 +28,18 @@ export function useFocusTrap(
 ) {
   useEffect(() => {
     if (!active) return;
-    const root = containerRef.current;
-    if (!root) return;
+    const el = containerRef.current;
+    if (!el) return;
+    // Tipo explícito: o TS não estreita união em closures aninhadas.
+    const panel: HTMLElement = el;
 
     const previouslyFocused =
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
 
-    const items = focusables(root);
-    (items[0] ?? root).focus();
+    const items = focusables(panel);
+    (items[0] ?? panel).focus();
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -45,21 +47,21 @@ export function useFocusTrap(
         return;
       }
       if (e.key !== "Tab") return;
-      const list = focusables(root);
+      const list = focusables(panel);
       if (list.length === 0) {
         e.preventDefault();
-        root.focus();
+        panel.focus();
         return;
       }
       const first = list[0];
       const last = list[list.length - 1];
       const current = document.activeElement;
       if (e.shiftKey) {
-        if (current === first || !root.contains(current)) {
+        if (current === first || !panel.contains(current)) {
           e.preventDefault();
           last.focus();
         }
-      } else if (current === last || !root.contains(current)) {
+      } else if (current === last || !panel.contains(current)) {
         e.preventDefault();
         first.focus();
       }
