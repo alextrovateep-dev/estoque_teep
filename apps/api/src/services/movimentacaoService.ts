@@ -1520,7 +1520,9 @@ export async function inicializarEstoque(
         continue;
       }
 
-      if (!input.confirmarReinit) {
+      // Só exige confirmação quando há saldo > 0. Linha com saldo 0 (ou
+      // recarga 0→N) segue como ajuste positivo sem o flag — alinhado à UI.
+      if (saldoAtual > 0 && !input.confirmarReinit) {
         throw new AppError(
           409,
           `Produto ${produto.codigo} já possui saldo ${saldoAtual}. Envie confirmarReinit=true para ajustar.`

@@ -2,7 +2,7 @@
 
 import { ImageLightbox } from "@/components/ImageLightbox";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
-import { api, apiUpload } from "@/lib/api";
+import { api, apiUpload, getStoredUser } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
 import {
   formatMoneyField,
@@ -96,6 +96,12 @@ export function ProdutoCadastroForm({
     images: string[];
     initialIndex: number;
   } | null>(null);
+  const isAdmin = getStoredUser()?.perfil === "ADMIN";
+  const [exclusao, setExclusao] = useState<{
+    podeExcluir: boolean;
+    bloqueios: Array<{ motivo: string; quantidade: number }>;
+  } | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
 
   useBodyScrollLock(posCriacaoOpen);
 
@@ -137,6 +143,18 @@ export function ProdutoCadastroForm({
           reiniciarAnual: cfg?.reiniciarAnual ?? true,
         });
         setFotos(asFotos(p.fotos));
+
+        if (getStoredUser()?.perfil === "ADMIN") {
+          try {
+            const ex = await api<{
+              podeExcluir: boolean;
+              bloqueios: Array<{ motivo: string; quantidade: number }>;
+            }>(`/produtos/${editId}/exclusao`);
+            if (!cancelled) setExclusao(ex);
+          } catch {
+            if (!cancelled) setExclusao(null);
+          }
+        }
 
         if (typeof window !== "undefined") {
           const ok = new URLSearchParams(window.location.search).get("ok");
@@ -283,6 +301,37 @@ export function ProdutoCadastroForm({
       setMsg(target === 0 || index === 0 ? "Capa atualizada" : "Ordem atualizada");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
+  async function onExcluirProduto() {
+    if (!editId || !isAdmin || !exclusao?.podeExcluir) return;
+    if (
+      !confirm(
+        `Excluir permanentemente o produto «${form.codigo}»?\n\nSó é permitido se não houver árvore, movimentação ou outros vínculos.`
+      )
+    ) {
+      return;
+    }
+    setExcluindo(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/produtos/${editId}`, { method: "DELETE" });
+      router.replace("/cadastros/produtos");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir");
+      try {
+        const ex = await api<{
+          podeExcluir: boolean;
+          bloqueios: Array<{ motivo: string; quantidade: number }>;
+        }>(`/produtos/${editId}/exclusao`);
+        setExclusao(ex);
+      } catch {
+        /* ignore */
+      }
+    } finally {
+      setExcluindo(false);
     }
   }
 
@@ -899,7 +948,7 @@ export function ProdutoCadastroForm({
           {!readOnly && (
             <button
               type="submit"
-              disabled={saving || posCriacaoOpen}
+              disabled={saving || posCriacaoOpen || excluindo}
               className="rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white disabled:opacity-60"
             >
               {saving
@@ -915,7 +964,26 @@ export function ProdutoCadastroForm({
           >
             {readOnly ? "Voltar" : "Cancelar"}
           </Link>
+          {editId && isAdmin && exclusao?.podeExcluir && (
+            <button
+              type="button"
+              disabled={excluindo || saving}
+              onClick={() => void onExcluirProduto()}
+              className="ml-auto rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+            >
+              {excluindo ? "Excluindo…" : "Excluir produto"}
+            </button>
+          )}
         </div>
+        {editId && isAdmin && exclusao && !exclusao.podeExcluir && (
+          <p className="text-xs text-slate-500">
+            Exclusão bloqueada:{" "}
+            {exclusao.bloqueios
+              .map((b) => `${b.motivo} (${b.quantidade})`)
+              .join("; ")}
+            . Inative o produto se não quiser mais usá-lo.
+          </p>
+        )}
       </form>
 
       {posCriacaoOpen && (

@@ -737,6 +737,7 @@ export const initEstoqueItemSchema = z.object({
 export const initEstoqueSchema = z.object({
   filialId: z.string().uuid(),
   itens: z.array(initEstoqueItemSchema).min(1),
+  /** true = permite ajustar itens com saldoAtual > 0 (Ajuste ±). 0→N não precisa. */
   confirmarReinit: z.boolean().optional().default(false),
 });
 

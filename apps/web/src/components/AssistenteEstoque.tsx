@@ -327,7 +327,7 @@ export function AssistenteEstoque({
                 </svg>
               </span>
             </span>
-            Assistente de estoque
+            TeepIA
           </h2>
         </div>
         {turns.length > 0 && (

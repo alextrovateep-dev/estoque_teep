@@ -165,6 +165,7 @@ export default function ArvoreProdutoPage() {
     const u = getStoredUser();
     return u ? userCanEditCadastro(u, "arvore") : false;
   })();
+  const isAdmin = getStoredUser()?.perfil === "ADMIN";
 
   useEffect(() => {
     const u = getStoredUser();
@@ -333,6 +334,39 @@ export default function ArvoreProdutoPage() {
       setPaiIdOriginal(paiId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao recarregar");
+    }
+  }
+
+  async function onExcluirArvore() {
+    if (!isAdmin || !paiId || itens.length === 0) return;
+    if (
+      !confirm(
+        `Excluir a árvore completa de «${paiLabel}»?\n\nIsso remove os ${itens.length} componente(s). O produto pai permanece cadastrado.`
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/produtos/${paiId}/componentes`, { method: "DELETE" });
+      setMsg("Árvore excluída — todos os componentes foram removidos");
+      setPaiId("");
+      setPaiIdOriginal("");
+      setPaiLabel("");
+      setPaiPreco(0);
+      setItens([]);
+      setItensSalvosJson("[]");
+      setEditando(false);
+      setTrocandoPai(false);
+      setSim(null);
+      setShowSim(false);
+      await loadLista(buscaLista);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir árvore");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -741,6 +775,17 @@ export default function ArvoreProdutoPage() {
                         Cancelar edição
                       </button>
                     ))}
+                  {isAdmin && itens.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => void onExcluirArvore()}
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
+                      title="Remove todos os componentes desta BOM (somente Admin)"
+                    >
+                      Excluir árvore
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {

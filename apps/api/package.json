@@ -12,6 +12,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "db:push": "prisma db push",
     "db:pg": "tsx scripts/start-embedded-pg.ts",
+    "produtos:excluir-lote": "tsx scripts/excluir-produtos-por-codigo.ts",
     "smoke:f10": "tsx scripts/smoke-f10.ts",
     "smoke:extra": "tsx scripts/smoke-extra.ts",
     "test": "tsx --test \"src/**/*.test.ts\""

@@ -25,6 +25,10 @@ import {
 import { prisma } from "../lib/prisma";
 import { upsertConfiguracaoSerie } from "../services/geracaoSerieService";
 import {
+  avaliarExclusaoProduto,
+  excluirProdutoSeLivre,
+} from "../services/produtoExclusaoService";
+import {
   authenticate,
   requirePerfil,
   requireFilialOperador,
@@ -981,6 +985,33 @@ cadastrosRouter.get("/produtos/:id/relacionamentos", async (req, res, next) => {
   }
 });
 
+/** Indica se o produto pode ser excluído e por quê. */
+cadastrosRouter.get(
+  "/produtos/:id/exclusao",
+  requirePerfil("ADMIN"),
+  async (req, res, next) => {
+    try {
+      res.json(await avaliarExclusaoProduto(req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** Exclui produto sem vínculos (árvore, movimentação, etc.). Somente ADMIN. */
+cadastrosRouter.delete(
+  "/produtos/:id",
+  requirePerfil("ADMIN"),
+  async (req, res, next) => {
+    try {
+      const removed = await excluirProdutoSeLivre(req.params.id);
+      res.json(removed);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
 cadastrosRouter.post(
   "/produtos",
   requirePerfil("ADMIN", "GERENTE"),
@@ -1317,6 +1348,33 @@ cadastrosRouter.put(
             precoUnitario: Number(i.produtoFilho.precoUnitario),
           },
         })),
+      });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** Remove toda a BOM do produto pai. Somente ADMIN. */
+cadastrosRouter.delete(
+  "/produtos/:id/componentes",
+  requirePerfil("ADMIN"),
+  async (req, res, next) => {
+    try {
+      const paiId = req.params.id;
+      const pai = await prisma.produto.findUnique({
+        where: { id: paiId },
+        select: { id: true, codigo: true },
+      });
+      if (!pai) throw new AppError(404, "Produto não encontrado");
+
+      const { count } = await prisma.produtoComponente.deleteMany({
+        where: { produtoPaiId: paiId },
+      });
+      res.json({
+        produtoId: paiId,
+        codigo: pai.codigo,
+        removidos: count,
       });
     } catch (e) {
       next(e);
