@@ -537,9 +537,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => setNavOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center justify-center rounded-lg border border-slate-200 p-2 text-slate-700 hover:bg-slate-50"
             aria-expanded={navOpen}
             aria-controls="app-nav-drawer"
+            aria-label="Abrir menu"
             title="Abrir menu"
           >
             <svg
@@ -555,7 +556,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                 clipRule="evenodd"
               />
             </svg>
-            <span className="hidden sm:inline">Menu</span>
           </button>
           <TeepLogo variant="full" height={24} />
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
