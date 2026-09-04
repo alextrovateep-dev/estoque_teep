@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { getStoredUser, logoutSession, User, api, displayName, clearSession } from "@/lib/api";
 import { homeForUser, userCanOpenCadastro, userHas, userHasAny } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
-import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { NotificationBell } from "@/components/NotificationBell";
 import { TeepLogo } from "@/components/TeepLogo";
@@ -103,9 +102,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [pendentesAprovacao, setPendentesAprovacao] = useState(0);
   const [showBday, setShowBday] = useState(false);
   const navDrawerRef = useRef<HTMLElement>(null);
-
-  useBodyScrollLock(navOpen);
-  useFocusTrap(navOpen, navDrawerRef);
+  const closeNav = useCallback(() => setNavOpen(false), []);
+  useFocusTrap(navOpen, navDrawerRef, closeNav);
 
   /** Sessão local + /auth/me a cada navegação (perfil admin pode mudar no DB). */
   useEffect(() => {
@@ -367,15 +365,6 @@ export function AppShell({ children }: { children: ReactNode }) {
     setNavOpen(false);
   }, [pathname]);
 
-  useEffect(() => {
-    if (!navOpen) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setNavOpen(false);
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [navOpen]);
-
   if (!user) {
     return (
       <div className="flex min-h-screen items-center justify-center text-slate-500">
@@ -440,7 +429,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Link
         key={item.href}
         href={item.href}
-        onClick={() => setNavOpen(false)}
+        onClick={closeNav}
         className={clsx(
           "flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium",
           active
@@ -506,7 +495,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => {
-              setNavOpen(false);
+              closeNav();
               void logout();
             }}
             className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-brand-light"
@@ -526,7 +515,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             type="button"
             tabIndex={-1}
             className="absolute inset-0 bg-black/40"
-            onClick={() => setNavOpen(false)}
+            onClick={closeNav}
             aria-label="Fechar menu"
           />
           <aside

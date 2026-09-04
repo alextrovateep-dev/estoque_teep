@@ -19,11 +19,12 @@ function focusables(root: HTMLElement): HTMLElement[] {
 
 /**
  * Prende o foco de teclado dentro de `containerRef` enquanto `active`.
- * Restaura o foco ao elemento anterior ao fechar.
+ * Esc chama `onEscape`; ao fechar, restaura o foco anterior.
  */
 export function useFocusTrap(
   active: boolean,
-  containerRef: RefObject<HTMLElement | null>
+  containerRef: RefObject<HTMLElement | null>,
+  onEscape?: () => void
 ) {
   useEffect(() => {
     if (!active) return;
@@ -39,6 +40,10 @@ export function useFocusTrap(
     (items[0] ?? root).focus();
 
     function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        onEscape?.();
+        return;
+      }
       if (e.key !== "Tab") return;
       const list = focusables(root);
       if (list.length === 0) {
@@ -71,5 +76,5 @@ export function useFocusTrap(
         previouslyFocused.focus();
       }
     };
-  }, [active, containerRef]);
+  }, [active, containerRef, onEscape]);
 }
