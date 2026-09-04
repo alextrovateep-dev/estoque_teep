@@ -7,6 +7,8 @@ import clsx from "clsx";
 import { getStoredUser, logoutSession, User, api, displayName, clearSession } from "@/lib/api";
 import { homeForUser, userCanOpenCadastro, userHas, userHasAny } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
+import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { NotificationBell } from "@/components/NotificationBell";
 import { TeepLogo } from "@/components/TeepLogo";
 import { PermissaoKey } from "@teep/shared";
@@ -97,9 +99,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<User | null>(null);
-  const [open, setOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [pendentesAprovacao, setPendentesAprovacao] = useState(0);
   const [showBday, setShowBday] = useState(false);
+  const navDrawerRef = useRef<HTMLElement>(null);
+
+  useBodyScrollLock(navOpen);
+  useFocusTrap(navOpen, navDrawerRef);
 
   /** Sessão local + /auth/me a cada navegação (perfil admin pode mudar no DB). */
   useEffect(() => {
@@ -121,7 +127,6 @@ export function AppShell({ children }: { children: ReactNode }) {
       return;
     }
     setUser(u);
-    setOpen(false);
 
     const onUserUpdated = () => {
       const latest = getStoredUser();
@@ -357,6 +362,20 @@ export function AppShell({ children }: { children: ReactNode }) {
     return [...ops, ...admin];
   }, [user]);
 
+  /** Fecha o menu ao trocar de rota (link, redirect, etc.). */
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setNavOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navOpen]);
+
   if (!user) {
     return (
       <div className="flex min-h-screen items-center justify-center text-slate-500">
@@ -421,7 +440,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <Link
         key={item.href}
         href={item.href}
-        onClick={() => setOpen(false)}
+        onClick={() => setNavOpen(false)}
         className={clsx(
           "flex items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium",
           active
@@ -487,7 +506,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={() => {
-              setOpen(false);
+              setNavOpen(false);
               void logout();
             }}
             className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-brand-light"
@@ -500,19 +519,25 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex h-dvh max-h-dvh overflow-hidden md:flex">
-      <aside className="hidden w-64 shrink-0 border-r border-slate-200 bg-white md:flex md:h-full md:max-h-full md:flex-col md:overflow-hidden">
-        <SidebarBody />
-      </aside>
-
-      {open && (
-        <div className="fixed inset-0 z-40 md:hidden">
+    <div className="flex h-dvh max-h-dvh overflow-hidden">
+      {navOpen && (
+        <div className="fixed inset-0 z-40">
           <button
+            type="button"
+            tabIndex={-1}
             className="absolute inset-0 bg-black/40"
-            onClick={() => setOpen(false)}
+            onClick={() => setNavOpen(false)}
             aria-label="Fechar menu"
           />
-          <aside className="absolute left-0 top-0 flex h-dvh max-h-dvh min-h-0 w-72 flex-col overflow-hidden bg-white shadow-xl">
+          <aside
+            ref={navDrawerRef}
+            id="app-nav-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu de navegação"
+            tabIndex={-1}
+            className="absolute left-0 top-0 flex h-dvh max-h-dvh min-h-0 w-72 max-w-[85vw] flex-col overflow-hidden bg-white shadow-xl outline-none"
+          >
             <SidebarBody />
           </aside>
         </div>
@@ -522,14 +547,28 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="z-20 flex shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-4 py-2.5 md:px-6">
           <button
             type="button"
-            onClick={() => setOpen(true)}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm md:hidden"
+            onClick={() => setNavOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-2.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            aria-expanded={navOpen}
+            aria-controls="app-nav-drawer"
+            title="Abrir menu"
           >
-            Menu
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="h-5 w-5"
+              aria-hidden
+            >
+              <path
+                fillRule="evenodd"
+                d="M2 4.75A.75.75 0 0 1 2.75 4h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 4.75Zm0 5.25a.75.75 0 0 1 .75-.75h14.5a.75.75 0 0 1 0 1.5H2.75A.75.75 0 0 1 2 10Zm.75 4.5a.75.75 0 0 0 0 1.5h14.5a.75.75 0 0 0 0-1.5H2.75Z"
+                clipRule="evenodd"
+              />
+            </svg>
+            <span className="hidden sm:inline">Menu</span>
           </button>
-          <div className="md:hidden">
-            <TeepLogo variant="full" height={24} />
-          </div>
+          <TeepLogo variant="full" height={24} />
           <div className="ml-auto flex items-center gap-2 sm:gap-3">
             {headerProfile}
             <NotificationBell />

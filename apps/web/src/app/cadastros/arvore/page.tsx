@@ -461,16 +461,9 @@ export default function ArvoreProdutoPage() {
   return (
     <>
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 max-w-2xl">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            Árvore de produto
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Monte a composição (BOM). Cada linha informa quanto do componente
-            (na unidade de estoque dele) entra por 1 unidade do pai. Na edição,
-            você pode digitar em CM, M, etc. quando a família for a mesma.
-          </p>
-        </div>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+          Árvore de produto
+        </h1>
         {canEdit && (
           <button
             type="button"
