@@ -62,7 +62,7 @@ export default function TransformacaoPage() {
   useEffect(() => {
     api<Filial[]>("/filiais")
       .then((rows) => {
-        const allowed = new Set(userFilialIds(user));
+        const allowed = new Set(user ? userFilialIds(user) : []);
         const scoped =
           user?.perfil === "OPERADOR" && allowed.size > 0
             ? rows.filter((f) => allowed.has(f.id))
