@@ -69,9 +69,15 @@ function asFotos(raw: unknown): string[] {
 export function ProdutoCadastroForm({
   produtoId,
   readOnly = false,
+  onSaved,
+  onCancel,
+  inModal = false,
 }: {
   produtoId?: string;
   readOnly?: boolean;
+  onSaved?: (produtoId: string) => void;
+  onCancel?: () => void;
+  inModal?: boolean;
 }) {
   const router = useRouter();
   const editId = produtoId || null;
@@ -326,7 +332,11 @@ export function ProdutoCadastroForm({
     setMsg("");
     try {
       await api(`/produtos/${editId}`, { method: "DELETE" });
-      router.replace("/cadastros/produtos");
+      if (onSaved) {
+        onSaved(editId);
+      } else {
+        router.replace("/cadastros/produtos");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao excluir");
       try {
@@ -378,7 +388,11 @@ export function ProdutoCadastroForm({
           method: "PATCH",
           body: JSON.stringify(body),
         });
-        router.push("/cadastros/produtos?ok=atualizado");
+        if (onSaved) {
+          onSaved(editId);
+        } else {
+          router.push("/cadastros/produtos?ok=atualizado");
+        }
       } else {
         setUploading(pendingFotos.length > 0);
         const created = await api<Produto>("/produtos", {
@@ -423,13 +437,23 @@ export function ProdutoCadastroForm({
     return (
       <>
         <div className="flex flex-wrap items-end justify-between gap-3">
-          <h1 className="text-2xl font-semibold">Editar produto</h1>
-          <Link
-            href="/cadastros/produtos"
-            className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
-          >
-            Voltar à lista
-          </Link>
+          <h2 className="text-xl font-semibold">Editar produto</h2>
+          {onCancel ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
+            >
+              Fechar
+            </button>
+          ) : (
+            <Link
+              href="/cadastros/produtos"
+              className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
+            >
+              Voltar à lista
+            </Link>
+          )}
         </div>
         <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
           {error || "Produto não encontrado"}
@@ -440,32 +464,38 @@ export function ProdutoCadastroForm({
 
   return (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">
-            {editId
-              ? readOnly
-                ? "Produto"
-                : "Editar produto"
-              : "Novo produto"}
-          </h1>
-          {readOnly ? (
-            <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Somente visualização — sem permissão para alterar cadastros.
-            </p>
-          ) : null}
+      {!inModal && (
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-semibold">
+              {editId
+                ? readOnly
+                  ? "Produto"
+                  : "Editar produto"
+                : "Novo produto"}
+            </h1>
+            {readOnly ? (
+              <p className="mt-1 max-w-2xl text-sm text-slate-500">
+                Somente visualização — sem permissão para alterar cadastros.
+              </p>
+            ) : null}
+          </div>
+          <Link
+            href="/cadastros/produtos"
+            className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
+          >
+            Voltar à lista
+          </Link>
         </div>
-        <Link
-          href="/cadastros/produtos"
-          className="rounded-lg border px-4 py-2 text-sm hover:bg-slate-50"
-        >
-          Voltar à lista
-        </Link>
-      </div>
+      )}
 
       <form
         onSubmit={onSubmit}
-        className="mt-5 space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+        className={
+          inModal
+            ? "space-y-5"
+            : "mt-5 space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+        }
       >
         <fieldset
           disabled={readOnly || saving || posCriacaoOpen}
@@ -964,12 +994,22 @@ export function ProdutoCadastroForm({
                   : "Cadastrar produto"}
             </button>
           )}
-          <Link
-            href="/cadastros/produtos"
-            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm"
-          >
-            {readOnly ? "Voltar" : "Cancelar"}
-          </Link>
+          {onCancel ? (
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm hover:bg-slate-50"
+            >
+              {readOnly ? "Voltar" : "Cancelar"}
+            </button>
+          ) : (
+            <Link
+              href="/cadastros/produtos"
+              className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm"
+            >
+              {readOnly ? "Voltar" : "Cancelar"}
+            </Link>
+          )}
           {editId && isAdmin && (
             <button
               type="button"

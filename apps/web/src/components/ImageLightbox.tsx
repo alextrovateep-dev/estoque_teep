@@ -60,7 +60,7 @@ export function ImageLightbox({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/75 p-3 sm:p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/75 p-3 sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={`Foto de ${title}`}

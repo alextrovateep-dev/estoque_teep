@@ -1141,7 +1141,7 @@ function NovoLancamentoForm() {
 
       if (retornoPrefill) {
         router.push(
-          `/movimentacoes?retornoOk=1&status=${encodeURIComponent(result.movimentacao.status)}`
+          `/relatorios?aba=movimentacoes&retornoOk=1&status=${encodeURIComponent(result.movimentacao.status)}`
         );
         return;
       }

@@ -1,6 +1,8 @@
 "use client";
 
 import { api, apiDownload, getStoredUser } from "@/lib/api";
+import { userHas } from "@/lib/access";
+import { MovimentacoesRelatorioTab } from "@/components/relatorios/MovimentacoesRelatorioTab";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Suspense,
@@ -11,7 +13,7 @@ import {
   useState,
 } from "react";
 
-type Aba = "produtos" | "saldos" | "arvores";
+type Aba = "saldos" | "movimentacoes" | "produtos" | "arvores";
 
 type Filial = { id: string; nome: string; sigla: string };
 type Categoria = { id: string; nome: string; ativo: boolean };
@@ -66,8 +68,9 @@ type ArvoreRow = {
 };
 
 const ABAS: Array<{ id: Aba; label: string }> = [
-  { id: "produtos", label: "Produtos" },
   { id: "saldos", label: "Estoque / saldos" },
+  { id: "movimentacoes", label: "Movimentações" },
+  { id: "produtos", label: "Produtos" },
   { id: "arvores", label: "Árvore de produto" },
 ];
 
@@ -85,8 +88,19 @@ function labelGrupoArvore(grupo: "acabado" | "semi" | "outro" | undefined) {
   return "Produtos acabados";
 }
 
-function parseAba(raw: string | null): Aba {
-  if (raw === "produtos" || raw === "saldos" || raw === "arvores") return raw;
+function parseAba(
+  raw: string | null,
+  podeRelatorios: boolean,
+  podeMovimentacoes: boolean
+): Aba {
+  if (raw === "movimentacoes" && podeMovimentacoes) return "movimentacoes";
+  if (
+    (raw === "produtos" || raw === "saldos" || raw === "arvores") &&
+    podeRelatorios
+  ) {
+    return raw;
+  }
+  if (!podeRelatorios && podeMovimentacoes) return "movimentacoes";
   return "saldos";
 }
 
@@ -96,9 +110,25 @@ function RelatoriosInner() {
   const user = getStoredUser();
   const isOpsManager =
     user?.perfil === "ADMIN" || user?.perfil === "GERENTE";
+  const podeRelatoriosGerais = Boolean(
+    user && (user.perfil === "ADMIN" || userHas(user, "relatorios"))
+  );
+  const podeMovimentacoes = Boolean(
+    user && (user.perfil === "ADMIN" || userHas(user, "movimentacoes"))
+  );
+
+  const abasDisponiveis = useMemo(() => {
+    return ABAS.filter((t) => {
+      if (t.id === "movimentacoes") return podeMovimentacoes;
+      return podeRelatoriosGerais;
+    });
+  }, [podeRelatoriosGerais, podeMovimentacoes]);
+
   const fetchGen = useRef(0);
 
-  const [aba, setAba] = useState<Aba>(() => parseAba(searchParams.get("aba")));
+  const [aba, setAba] = useState<Aba>(() =>
+    parseAba(searchParams.get("aba"), podeRelatoriosGerais, podeMovimentacoes)
+  );
   const [filiais, setFiliais] = useState<Filial[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [q, setQ] = useState(searchParams.get("q") || "");
@@ -137,7 +167,11 @@ function RelatoriosInner() {
 
   /** Deep-link do assistente / navegação: re-sincroniza estado com a URL. */
   useEffect(() => {
-    const nextAba = parseAba(searchParams.get("aba"));
+    const nextAba = parseAba(
+      searchParams.get("aba"),
+      podeRelatoriosGerais,
+      podeMovimentacoes
+    );
     setAba(nextAba);
     setQ(searchParams.get("q") || "");
     setFilialId(searchParams.get("filialId") || "");
@@ -156,7 +190,7 @@ function RelatoriosInner() {
       setExplodir(Boolean(pai));
     }
     setPage(1);
-  }, [searchParams]);
+  }, [searchParams, podeRelatoriosGerais, podeMovimentacoes]);
 
   useEffect(() => {
     api<Filial[]>("/filiais")
@@ -191,20 +225,22 @@ function RelatoriosInner() {
     (next: Aba) => {
       const params = new URLSearchParams();
       params.set("aba", next);
-      if (q.trim()) params.set("q", q.trim());
-      if (next === "saldos" && filialId) params.set("filialId", filialId);
-      if (categoriaId && (next === "saldos" || next === "produtos")) {
-        params.set("categoriaId", categoriaId);
-      }
-      if (next === "saldos" && alerta) params.set("alerta", alerta);
-      if (next === "produtos" && (ativo === "true" || ativo === "false")) {
-        params.set("ativo", ativo);
-      }
-      if (next === "arvores" && produtoPaiId) {
-        params.set("produtoPaiId", produtoPaiId);
-      }
-      if (next === "arvores") {
-        params.set("explodir", explodir ? "1" : "0");
+      if (next !== "movimentacoes") {
+        if (q.trim()) params.set("q", q.trim());
+        if (next === "saldos" && filialId) params.set("filialId", filialId);
+        if (categoriaId && (next === "saldos" || next === "produtos")) {
+          params.set("categoriaId", categoriaId);
+        }
+        if (next === "saldos" && alerta) params.set("alerta", alerta);
+        if (next === "produtos" && (ativo === "true" || ativo === "false")) {
+          params.set("ativo", ativo);
+        }
+        if (next === "arvores" && produtoPaiId) {
+          params.set("produtoPaiId", produtoPaiId);
+        }
+        if (next === "arvores") {
+          params.set("explodir", explodir ? "1" : "0");
+        }
       }
       router.replace(`/relatorios?${params.toString()}`, { scroll: false });
     },
@@ -223,6 +259,7 @@ function RelatoriosInner() {
   }
 
   const queryString = useMemo(() => {
+    if (aba === "movimentacoes") return "";
     const p = new URLSearchParams();
     if (q.trim()) p.set("q", q.trim());
     if (aba === "saldos") {
@@ -259,6 +296,10 @@ function RelatoriosInner() {
   ]);
 
   const load = useCallback(async () => {
+    if (aba === "movimentacoes") {
+      setLoading(false);
+      return;
+    }
     const gen = ++fetchGen.current;
     setLoading(true);
     setError("");
@@ -350,6 +391,7 @@ function RelatoriosInner() {
   }, [load]);
 
   async function exportar(format: "pdf" | "xlsx") {
+    if (aba === "movimentacoes") return;
     setExporting(true);
     setError("");
     try {
@@ -389,32 +431,34 @@ function RelatoriosInner() {
             Relatórios
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Consulte e exporte produtos, estoque e árvores de produto (PDF /
-            Excel).
+            Consulte e exporte estoque, movimentações, produtos e árvores de
+            produto (PDF / Excel).
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <button
-            type="button"
-            disabled={exporting || loading}
-            onClick={() => void exportar("pdf")}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
-          >
-            {exporting ? "Gerando…" : "Exportar PDF"}
-          </button>
-          <button
-            type="button"
-            disabled={exporting || loading}
-            onClick={() => void exportar("xlsx")}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
-          >
-            Exportar Excel
-          </button>
-        </div>
+        {aba !== "movimentacoes" && (
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={exporting || loading}
+              onClick={() => void exportar("pdf")}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
+            >
+              {exporting ? "Gerando…" : "Exportar PDF"}
+            </button>
+            <button
+              type="button"
+              disabled={exporting || loading}
+              onClick={() => void exportar("xlsx")}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
+            >
+              Exportar Excel
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {ABAS.map((t) => {
+        {abasDisponiveis.map((t) => {
           const selected = aba === t.id;
           return (
             <button
@@ -433,7 +477,13 @@ function RelatoriosInner() {
         })}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
+      {aba === "movimentacoes" ? (
+        <div className="mt-4">
+          <MovimentacoesRelatorioTab />
+        </div>
+      ) : (
+        <>
+          <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
         <label className="min-w-[10rem] flex-1 text-xs">
           <span className="mb-1 block font-medium text-slate-600">Busca</span>
           <input
@@ -880,6 +930,8 @@ function RelatoriosInner() {
             );
           })}
         </div>
+      )}
+        </>
       )}
     </>
   );

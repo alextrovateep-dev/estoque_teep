@@ -64,7 +64,7 @@ export function homeForUser(user: User): string {
     { href: "/lancamentos/novo", key: "lancamentos" },
     { href: "/pedidos", key: "pedidos" },
     { href: "/transferencias", key: "transferencias" },
-    { href: "/movimentacoes", key: "movimentacoes" },
+    { href: "/relatorios?aba=movimentacoes", key: "movimentacoes" },
     { href: "/aprovacoes", key: "aprovacoes" },
     { href: "/rma", key: "rma" },
     { href: "/estoque/init", key: "estoque_init" },

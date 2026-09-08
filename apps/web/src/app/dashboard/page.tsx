@@ -1,15 +1,17 @@
 "use client";
 
 import { AssistenteEstoque } from "@/components/AssistenteEstoque";
+import { ProdutoCadastroForm } from "@/components/ProdutoCadastroForm";
 import { api, apiDownload, getStoredUser, User } from "@/lib/api";
-import { userHas } from "@/lib/access";
+import { userCanEditCadastro, userHas } from "@/lib/access";
+import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import { useSerieFiltro } from "@/hooks/useSerieFiltro";
 import {
   localUnidadeSerie,
   UNIDADE_SERIE_STATUS_LABEL,
 } from "@/lib/serieLabels";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 /** Saudação por horário local (calendário do browser). */
 function saudacaoPorHora(date = new Date()): "Bom dia" | "Boa tarde" | "Boa noite" {
@@ -142,17 +144,48 @@ export default function DashboardPage() {
   const [seriesPorLinha, setSeriesPorLinha] = useState<
     Record<string, { loading: boolean; numeros: string[]; error?: string }>
   >({});
+  const [produtoEditId, setProdutoEditId] = useState<string | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+  const [msgSucesso, setMsgSucesso] = useState("");
 
   const isOpsManager =
     user?.perfil === "ADMIN" || user?.perfil === "GERENTE";
-  const canMovimentacoes = Boolean(user && userHas(user, "movimentacoes"));
+  const canMovimentacoes = Boolean(
+    user && (userHas(user, "movimentacoes") || userHas(user, "relatorios"))
+  );
+  const canEditProduct = Boolean(
+    user && (user.perfil === "ADMIN" || userCanEditCadastro(user, "produtos"))
+  );
+
+  useBodyScrollLock(Boolean(produtoEditId));
+
+  useEffect(() => {
+    if (!produtoEditId) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setProdutoEditId(null);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [produtoEditId]);
+
+  const handleProdutoSaved = useCallback(() => {
+    setProdutoEditId(null);
+    setRefreshTick((t) => t + 1);
+    setMsgSucesso("Produto atualizado com sucesso!");
+    setTimeout(() => setMsgSucesso(""), 4500);
+  }, []);
 
   useEffect(() => {
     setUser(getStoredUser());
+  }, []);
+
+  useEffect(() => {
     api<Categoria[]>("/categorias")
       .then((c) => setCategorias(c.filter((x) => x.ativo)))
       .catch(() => setCategorias([]));
-  }, []);
+  }, [refreshTick]);
 
   useEffect(() => {
     if (!serieAtiva) {
@@ -214,7 +247,7 @@ export default function DashboardPage() {
         if (!ac.signal.aborted) setLoading(false);
       });
     return () => ac.abort();
-  }, [user, filialId, isOpsManager]);
+  }, [user, filialId, isOpsManager, refreshTick]);
 
   const saldosFiltrados = useMemo(() => {
     if (!data) return [];
@@ -465,6 +498,18 @@ export default function DashboardPage() {
           {error}
         </p>
       )}
+      {msgSucesso && (
+        <div className="mt-2 flex items-center justify-between rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          <span>{msgSucesso}</span>
+          <button
+            type="button"
+            onClick={() => setMsgSucesso("")}
+            className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {loading && (
         <p className="mt-2 text-sm text-slate-500">Carregando indicadores…</p>
       )}
@@ -489,8 +534,8 @@ export default function DashboardPage() {
                 label="Movimentos (30 dias)"
                 value={String(data.kpis.movimentos30d ?? 0)}
                 href={
-                  userHas(user, "movimentacoes")
-                    ? "/movimentacoes"
+                  userHas(user, "movimentacoes") || userHas(user, "relatorios")
+                    ? "/relatorios?aba=movimentacoes"
                     : undefined
                 }
               />
@@ -519,8 +564,30 @@ export default function DashboardPage() {
                     className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-sm"
                   >
                     <div>
-                      <span className="font-mono text-xs">{a.codigo}</span>{" "}
-                      {a.descricao}
+                      {canEditProduct && a.produtoId ? (
+                        <button
+                          type="button"
+                          onClick={() => setProdutoEditId(a.produtoId)}
+                          className="font-mono text-xs font-semibold text-teal-800 hover:text-teal-950 hover:underline"
+                          title="Editar cadastro do produto"
+                        >
+                          {a.codigo}
+                        </button>
+                      ) : (
+                        <span className="font-mono text-xs">{a.codigo}</span>
+                      )}{" "}
+                      {canEditProduct && a.produtoId ? (
+                        <button
+                          type="button"
+                          onClick={() => setProdutoEditId(a.produtoId)}
+                          className="text-left font-medium text-slate-800 hover:text-teal-900 hover:underline"
+                          title="Editar cadastro do produto"
+                        >
+                          {a.descricao}
+                        </button>
+                      ) : (
+                        a.descricao
+                      )}
                       <span className="ml-2 text-slate-400">
                         {a.filialSigla}
                       </span>
@@ -747,7 +814,7 @@ export default function DashboardPage() {
                   </p>
                   {canMovimentacoes && (
                     <Link
-                      href={`/movimentacoes?serie=${encodeURIComponent(serieFiltro.trim())}`}
+                      href={`/relatorios?aba=movimentacoes&serie=${encodeURIComponent(serieFiltro.trim())}`}
                       className="text-xs text-brand underline"
                     >
                       Ver histórico em Movimentações
@@ -869,7 +936,31 @@ export default function DashboardPage() {
                         </td>
                         <td className="px-3 py-2">{s.filialSigla}</td>
                         <td className="px-3 py-2 font-mono text-xs">
-                          {s.codigo}
+                          {canEditProduct && s.produtoId ? (
+                            <button
+                              type="button"
+                              onClick={() => setProdutoEditId(s.produtoId!)}
+                              className="group inline-flex items-center gap-1 font-mono text-xs font-semibold text-teal-800 hover:text-teal-950 hover:underline"
+                              title="Editar cadastro do produto"
+                            >
+                              <span>{s.codigo}</span>
+                              <svg
+                                className="h-3 w-3 text-slate-400 group-hover:text-teal-800"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                                stroke="currentColor"
+                                strokeWidth={2}
+                              >
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                />
+                              </svg>
+                            </button>
+                          ) : (
+                            s.codigo
+                          )}
                           {s.controlaSerie ? (
                             <span className="ml-1 rounded bg-teal-50 px-1 text-[10px] uppercase text-teal-800">
                               Série
@@ -877,7 +968,18 @@ export default function DashboardPage() {
                           ) : null}
                         </td>
                         <td className="px-3 py-2">
-                          {s.descricao}
+                          {canEditProduct && s.produtoId ? (
+                            <button
+                              type="button"
+                              onClick={() => setProdutoEditId(s.produtoId!)}
+                              className="text-left font-medium text-slate-800 hover:text-teal-900 hover:underline"
+                              title="Editar cadastro do produto"
+                            >
+                              {s.descricao}
+                            </button>
+                          ) : (
+                            s.descricao
+                          )}
                           {!s.produtoAtivo && (
                             <span className="ml-1 text-xs text-slate-400">
                               (inativo)
@@ -1015,6 +1117,63 @@ export default function DashboardPage() {
             </p>
           </section>
         </>
+      )}
+
+      {produtoEditId && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/50 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-editar-produto-titulo"
+          onClick={() => setProdutoEditId(null)}
+        >
+          <div
+            className="flex max-h-[100vh] w-full max-w-4xl flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl sm:max-h-[90vh] sm:rounded-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50 px-5 py-3.5">
+              <div>
+                <h2
+                  id="modal-editar-produto-titulo"
+                  className="text-base font-semibold text-slate-900"
+                >
+                  Editar cadastro do produto
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Ajuste descrição, preço, categoria e parâmetros do produto sem sair do Dashboard.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProdutoEditId(null)}
+                className="rounded-lg border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                aria-label="Fechar"
+              >
+                <svg
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
+                </svg>
+              </button>
+            </div>
+            <div className="overflow-y-auto p-4 sm:p-6">
+              <ProdutoCadastroForm
+                produtoId={produtoEditId}
+                inModal
+                onSaved={handleProdutoSaved}
+                onCancel={() => setProdutoEditId(null)}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

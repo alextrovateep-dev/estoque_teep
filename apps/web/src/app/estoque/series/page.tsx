@@ -21,8 +21,9 @@ function SeriesRedirectInner() {
       router.replace(`/dashboard${qs ? `?${qs}` : ""}`);
       return;
     }
-    if (user && userHas(user, "movimentacoes")) {
-      router.replace(`/movimentacoes${qs ? `?${qs}` : ""}`);
+    if (user && (userHas(user, "movimentacoes") || userHas(user, "relatorios"))) {
+      const extra = qs ? `&${qs}` : "";
+      router.replace(`/relatorios?aba=movimentacoes${extra}`);
       return;
     }
     router.replace("/");

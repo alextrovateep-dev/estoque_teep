@@ -107,8 +107,11 @@ export default function MovimentacaoDetalhePage() {
   return (
     <div>
       <div className="mb-2">
-        <Link href="/movimentacoes" className="text-sm text-brand underline">
-          ← Voltar
+        <Link
+          href="/relatorios?aba=movimentacoes"
+          className="text-sm text-brand underline"
+        >
+          ← Voltar aos relatórios
         </Link>
       </div>
       <div className="mb-4 flex flex-wrap items-center gap-2">

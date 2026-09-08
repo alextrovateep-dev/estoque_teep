@@ -69,16 +69,21 @@ function routeAllowed(pathname: string, user: User): boolean {
     );
   }
 
+  if (pathname.startsWith("/relatorios")) {
+    return userHas(user, "relatorios") || userHas(user, "movimentacoes");
+  }
+  if (pathname.startsWith("/movimentacoes")) {
+    return userHas(user, "movimentacoes") || userHas(user, "relatorios");
+  }
+
   const checks: Array<[string, PermissaoKey]> = [
     ["/estoque/init", "estoque_init"],
     ["/aprovacoes", "aprovacoes"],
     ["/rma", "rma"],
-    ["/relatorios", "relatorios"],
     ["/dashboard", "dashboard"],
     ["/lancamentos", "lancamentos"],
     ["/pedidos", "pedidos"],
     ["/transferencias", "transferencias"],
-    ["/movimentacoes", "movimentacoes"],
   ];
   for (const [prefix, key] of checks) {
     if (pathname.startsWith(prefix)) {
@@ -229,14 +234,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         label: "Relatórios",
         section: "ops",
         group: "visao",
-        perm: "relatorios",
-      },
-      {
-        href: "/movimentacoes",
-        label: "Movimentações",
-        section: "ops",
-        group: "visao",
-        perm: "movimentacoes",
+        perm: ["relatorios", "movimentacoes"],
       },
       // Operações — ações do dia (inclui fila de aprovação)
       {
