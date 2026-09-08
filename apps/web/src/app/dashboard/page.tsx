@@ -648,7 +648,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="sticky top-0 z-30 mt-4 grid gap-3 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur-sm sm:grid-cols-2 lg:grid-cols-12">
+            <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-12">
               <div className="relative sm:col-span-2 lg:col-span-4">
                 <span className="mb-1 block text-xs font-medium text-slate-500">
                   Produto
