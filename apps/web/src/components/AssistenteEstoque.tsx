@@ -300,7 +300,7 @@ export function AssistenteEstoque({
                 <TeepLogo variant="icon" height={18} className="object-contain" />
               </span>
             </span>
-            TeepAI
+            IA
           </h2>
         </div>
         {turns.length > 0 && (
