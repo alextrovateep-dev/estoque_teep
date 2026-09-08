@@ -283,6 +283,8 @@ export async function obterDashboard(
     gruposOperacao,
     transfEnviadas30d,
     filiais,
+    totalSkus,
+    skusAtivos,
   ] = await Promise.all([
     agregarKpisEstoque(filialId),
     listarAlertas(filialId, ALERTAS_LIMITE),
@@ -359,6 +361,8 @@ export async function obterDashboard(
           select: { id: true, nome: true, sigla: true, ativo: true },
           orderBy: { nome: "asc" },
         }),
+    prisma.produto.count(),
+    prisma.produto.count({ where: { ativo: true } }),
   ]);
 
   const saldos = estoques.map((e) => {
@@ -413,6 +417,8 @@ export async function obterDashboard(
     kpis: {
       posicoesComSaldo: kpisEstoque.posicoesComSaldo,
       skusComSaldo: kpisEstoque.skusComSaldo,
+      totalSkus,
+      skusAtivos,
       quantidadeTotal: kpisEstoque.quantidadeTotal,
       valorTotal: kpisEstoque.valorTotal,
       alertasMinimo: kpisEstoque.alertasMinimo,

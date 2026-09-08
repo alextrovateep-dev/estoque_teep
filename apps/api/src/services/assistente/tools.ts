@@ -3151,6 +3151,8 @@ async function getInventoryBalance(
   const kpis: Record<string, number | null> = {
     posicoesComSaldo: dash.kpis.posicoesComSaldo,
     skusComSaldo: dash.kpis.skusComSaldo,
+    totalSkus: dash.kpis.totalSkus,
+    skusAtivos: dash.kpis.skusAtivos,
     alertasMinimo: dash.kpis.alertasMinimo,
     alertasMaximo: dash.kpis.alertasMaximo,
     pendentes: dash.kpis.pendentes,

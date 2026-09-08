@@ -3,7 +3,7 @@
 import { AssistenteEstoque } from "@/components/AssistenteEstoque";
 import { ProdutoCadastroForm } from "@/components/ProdutoCadastroForm";
 import { api, apiDownload, getStoredUser, User } from "@/lib/api";
-import { userCanEditCadastro, userHas } from "@/lib/access";
+import { userCanEditCadastro, userCanOpenCadastro, userHas } from "@/lib/access";
 import { useBodyScrollLock } from "@/hooks/useBodyScrollLock";
 import { useSerieFiltro } from "@/hooks/useSerieFiltro";
 import {
@@ -45,6 +45,8 @@ type Dashboard = {
   kpis: {
     posicoesComSaldo: number;
     skusComSaldo: number;
+    totalSkus?: number;
+    skusAtivos?: number;
     quantidadeTotal: number | null;
     valorTotal: number | null;
     alertasMinimo: number;
@@ -516,7 +518,16 @@ export default function DashboardPage() {
 
       {data && !loading && (
         <>
-          <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            <Kpi
+              label="SKUs cadastrados"
+              value={qty(data.kpis.totalSkus ?? 0)}
+              href={
+                user && userCanOpenCadastro(user, "produtos")
+                  ? "/cadastros/produtos"
+                  : undefined
+              }
+            />
             {user && userHas(user, "dashboard_kpi_quantidade") && (
               <Kpi
                 label="Qtd. total em estoque"
@@ -877,11 +888,11 @@ export default function DashboardPage() {
               </p>
             )}
 
-            <div className="mt-3 overflow-x-auto rounded-xl border bg-white">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-left">
+            <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <table className="w-full min-w-[56rem] border-collapse text-left text-sm">
+                <thead className="border-b border-slate-200 bg-slate-50/90 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                   <tr>
-                    <th className="w-10 px-3 py-2">
+                    <th className="w-10 px-3.5 py-3 text-center">
                       <input
                         type="checkbox"
                         checked={todosVisiveisSelecionados}
@@ -889,22 +900,23 @@ export default function DashboardPage() {
                         disabled={saldosFiltrados.length === 0}
                         aria-label="Selecionar todos visíveis"
                         title="Selecionar todos visíveis"
+                        className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                       />
                     </th>
-                    <th className="px-3 py-2">Estoque</th>
-                    <th className="px-3 py-2">Código</th>
-                    <th className="px-3 py-2">Descrição</th>
-                    <th className="px-3 py-2">Categoria</th>
-                    <th className="px-3 py-2 text-right">Saldo</th>
-                    <th className="px-3 py-2">Séries</th>
-                    <th className="px-3 py-2 text-right">Mín.</th>
-                    <th className="px-3 py-2 text-right">Máx.</th>
+                    <th className="whitespace-nowrap px-3.5 py-3">Estoque</th>
+                    <th className="whitespace-nowrap px-3.5 py-3">Código</th>
+                    <th className="min-w-[16rem] px-3.5 py-3">Descrição</th>
+                    <th className="whitespace-nowrap px-3.5 py-3">Categoria</th>
+                    <th className="whitespace-nowrap px-3.5 py-3 text-right">Saldo</th>
+                    <th className="whitespace-nowrap px-3.5 py-3 text-center">Séries</th>
+                    <th className="whitespace-nowrap px-3.5 py-3 text-right">Mín.</th>
+                    <th className="whitespace-nowrap px-3.5 py-3 text-right">Máx.</th>
                     {user && userHas(user, "dashboard_kpi_valor") && (
-                      <th className="px-3 py-2 text-right">Valor</th>
+                      <th className="whitespace-nowrap px-3.5 py-3 text-right">Valor</th>
                     )}
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100">
                   {saldosFiltrados.map((s) => {
                     const marcada = selecionados.has(s.id);
                     const aberto = expandSeriesId === s.id;
@@ -918,56 +930,61 @@ export default function DashboardPage() {
                     return (
                       <tr
                         key={s.id}
-                        className={
+                        className={`transition-colors ${
                           s.abaixoMinimo || s.acimaMaximo
-                            ? "border-t bg-amber-50/60 align-top"
+                            ? "bg-amber-50/60"
                             : marcada
-                              ? "border-t bg-brand/[0.06] align-top"
-                              : "border-t align-top"
-                        }
+                              ? "bg-brand/[0.06]"
+                              : "hover:bg-slate-50/70"
+                        } ${aberto ? "align-top" : "align-middle"}`}
                       >
-                        <td className="px-3 py-2">
+                        <td className="w-10 px-3.5 py-2.5 text-center">
                           <input
                             type="checkbox"
                             checked={marcada}
                             onChange={() => toggleLinha(s.id)}
                             aria-label={`Selecionar ${s.codigo}`}
+                            className="rounded border-slate-300 text-teal-600 focus:ring-teal-500"
                           />
                         </td>
-                        <td className="px-3 py-2">{s.filialSigla}</td>
-                        <td className="px-3 py-2 font-mono text-xs">
-                          {canEditProduct && s.produtoId ? (
-                            <button
-                              type="button"
-                              onClick={() => setProdutoEditId(s.produtoId!)}
-                              className="group inline-flex items-center gap-1 font-mono text-xs font-semibold text-teal-800 hover:text-teal-950 hover:underline"
-                              title="Editar cadastro do produto"
-                            >
-                              <span>{s.codigo}</span>
-                              <svg
-                                className="h-3 w-3 text-slate-400 group-hover:text-teal-800"
-                                fill="none"
-                                viewBox="0 0 24 24"
-                                stroke="currentColor"
-                                strokeWidth={2}
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
-                                />
-                              </svg>
-                            </button>
-                          ) : (
-                            s.codigo
-                          )}
-                          {s.controlaSerie ? (
-                            <span className="ml-1 rounded bg-teal-50 px-1 text-[10px] uppercase text-teal-800">
-                              Série
-                            </span>
-                          ) : null}
+                        <td className="whitespace-nowrap px-3.5 py-2.5 text-xs font-medium text-slate-700">
+                          {s.filialSigla}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="whitespace-nowrap px-3.5 py-2.5 font-mono text-xs">
+                          <div className="flex items-center gap-1.5 whitespace-nowrap">
+                            {canEditProduct && s.produtoId ? (
+                              <button
+                                type="button"
+                                onClick={() => setProdutoEditId(s.produtoId!)}
+                                className="group inline-flex items-center gap-1.5 whitespace-nowrap font-mono text-xs font-semibold text-teal-800 hover:text-teal-950 hover:underline"
+                                title="Editar cadastro do produto"
+                              >
+                                <span>{s.codigo}</span>
+                                <svg
+                                  className="h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-teal-800"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke="currentColor"
+                                  strokeWidth={2}
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+                                  />
+                                </svg>
+                              </button>
+                            ) : (
+                              <span className="font-semibold text-slate-800">{s.codigo}</span>
+                            )}
+                            {s.controlaSerie ? (
+                              <span className="rounded border border-teal-200/60 bg-teal-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-teal-800">
+                                Série
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="min-w-[16rem] px-3.5 py-2.5 text-sm">
                           {canEditProduct && s.produtoId ? (
                             <button
                               type="button"
@@ -978,18 +995,18 @@ export default function DashboardPage() {
                               {s.descricao}
                             </button>
                           ) : (
-                            s.descricao
+                            <span className="font-medium text-slate-800">{s.descricao}</span>
                           )}
                           {!s.produtoAtivo && (
-                            <span className="ml-1 text-xs text-slate-400">
+                            <span className="ml-1.5 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
                               (inativo)
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-slate-600">
+                        <td className="whitespace-nowrap px-3.5 py-2.5 text-sm text-slate-600">
                           {s.categoriaNome || "—"}
                         </td>
-                        <td className="px-3 py-2 text-right font-medium">
+                        <td className="whitespace-nowrap px-3.5 py-2.5 text-right font-medium">
                           {qty(s.saldoAtual)}
                           {s.controlaSerie ? (
                             <div className="text-[11px] font-normal text-slate-500">
@@ -997,14 +1014,14 @@ export default function DashboardPage() {
                             </div>
                           ) : null}
                         </td>
-                        <td className="px-3 py-2 min-w-[12rem]">
+                        <td className={`px-3.5 py-2.5 ${aberto ? "min-w-[14rem]" : "whitespace-nowrap text-center"}`}>
                           {!s.controlaSerie ? (
-                            <span className="text-slate-400">—</span>
+                            <span className="text-slate-300">—</span>
                           ) : (
-                            <div className="space-y-1">
+                            <div className="space-y-1 text-left">
                               <button
                                 type="button"
-                                className="text-left text-sm text-teal-800 underline"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-teal-800 hover:text-teal-950 underline"
                                 onClick={() => void toggleSeriesLinha(s)}
                               >
                                 {aberto
@@ -1012,7 +1029,7 @@ export default function DashboardPage() {
                                   : `Ver ${qtdSeriesLabel} série(s)`}
                               </button>
                               {aberto ? (
-                                <div className="rounded-lg border border-teal-100 bg-teal-50/50 p-2">
+                                <div className="mt-1.5 rounded-lg border border-teal-100 bg-teal-50/50 p-2.5 text-left">
                                   {serieState?.loading ? (
                                     <p className="text-xs text-slate-500">
                                       Carregando…
@@ -1053,14 +1070,14 @@ export default function DashboardPage() {
                             </div>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-right text-slate-500">
-                          {s.estoqueMinimo || "—"}
+                        <td className="whitespace-nowrap px-3.5 py-2.5 text-right text-slate-500">
+                          {s.estoqueMinimo || <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="px-3 py-2 text-right text-slate-500">
-                          {s.estoqueMaximo || "—"}
+                        <td className="whitespace-nowrap px-3.5 py-2.5 text-right text-slate-500">
+                          {s.estoqueMaximo || <span className="text-slate-300">—</span>}
                         </td>
                         {user && userHas(user, "dashboard_kpi_valor") && (
-                          <td className="px-3 py-2 text-right">
+                          <td className="whitespace-nowrap px-3.5 py-2.5 text-right font-medium">
                             {money(s.valor ?? 0)}
                           </td>
                         )}
@@ -1073,7 +1090,7 @@ export default function DashboardPage() {
                         colSpan={
                           user && userHas(user, "dashboard_kpi_valor") ? 10 : 9
                         }
-                        className="px-3 py-8 text-center text-slate-500"
+                        className="px-3.5 py-8 text-center text-slate-500"
                       >
                         {serieAtiva && serieLoading
                           ? "Buscando série…"
