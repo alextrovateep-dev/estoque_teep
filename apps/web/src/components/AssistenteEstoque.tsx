@@ -291,11 +291,17 @@ export function AssistenteEstoque({
               className="relative inline-flex h-9 w-9 shrink-0 items-center justify-center"
               aria-hidden
             >
-              {/* Círculo + pontinho verde orbitando o logo */}
-              <span className="pointer-events-none absolute inset-0 rounded-full ring-1 ring-emerald-400/40" />
-              <span className="pointer-events-none absolute inset-0 animate-teep-orbit">
-                <span className="absolute left-1/2 top-0 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500 shadow-[0_0_8px_2px_rgba(16,185,129,0.65)]" />
-              </span>
+              {/* Círculo; pontinho verde orbitando só enquanto a IA processa */}
+              <span
+                className={`pointer-events-none absolute inset-0 rounded-full ring-1 ${
+                  busy ? "ring-emerald-400/40" : "ring-brand/20"
+                }`}
+              />
+              {busy ? (
+                <span className="pointer-events-none absolute inset-0 animate-teep-orbit">
+                  <span className="absolute left-1/2 top-0 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-500 shadow-[0_0_8px_2px_rgba(16,185,129,0.65)]" />
+                </span>
+              ) : null}
               <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-brand/20">
                 <TeepLogo variant="icon" height={18} className="object-contain" />
               </span>
