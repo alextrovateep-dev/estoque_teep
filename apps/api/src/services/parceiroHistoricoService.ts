@@ -86,9 +86,10 @@ export function bucketHistoricoParceiro(
 
 /** Movimentos válidos para o histórico parceiro↔produto. */
 export function whereHistoricoParceiro(
-  extra: Prisma.MovimentacaoWhereInput = {}
+  extra: Prisma.MovimentacaoWhereInput = {},
+  opts?: { filialIds?: string[] | null }
 ): Prisma.MovimentacaoWhereInput {
-  return {
+  const base: Prisma.MovimentacaoWhereInput = {
     status: STATUS_OK,
     estornoDeId: null,
     operacao: { in: [...OPS] },
@@ -108,14 +109,28 @@ export function whereHistoricoParceiro(
     },
     ...extra,
   };
+  const filialIds = (opts?.filialIds || []).filter(Boolean);
+  if (filialIds.length === 0) return base;
+  return {
+    AND: [
+      base,
+      {
+        OR: [
+          { filialId: { in: filialIds } },
+          { filialDestinoId: { in: filialIds } },
+        ],
+      },
+    ],
+  };
 }
 
 /** Produtos já comprados (ENTRADA) e já vendidos (SAIDA) para um cadastro. */
 export async function relacionamentosDoCliente(
-  clienteId: string
+  clienteId: string,
+  opts?: { filialIds?: string[] | null }
 ): Promise<ClienteRelacionamentos> {
   const rows = await prisma.movimentacao.findMany({
-    where: whereHistoricoParceiro({ clienteId }),
+    where: whereHistoricoParceiro({ clienteId }, opts),
     select: {
       operacao: true,
       quantidade: true,
@@ -155,10 +170,11 @@ export async function relacionamentosDoCliente(
 
 /** Fornecedores (compra) e clientes (venda/entrega) de um produto. */
 export async function relacionamentosDoProduto(
-  produtoId: string
+  produtoId: string,
+  opts?: { filialIds?: string[] | null }
 ): Promise<ProdutoRelacionamentos> {
   const rows = await prisma.movimentacao.findMany({
-    where: whereHistoricoParceiro({ produtoId }),
+    where: whereHistoricoParceiro({ produtoId }, opts),
     select: {
       operacao: true,
       quantidade: true,

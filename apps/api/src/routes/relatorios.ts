@@ -79,11 +79,16 @@ function parseArvoreQuery(req: AuthedRequest) {
     const v = String(rawExplodir).toLowerCase();
     explodir = v === "1" || v === "true" || v === "sim";
   }
+  const produtoPaiIds = String(req.query.produtoPaiIds || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   return {
     q: req.query.q ? String(req.query.q) : undefined,
     produtoPaiId: req.query.produtoPaiId
       ? String(req.query.produtoPaiId)
       : undefined,
+    produtoPaiIds: produtoPaiIds.length > 0 ? produtoPaiIds : undefined,
     explodir,
   };
 }

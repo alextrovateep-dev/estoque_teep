@@ -44,6 +44,8 @@ export type ArvoreExportRow = {
 export type ArvoreExportOpts = {
   q?: string | null;
   produtoPaiId?: string | null;
+  /** Vários pais (exportação seletiva). Tem prioridade sobre produtoPaiId/q. */
+  produtoPaiIds?: string[] | null;
   /**
    * Inclui subárvores (ex.: KIT dentro do acabado).
    * Default: true quando há produtoPaiId (relatório de um item).
@@ -135,25 +137,67 @@ export async function carregarArvoreExport(
   if (opts.produtoPaiId && !UUID_RE.test(opts.produtoPaiId)) {
     throw new AppError(400, "produtoPaiId inválido");
   }
+  const idsSelecionados = [
+    ...new Set(
+      (opts.produtoPaiIds || [])
+        .map((id) => String(id || "").trim())
+        .filter((id) => UUID_RE.test(id))
+    ),
+  ];
+  if ((opts.produtoPaiIds || []).length > 0 && idsSelecionados.length === 0) {
+    throw new AppError(400, "produtoPaiIds inválido");
+  }
+  if (opts.produtoPaiId && idsSelecionados.length === 0) {
+    idsSelecionados.push(opts.produtoPaiId);
+  }
+
   const q = (opts.q || "").trim();
   const explodir =
     opts.explodir !== undefined
       ? opts.explodir
-      : Boolean(opts.produtoPaiId);
+      : idsSelecionados.length > 0;
 
-  const where = {
-    ativo: true,
-    componentesComoPai: { some: {} },
-    ...(opts.produtoPaiId ? { id: opts.produtoPaiId } : {}),
-    ...(q && !opts.produtoPaiId
+  const where =
+    idsSelecionados.length > 0
       ? {
-          OR: [
-            { codigo: { contains: q, mode: "insensitive" as const } },
-            { descricao: { contains: q, mode: "insensitive" as const } },
-          ],
+          id: { in: idsSelecionados },
+          ativo: true,
+          componentesComoPai: { some: {} },
         }
-      : {}),
-  };
+      : {
+          ativo: true,
+          componentesComoPai: { some: {} },
+          ...(q
+            ? {
+                OR: [
+                  { codigo: { contains: q, mode: "insensitive" as const } },
+                  { descricao: { contains: q, mode: "insensitive" as const } },
+                  {
+                    componentesComoPai: {
+                      some: {
+                        produtoFilho: {
+                          OR: [
+                            {
+                              codigo: {
+                                contains: q,
+                                mode: "insensitive" as const,
+                              },
+                            },
+                            {
+                              descricao: {
+                                contains: q,
+                                mode: "insensitive" as const,
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
+                  },
+                ],
+              }
+            : {}),
+        };
 
   const [totalPais, paisRaiz] = await Promise.all([
     prisma.produto.count({ where }),
@@ -200,7 +244,10 @@ export async function carregarArvoreExport(
       geradoEm: stampSaoPaulo(),
       usuario: user.nome,
       perfil: user.perfil,
-      busca: opts.produtoPaiId ? null : q || null,
+      busca:
+        idsSelecionados.length > 0
+          ? null
+          : q || null,
       linhasPai: rows.length,
       linhasComponente,
       truncado: totalPais > LIMITE_PAIS || (explodir && queue.length > 0),

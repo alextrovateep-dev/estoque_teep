@@ -39,9 +39,17 @@ import {
   janelaHojeSaoPaulo,
   janelaMesSaoPaulo,
 } from "./systemPrompt";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+import {
+  assertFilialAtiva,
+  findProdutoByCodigoOuNome,
+  operadorEscopoFilialIds,
+  resolveFilialId,
+} from "./assistenteScope";
+import {
+  exportarMovimentacoesExcel,
+  exportarMovimentacoesPdf,
+} from "../movimentacoesExportService";
+import { operadorFilialIds } from "../../lib/filialScope";
 
 export type ToolContext = {
   user: AuthUser;
@@ -66,40 +74,6 @@ function papelParceiroNaMovimentacao(opts: {
   if (opts.operacao === "ENTRADA") return "fornecedor";
   if (opts.operacao === "SAIDA") return "cliente";
   return null;
-}
-
-function resolveFilialId(
-  user: AuthUser,
-  requested?: string | null,
-  hint?: string | null
-): string | null {
-  if (user.perfil === "OPERADOR") {
-    const ids =
-      user.filialIds?.length > 0
-        ? user.filialIds
-        : user.filialId
-          ? [user.filialId]
-          : [];
-    if (ids.length === 0) return null;
-    const pick = requested || hint;
-    if (pick && ids.includes(pick)) return pick;
-    return user.filialId && ids.includes(user.filialId)
-      ? user.filialId
-      : ids[0]!;
-  }
-  const id = requested || hint || null;
-  if (id && !UUID_RE.test(id)) {
-    throw new AppError(400, "filialId inválido");
-  }
-  return id;
-}
-
-async function assertFilialAtiva(filialId: string): Promise<void> {
-  const f = await prisma.filial.findFirst({
-    where: { id: filialId, ativo: true },
-    select: { id: true },
-  });
-  if (!f) throw new AppError(404, "Filial não encontrada");
 }
 
 const searchProductsArgs = z.object({
@@ -304,6 +278,16 @@ const exportArvoreReportArgs = z.object({
   estendido: z.boolean().optional().nullable(),
 });
 
+const exportMovimentacoesReportArgs = z.object({
+  format: z.enum(["pdf", "xlsx"]),
+  filialId: z.string().uuid().optional().nullable(),
+  status: z.string().min(1).max(40).optional().nullable(),
+  operacao: z.enum(["ENTRADA", "SAIDA", "TRANSFERENCIA"]).optional().nullable(),
+  dataInicio: z.string().min(8).max(40).optional().nullable(),
+  dataFim: z.string().min(8).max(40).optional().nullable(),
+  numeroSerie: z.string().min(2).max(80).optional().nullable(),
+});
+
 const prepareTransferArgs = z.object({
   origem: z.string().min(1).max(80),
   destino: z.string().min(1).max(80),
@@ -386,7 +370,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_product_tree",
     description:
-      "Detalha a árvore (BOM) de UM produto pai: componentes, quantidade, fantasma e preços. Use para 'componentes do SKU X', 'árvore do produto Y'. estendido=true (padrão) inclui subárvores (ex. KIT dentro do acabado). estendido=false = só 1 nível. Se não tiver árvore, retorna temArvore=false.",
+      "Detalha a árvore (BOM) de UM produto pai: componentes, quantidade, fantasma e preços. Use para 'componentes do SKU X', 'árvore do produto Y'. estendido=true (padrão) inclui subárvores (ex. KIT dentro do acabado). estendido=false = só 1 nível. Se não tiver árvore, retorna temArvore=false. Na resposta ao usuário: preferir tabela Markdown (Nível|Código|Componente|Qtd|Preço), não lista aninhada.",
     parameters: {
       type: "object",
       properties: {
@@ -406,7 +390,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "search_products",
     description:
-      "Busca produtos ativos por código ou descrição (inclui preço de tabela). Use quando o usuário citar um SKU ou nome parcial.",
+      "Busca produtos ativos por código ou descrição. Use quando o usuário citar um SKU ou nome parcial.",
     parameters: {
       type: "object",
       properties: {
@@ -685,6 +669,24 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "export_movimentacoes_report",
+    description:
+      "Gera relatório PDF/Excel do histórico de MOVIMENTAÇÕES (aba Relatórios → Movimentações). Use para 'exportar movimentações', 'relatório de movimentos'. Exige permissão movimentacoes ou relatorios. Só leitura.",
+    parameters: {
+      type: "object",
+      properties: {
+        format: { type: "string", enum: ["pdf", "xlsx"] },
+        filialId: { type: "string" },
+        status: { type: "string", description: "PENDENTE|CONCLUIDO|CANCELADO|ESTORNADO" },
+        operacao: { type: "string", enum: ["ENTRADA", "SAIDA", "TRANSFERENCIA"] },
+        dataInicio: { type: "string", description: "YYYY-MM-DD" },
+        dataFim: { type: "string", description: "YYYY-MM-DD" },
+        numeroSerie: { type: "string" },
+      },
+      required: ["format"],
+    },
+  },
+  {
     name: "prepare_transfer",
     description:
       "Só para CRIAR intenção de transferência (usuário quer transferir agora). NÃO use para consultar/listar histórico (‘quais transferências?’, ‘teve transferência no período?’) — use list_transfers. quantidade = número EXATO pedido pelo usuário (se pediu 20, passe 20 — nunca o saldo). Prepara atalho Novo Lançamento. NÃO diga Transferências para criar. Retorna actionLink + saldo. Usuário ainda confirma.",
@@ -851,6 +853,12 @@ export function toolsForUser(
 ): (typeof TOOL_DEFINITIONS)[number][] {
   const perms = resolvePermissoes(perfil, permissoes ?? null);
   return TOOL_DEFINITIONS.filter((t) => {
+    if (t.name === "export_movimentacoes_report") {
+      return (
+        hasPermissao(perfil, perms, "movimentacoes") ||
+        hasPermissao(perfil, perms, "relatorios")
+      );
+    }
     const need = TOOL_REQUIRED_PERM[t.name as ToolName];
     if (!need) return true;
     return hasPermissao(perfil, perms, need);
@@ -867,6 +875,40 @@ export async function executeTool(
   rawArgs: unknown,
   ctx: ToolContext
 ): Promise<unknown> {
+  const perms = resolvePermissoes(ctx.user.perfil, ctx.permissoes ?? null);
+  if (name === "export_movimentacoes_report") {
+    if (
+      !hasPermissao(ctx.user.perfil, perms, "movimentacoes") &&
+      !hasPermissao(ctx.user.perfil, perms, "relatorios")
+    ) {
+      return {
+        ok: false,
+        error:
+          "Usuário sem permissão de Movimentações/Relatórios para exportar.",
+      };
+    }
+  } else {
+    const need = TOOL_REQUIRED_PERM[name as ToolName];
+    if (need && !hasPermissao(ctx.user.perfil, perms, need)) {
+      const label =
+        need === "lancamentos"
+          ? "Novo Lançamento"
+          : need === "rma"
+            ? "RMA"
+            : need === "transferencias"
+              ? "Transferências"
+              : need === "relatorios"
+                ? "Relatórios"
+                : need === "dashboard_kpi_valor"
+                  ? "valor de estoque (dashboard_kpi_valor)"
+                  : need;
+      return {
+        ok: false,
+        error: `Usuário sem permissão de ${label}.`,
+      };
+    }
+  }
+
   switch (name) {
     case "list_stock_by_value":
       return listStockByValue(stockValueArgs.parse(rawArgs), ctx);
@@ -889,9 +931,9 @@ export async function executeTool(
     case "get_inventory_balance":
       return getInventoryBalance(balanceArgs.parse(rawArgs), ctx);
     case "get_partner_products":
-      return getPartnerProducts(partnerProductsArgs.parse(rawArgs));
+      return getPartnerProducts(partnerProductsArgs.parse(rawArgs), ctx);
     case "get_product_partners":
-      return getProductPartners(productPartnersArgs.parse(rawArgs));
+      return getProductPartners(productPartnersArgs.parse(rawArgs), ctx);
     case "export_product_report":
       return exportProductReport(exportProductReportArgs.parse(rawArgs), ctx);
     case "export_produtos_report":
@@ -900,6 +942,8 @@ export async function executeTool(
       return exportSaldosReport(exportSaldosReportArgs.parse(rawArgs), ctx);
     case "export_arvore_report":
       return exportArvoreReport(exportArvoreReportArgs.parse(rawArgs), ctx);
+    case "export_movimentacoes_report":
+      return exportMovimentacoesReport(exportMovimentacoesReportArgs.parse(rawArgs), ctx);
     case "prepare_transfer":
       return prepareTransfer(prepareTransferArgs.parse(rawArgs), ctx);
     case "list_transfers":
@@ -968,12 +1012,7 @@ async function prepareTransfer(
   }
 
   if (ctx.user.perfil === "OPERADOR") {
-    const ids =
-      ctx.user.filialIds?.length > 0
-        ? ctx.user.filialIds
-        : ctx.user.filialId
-          ? [ctx.user.filialId]
-          : [];
+    const ids = operadorFilialIds(ctx.user);
     if (!ids.includes(origem.id)) {
       return {
         ok: false,
@@ -1449,7 +1488,7 @@ async function exportProductReport(
         incluirValor,
       }
     );
-    const downloadToken = putAssistenteExport({
+    const downloadToken = await putAssistenteExport({
       userId: ctx.user.id,
       buffer,
       filename,
@@ -1510,7 +1549,7 @@ async function exportProdutosReport(
       ativo: args.ativo === undefined || args.ativo === null ? true : args.ativo,
     });
     const label = `Relatório de produtos (${args.format.toUpperCase()})`;
-    const downloadToken = putAssistenteExport({
+    const downloadToken = await putAssistenteExport({
       userId: ctx.user.id,
       buffer,
       filename,
@@ -1566,7 +1605,7 @@ async function exportSaldosReport(
       incluirValor: ctxPodeKpiValor(ctx),
     });
     const label = `Relatório de estoque/saldos (${args.format.toUpperCase()})`;
-    const downloadToken = putAssistenteExport({
+    const downloadToken = await putAssistenteExport({
       userId: ctx.user.id,
       buffer,
       filename,
@@ -1642,7 +1681,7 @@ async function exportArvoreReport(
     const label = explodir
       ? `Relatório de árvore de produto multinível (${args.format.toUpperCase()})`
       : `Relatório de árvore de produto (${args.format.toUpperCase()})`;
-    const downloadToken = putAssistenteExport({
+    const downloadToken = await putAssistenteExport({
       userId: ctx.user.id,
       buffer,
       filename,
@@ -1679,6 +1718,53 @@ async function exportArvoreReport(
   }
 }
 
+async function exportMovimentacoesReport(
+  args: z.infer<typeof exportMovimentacoesReportArgs>,
+  ctx: ToolContext
+) {
+  try {
+    const fn =
+      args.format === "pdf"
+        ? exportarMovimentacoesPdf
+        : exportarMovimentacoesExcel;
+    const { buffer, filename } = await fn(ctx.user, {
+      filialId: args.filialId || undefined,
+      status: args.status || undefined,
+      operacao: args.operacao || undefined,
+      dataInicio: args.dataInicio || undefined,
+      dataFim: args.dataFim || undefined,
+      numeroSerie: args.numeroSerie || undefined,
+    });
+    const label = `Relatório de movimentações (${args.format.toUpperCase()})`;
+    const downloadToken = await putAssistenteExport({
+      userId: ctx.user.id,
+      buffer,
+      filename,
+      format: args.format,
+      label,
+    });
+    return {
+      ok: true,
+      format: args.format,
+      filename,
+      downloadToken,
+      label,
+      actionLink: {
+        href: "/relatorios?aba=movimentacoes",
+        label: "Abrir Movimentações",
+      },
+      mensagem:
+        "Arquivo gerado. O botão de download aparece abaixo da resposta.",
+    };
+  } catch (e) {
+    if (e instanceof AppError) return { ok: false, error: e.message };
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Falha ao gerar relatório",
+    };
+  }
+}
+
 async function listStockByValue(
   args: z.infer<typeof stockValueArgs>,
   ctx: ToolContext
@@ -1695,7 +1781,11 @@ async function listStockByValue(
 
   const rows = await prisma.estoque.findMany({
     where: {
-      ...(filialId ? { filialId } : {}),
+      ...(filialId
+        ? { filialId }
+        : ctx.user.perfil === "OPERADOR"
+          ? { filialId: { in: operadorFilialIds(ctx.user) } }
+          : { filial: { ativo: true } }),
       saldoAtual: { gt: 0 },
       produto: { ativo: true },
     },
@@ -1783,7 +1873,6 @@ async function listStockByValue(
         /** Papel nesta movimentação: compra→fornecedor, venda→cliente. */
         papelParceiro: "fornecedor" | "cliente" | null;
         usuarioNome: string;
-        usuarioEmail: string;
       } | null;
     }
   > = top;
@@ -1814,7 +1903,7 @@ async function listStockByValue(
             filial: { select: { sigla: true } },
             filialDestino: { select: { sigla: true } },
             cliente: { select: { nome: true, tipo: true } },
-            usuario: { select: { nome: true, email: true } },
+            usuario: { select: { nome: true } },
           },
         });
         return {
@@ -1837,7 +1926,6 @@ async function listStockByValue(
                   temDestinoEstoque: Boolean(m.filialDestino),
                 }),
                 usuarioNome: m.usuario.nome,
-                usuarioEmail: m.usuario.email,
               }
             : null,
         };
@@ -2003,7 +2091,9 @@ async function getProductTree(
   const MAX_DEPTH = 5;
   const MAX_NOS = 80;
 
-  type CompNode = {
+  /** Linha já achatada p/ a IA montar tabela (Nível | Código | …). */
+  type CompFlat = {
+    nivel: string;
     codigo: string;
     descricao: string;
     quantidade: number;
@@ -2012,26 +2102,22 @@ async function getProductTree(
     valorLinha?: number;
     ativo: boolean;
     temBom: boolean;
-    subarvore: {
-      codigo: string;
-      descricao: string;
-      qtdComponentes: number;
-      componentes: CompNode[];
-    } | null;
   };
 
   return prisma.$transaction(async (tx) => {
     let nosCarregados = 0;
     let truncado = false;
+    const out: CompFlat[] = [];
 
     async function loadComponentes(
       paiId: string,
       depth: number,
-      visited: Set<string>
-    ): Promise<CompNode[]> {
+      visited: Set<string>,
+      nivelPrefix: string
+    ): Promise<void> {
       if (nosCarregados >= MAX_NOS) {
         truncado = true;
-        return [];
+        return;
       }
       const itens = await tx.produtoComponente.findMany({
         where: { produtoPaiId: paiId },
@@ -2052,13 +2138,16 @@ async function getProductTree(
         orderBy: { produtoFilho: { codigo: "asc" } },
       });
 
-      const out: CompNode[] = [];
+      let idx = 0;
       for (const c of itens) {
         if (nosCarregados >= MAX_NOS) {
           truncado = true;
           break;
         }
         nosCarregados += 1;
+        idx += 1;
+        const nivel =
+          nivelPrefix === "" ? String(idx) : `${nivelPrefix}.${idx}`;
         const temBom = c.produtoFilho._count.componentesComoPai > 0;
         const qtd = Number(c.quantidade);
         const custoBom = podeValor
@@ -2066,30 +2155,9 @@ async function getProductTree(
           : null;
         const preco =
           custoBom !== null ? custoBom : Number(c.produtoFilho.precoUnitario);
-        let subarvore: CompNode["subarvore"] = null;
-        if (
-          estendido &&
-          temBom &&
-          depth < MAX_DEPTH &&
-          !visited.has(c.produtoFilho.id)
-        ) {
-          const nextVisited = new Set(visited);
-          nextVisited.add(c.produtoFilho.id);
-          const filhos = await loadComponentes(
-            c.produtoFilho.id,
-            depth + 1,
-            nextVisited
-          );
-          subarvore = {
-            codigo: c.produtoFilho.codigo,
-            descricao: c.produtoFilho.descricao,
-            qtdComponentes: filhos.length,
-            componentes: filhos,
-          };
-        } else if (estendido && temBom && depth >= MAX_DEPTH) {
-          truncado = true;
-        }
+
         out.push({
+          nivel,
           codigo: c.produtoFilho.codigo,
           descricao: c.produtoFilho.descricao,
           quantidade: qtd,
@@ -2102,18 +2170,34 @@ async function getProductTree(
             : {}),
           ativo: c.produtoFilho.ativo,
           temBom,
-          subarvore,
         });
+
+        if (
+          estendido &&
+          temBom &&
+          depth < MAX_DEPTH &&
+          !visited.has(c.produtoFilho.id)
+        ) {
+          const nextVisited = new Set(visited);
+          nextVisited.add(c.produtoFilho.id);
+          await loadComponentes(
+            c.produtoFilho.id,
+            depth + 1,
+            nextVisited,
+            nivel
+          );
+        } else if (estendido && temBom && depth >= MAX_DEPTH) {
+          truncado = true;
+        }
       }
-      return out;
     }
 
     const visited = new Set<string>([produto.id]);
-    const componentes = await loadComponentes(produto.id, 0, visited);
+    await loadComponentes(produto.id, 0, visited, "");
 
     return {
       encontrado: true,
-      temArvore: componentes.length > 0,
+      temArvore: out.length > 0,
       multinivel: estendido,
       truncado,
       produto: {
@@ -2123,12 +2207,14 @@ async function getProductTree(
           ? { precoUnitario: Number(produto.precoUnitario) }
           : {}),
       },
-      qtdComponentes: componentes.length,
-      componentes,
+      qtdComponentes: out.length,
+      componentes: out,
+      formatoResposta:
+        "Responda com 1 frase + tabela Markdown: Nível | Código | Componente | Qtd | Preço. Use o campo nivel de cada linha. Proibido lista aninhada com Quantidade/Preço Unitário.",
       aviso: truncado
         ? "Árvore parcial (limite de profundidade/itens). Não invente componentes; diga que veio incompleta e sugira o relatório PDF estendido se fizer sentido."
-        : estendido && podeValor
-          ? "Preços de composição usam custo BOM (igual ao relatório). Componentes com subarvore têm BOM própria — narre em português natural."
+        : podeValor
+          ? "Preços de composição usam custo BOM (igual ao relatório)."
           : undefined,
     };
   });
@@ -2149,7 +2235,6 @@ async function searchProducts(
       ],
     },
     select: {
-      id: true,
       codigo: true,
       descricao: true,
       unidade: true,
@@ -2162,7 +2247,6 @@ async function searchProducts(
   return {
     encontrados: rows.length,
     produtos: rows.map((p) => ({
-      id: p.id,
       codigo: p.codigo,
       descricao: p.descricao,
       unidade: p.unidade,
@@ -2170,57 +2254,6 @@ async function searchProducts(
       categoria: p.categoria.nome,
     })),
   };
-}
-
-async function findProdutoByCodigoOuNome(codigoOuNome: string) {
-  const q = codigoOuNome.trim();
-  const select = {
-    id: true,
-    codigo: true,
-    descricao: true,
-    unidade: true,
-    precoUnitario: true,
-    controlaSerie: true,
-  } as const;
-  const exact = await prisma.produto.findFirst({
-    where: { ativo: true, codigo: { equals: q, mode: "insensitive" } },
-    select,
-  });
-  if (exact) return exact;
-
-  const contains = await prisma.produto.findFirst({
-    where: {
-      ativo: true,
-      OR: [
-        { codigo: { contains: q, mode: "insensitive" } },
-        { descricao: { contains: q, mode: "insensitive" } },
-      ],
-    },
-    select,
-    orderBy: { codigo: "asc" },
-  });
-  if (contains) return contains;
-
-  // "fonte de 12V" → tokens fonte + 12V (ignora palavras curtas)
-  const tokens = q
-    .split(/[\s,/._-]+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 2);
-  if (tokens.length < 2) return null;
-
-  return prisma.produto.findFirst({
-    where: {
-      ativo: true,
-      AND: tokens.map((t) => ({
-        OR: [
-          { codigo: { contains: t, mode: "insensitive" } },
-          { descricao: { contains: t, mode: "insensitive" } },
-        ],
-      })),
-    },
-    select,
-    orderBy: { codigo: "asc" },
-  });
 }
 
 async function getProductStock(
@@ -2242,10 +2275,15 @@ async function getProductStock(
     "dashboard_kpi_valor"
   );
   const preco = Number(produto.precoUnitario);
+  const opFiliais = operadorEscopoFilialIds(ctx.user);
   const estoques = await prisma.estoque.findMany({
     where: {
       produtoId: produto.id,
-      ...(filialId ? { filialId } : {}),
+      ...(filialId
+        ? { filialId }
+        : opFiliais
+          ? { filialId: { in: opFiliais } }
+          : { filial: { ativo: true } }),
     },
     select: {
       saldoAtual: true,
@@ -2307,12 +2345,7 @@ async function listProductSeries(
       };
     }
     if (ctx.user.perfil === "OPERADOR") {
-      const ids =
-        ctx.user.filialIds?.length > 0
-          ? ctx.user.filialIds
-          : ctx.user.filialId
-            ? [ctx.user.filialId]
-            : [];
+      const ids = operadorFilialIds(ctx.user);
       if (!ids.includes(f.id)) {
         return {
           encontrado: false,
@@ -2357,12 +2390,7 @@ async function listProductSeries(
       : ctx.user.perfil === "OPERADOR"
         ? {
             filialId: {
-              in:
-                ctx.user.filialIds?.length > 0
-                  ? ctx.user.filialIds
-                  : ctx.user.filialId
-                    ? [ctx.user.filialId]
-                    : [],
+              in: operadorFilialIds(ctx.user),
             },
           }
         : {};
@@ -2951,7 +2979,7 @@ async function listStockMovements(
       filial: { select: { sigla: true } },
       filialDestino: { select: { sigla: true } },
       cliente: { select: { nome: true, tipo: true } },
-      usuario: { select: { nome: true, email: true } },
+      usuario: { select: { nome: true } },
       alertasRetorno: {
         select: {
           dias: true,
@@ -3048,8 +3076,6 @@ async function listStockMovements(
         : m.filial.sigla,
       ehTransferencia,
       papelNaTransferencia,
-      /** @deprecated Use parceiroNome + papelParceiro — nome do campo legado no schema. */
-      clienteNome: m.cliente?.nome ?? null,
       parceiroNome: m.cliente?.nome ?? null,
       parceiroTipoCadastro: m.cliente?.tipo ?? null,
       papelParceiro: papelParceiroNaMovimentacao({
@@ -3059,7 +3085,6 @@ async function listStockMovements(
         temDestinoEstoque: Boolean(m.filialDestino),
       }),
       usuarioNome: m.usuario.nome,
-      usuarioEmail: m.usuario.email,
       geraAlertaRetorno: m.tipo.geraAlertaRetorno,
       requerTermoComodato: m.tipo.requerTermoComodato,
       ehRetorno: Boolean(m.tipo.ehRetornoDeId),
@@ -3207,7 +3232,10 @@ async function findClienteByNome(nome: string) {
   return { match: null, ambiguos: [] as typeof partial };
 }
 
-async function getPartnerProducts(args: z.infer<typeof partnerProductsArgs>) {
+async function getPartnerProducts(
+  args: z.infer<typeof partnerProductsArgs>,
+  ctx: ToolContext
+) {
   const { match, ambiguos } = await findClienteByNome(args.nome);
   if (ambiguos.length > 1) {
     return {
@@ -3227,7 +3255,8 @@ async function getPartnerProducts(args: z.infer<typeof partnerProductsArgs>) {
       mensagem: "Cliente/fornecedor não encontrado no cadastro",
     };
   }
-  const rel = await relacionamentosDoCliente(match.id);
+  const filialIds = operadorEscopoFilialIds(ctx.user);
+  const rel = await relacionamentosDoCliente(match.id, { filialIds });
   return {
     encontrado: true,
     parceiro: {
@@ -3246,12 +3275,16 @@ async function getPartnerProducts(args: z.infer<typeof partnerProductsArgs>) {
   };
 }
 
-async function getProductPartners(args: z.infer<typeof productPartnersArgs>) {
+async function getProductPartners(
+  args: z.infer<typeof productPartnersArgs>,
+  ctx: ToolContext
+) {
   const produto = await findProdutoByCodigoOuNome(args.codigoOuNome);
   if (!produto) {
     return { encontrado: false, mensagem: "Produto não encontrado no cadastro" };
   }
-  const rel = await relacionamentosDoProduto(produto.id);
+  const filialIds = operadorEscopoFilialIds(ctx.user);
+  const rel = await relacionamentosDoProduto(produto.id, { filialIds });
   return {
     encontrado: true,
     produto: {

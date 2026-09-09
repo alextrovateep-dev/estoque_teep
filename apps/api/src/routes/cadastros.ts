@@ -117,7 +117,8 @@ const tipoIncludeFiliais = {
   },
 } as const;
 
-/** Estoques fixos do tipo operacional (não sistema / RMA / pedido). */
+/** Estoques fixos do tipo operacional (não sistema / saída RMA / pedido).
+ * Entrada RMA exige filialId = depósito onde entra o equipamento. */
 async function resolveFiliaisTipoCadastro(opts: {
   operacao: string;
   sistema?: boolean;
@@ -132,8 +133,7 @@ async function resolveFiliaisTipoCadastro(opts: {
    */
   allowIncomplete?: boolean;
 }): Promise<{ filialId: string | null; filialDestinoId: string | null }> {
-  const skip =
-    opts.sistema || opts.rmaEntrada || opts.rmaSaida || opts.saidaPedido;
+  const skip = opts.sistema || opts.rmaSaida || opts.saidaPedido;
   if (skip) {
     return { filialId: null, filialDestinoId: null };
   }
@@ -143,11 +143,13 @@ async function resolveFiliaisTipoCadastro(opts: {
     }
     throw new AppError(
       400,
-      opts.operacao === "ENTRADA"
-        ? "Informe o estoque de entrada"
-        : opts.operacao === "SAIDA"
-          ? "Informe o estoque de saída"
-          : "Informe o estoque de origem"
+      opts.rmaEntrada
+        ? "Informe o estoque do depósito RMA (destino da entrada automática)"
+        : opts.operacao === "ENTRADA"
+          ? "Informe o estoque de entrada"
+          : opts.operacao === "SAIDA"
+            ? "Informe o estoque de saída"
+            : "Informe o estoque de origem"
     );
   }
   const origem = await prisma.filial.findFirst({

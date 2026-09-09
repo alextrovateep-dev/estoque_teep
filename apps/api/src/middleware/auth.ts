@@ -177,6 +177,14 @@ export async function requireFilialOperador(
     if (!hasFilial) {
       return res.status(403).json({ error: "Operador sem filial vinculada" });
     }
+    // Fonte da verdade = DB (JWT pode estar desatualizado / vazio)
+    const synced =
+      ids.length > 0 ? ids : row.filialId ? [row.filialId] : [];
+    req.user.filialIds = synced;
+    req.user.filialId =
+      (row.filialId && synced.includes(row.filialId)
+        ? row.filialId
+        : synced[0]) || null;
     next();
   } catch (e) {
     next(e);

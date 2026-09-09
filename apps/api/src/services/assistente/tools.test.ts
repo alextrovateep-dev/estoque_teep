@@ -137,6 +137,7 @@ describe("assistente toolsForUser ACL", () => {
       assistente: true,
       rma: false,
       relatorios: false,
+      movimentacoes: false,
       transferencias: false,
       lancamentos: false,
     }).map((t) => t.name);
@@ -144,6 +145,7 @@ describe("assistente toolsForUser ACL", () => {
     assert.ok(!names.includes("list_rma_processes"));
     assert.ok(!names.includes("get_rma_process"));
     assert.ok(!names.includes("export_arvore_report"));
+    assert.ok(!names.includes("export_movimentacoes_report"));
     assert.ok(!names.includes("list_transfers"));
     assert.ok(!names.includes("prepare_transfer"));
     assert.ok(!names.includes("list_stock_by_value"));
@@ -164,10 +166,22 @@ describe("assistente toolsForUser ACL", () => {
 
     assert.ok(names.includes("list_rma_processes"));
     assert.ok(names.includes("export_arvore_report"));
+    assert.ok(names.includes("export_movimentacoes_report"));
     assert.ok(names.includes("list_transfers"));
     assert.ok(names.includes("prepare_transfer"));
     assert.ok(names.includes("list_stock_by_value"));
     assert.ok(names.length <= TOOL_DEFINITIONS.length);
+  });
+
+  it("export_movimentacoes_report com só permissão movimentacoes", () => {
+    const names = toolsForUser("OPERADOR", {
+      dashboard: true,
+      assistente: true,
+      movimentacoes: true,
+      relatorios: false,
+    }).map((t) => t.name);
+    assert.ok(names.includes("export_movimentacoes_report"));
+    assert.ok(!names.includes("export_arvore_report"));
   });
 });
 
@@ -346,6 +360,9 @@ describe("assistente system prompt transferência", () => {
     });
     assert.match(p, /Tom e estilo/);
     assert.match(p, /estou à disposição/);
+    assert.match(p, /é só avisar/);
+    assert.match(p, /TABELA Markdown/);
+    assert.match(p, /Formatação de árvore\/BOM/);
     assert.match(p, /Filial no TEEP = estoque/);
   });
 

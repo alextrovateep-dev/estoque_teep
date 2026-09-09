@@ -47,7 +47,7 @@ assistenteRouter.get(
       if (!token || token.length < 16 || token.length > 128) {
         throw new AppError(404, "Download não encontrado ou expirado");
       }
-      const entry = takeAssistenteExport(token, req.user!.id);
+      const entry = await takeAssistenteExport(token, req.user!.id);
       if (!entry) {
         throw new AppError(404, "Download não encontrado ou expirado");
       }

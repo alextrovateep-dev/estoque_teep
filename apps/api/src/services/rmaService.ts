@@ -1,7 +1,6 @@
 import {
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPAS_SAIDA,
-  SIGLA_ESTOQUE_RMA,
   emailsAlertaDeUsuariosRma,
   mensagemBloqueioNfRetorno,
   mensagemBloqueioNfRetornoSemEntrada,
@@ -174,18 +173,8 @@ async function arquivoAnexoAtivo(
   return row?.arquivo ?? null;
 }
 
-async function resolveFilialPorSigla(sigla: string) {
-  const f = await prisma.filial.findFirst({
-    where: { sigla, ativo: true },
-  });
-  if (!f) {
-    throw new AppError(
-      400,
-      `Estoque ${sigla} não cadastrado. Cadastre em Admin → Estoques.`
-    );
-  }
-  return f;
-}
+const MSG_ESTOQUE_RMA_AUSENTE =
+  "Estoque RMA não definido. Cadastre um estoque com sigla «RMA» em Admin → Estoques, ou vincule o estoque no tipo com «RMA: entrada automática no estoque».";
 
 /** Tipo ENTRADA marcado para entrada automática do RMA (flag no cadastro). */
 async function tipoEntradaRma() {
@@ -764,12 +753,10 @@ export async function criarRmaProcesso(
   }
 ) {
   const defaults = await resolveRmaDefaults();
-  const estoqueRma = defaults.filialPreparacao
-    ? {
-        id: defaults.filialPreparacao.id,
-        sigla: defaults.filialPreparacao.sigla,
-      }
-    : await resolveFilialPorSigla(SIGLA_ESTOQUE_RMA);
+  if (!defaults.filialPreparacao) {
+    throw new AppError(400, MSG_ESTOQUE_RMA_AUSENTE);
+  }
+  const estoqueRma = defaults.filialPreparacao;
   if (user.perfil === "OPERADOR") {
     assertOperadorPodeFilial(user, estoqueRma.id);
   }

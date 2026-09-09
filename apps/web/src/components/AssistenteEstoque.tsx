@@ -11,6 +11,7 @@ import {
 } from "react";
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { TeepLogo } from "@/components/TeepLogo";
+import { MarkdownMessage } from "@/components/MarkdownMessage";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import {
   MIC_MESSAGES,
@@ -350,10 +351,14 @@ export function AssistenteEstoque({
                 className={
                   t.role === "user"
                     ? "ml-6 rounded-2xl rounded-br-md bg-brand/10 px-3 py-2 text-sm text-slate-800 sm:ml-12"
-                    : "mr-6 rounded-2xl rounded-bl-md bg-slate-50 px-3 py-2 text-sm text-slate-700 whitespace-pre-wrap sm:mr-12"
+                    : "mr-6 rounded-2xl rounded-bl-md bg-slate-50 px-3 py-2 text-sm text-slate-700 sm:mr-12"
                 }
               >
-                {t.content}
+                {t.role === "assistant" ? (
+                  <MarkdownMessage content={t.content} />
+                ) : (
+                  t.content
+                )}
               </div>
               {t.role === "assistant" && t.downloads && t.downloads.length > 0 && (
                 <div className="mr-6 mt-1.5 flex flex-wrap gap-2 sm:mr-12">

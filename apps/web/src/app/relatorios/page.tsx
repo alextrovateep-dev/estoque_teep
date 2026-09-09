@@ -67,6 +67,13 @@ type ArvoreRow = {
   }>;
 };
 
+type ArvoreSugestao = {
+  produtoPaiId: string;
+  codigo: string;
+  descricao: string;
+  qtdComponentes: number;
+};
+
 const ABAS: Array<{ id: Aba; label: string }> = [
   { id: "saldos", label: "Estoque / saldos" },
   { id: "movimentacoes", label: "Movimentações" },
@@ -145,6 +152,14 @@ function RelatoriosInner() {
   const [produtoPaiId, setProdutoPaiId] = useState(
     searchParams.get("produtoPaiId") || ""
   );
+  const [produtoPaiLabel, setProdutoPaiLabel] = useState("");
+  const [paiBusca, setPaiBusca] = useState(searchParams.get("q") || "");
+  const [paiOpen, setPaiOpen] = useState(false);
+  const [paiSugestoes, setPaiSugestoes] = useState<ArvoreSugestao[]>([]);
+  const [paiBuscando, setPaiBuscando] = useState(false);
+  const [arvoresSelecionadas, setArvoresSelecionadas] = useState<Set<string>>(
+    () => new Set()
+  );
   const [explodir, setExplodir] = useState(
     () =>
       searchParams.get("explodir") === "1" ||
@@ -173,13 +188,19 @@ function RelatoriosInner() {
       podeMovimentacoes
     );
     setAba(nextAba);
-    setQ(searchParams.get("q") || "");
     setFilialId(searchParams.get("filialId") || "");
     setCategoriaId(searchParams.get("categoriaId") || "");
     setAlerta(searchParams.get("alerta") || "");
     const ativoParam = searchParams.get("ativo");
     setAtivo(ativoParam === null && nextAba === "produtos" ? "true" : ativoParam || "");
-    setProdutoPaiId(searchParams.get("produtoPaiId") || "");
+    const paiId = searchParams.get("produtoPaiId") || "";
+    setProdutoPaiId(paiId);
+    const qParam = searchParams.get("q") || "";
+    setQ(qParam);
+    if (!paiId) {
+      setPaiBusca(qParam);
+      if (!qParam) setProdutoPaiLabel("");
+    }
     const exp = searchParams.get("explodir");
     const pai = searchParams.get("produtoPaiId");
     if (exp === "0" || exp === "false") {
@@ -190,6 +211,7 @@ function RelatoriosInner() {
       setExplodir(Boolean(pai));
     }
     setPage(1);
+    setArvoresSelecionadas(new Set());
   }, [searchParams, podeRelatoriosGerais, podeMovimentacoes]);
 
   useEffect(() => {
@@ -253,6 +275,10 @@ function RelatoriosInner() {
     setError("");
     if (next !== "arvores") {
       setProdutoPaiId("");
+      setProdutoPaiLabel("");
+      setPaiBusca("");
+      setPaiSugestoes([]);
+      setArvoresSelecionadas(new Set());
       setExplodir(false);
     }
     syncUrl(next);
@@ -294,6 +320,116 @@ function RelatoriosInner() {
     page,
     pageSize,
   ]);
+
+  /** Autocomplete de produto pai (árvores). */
+  useEffect(() => {
+    if (aba !== "arvores") return;
+    const term = paiBusca.trim();
+    if (
+      term.length < 2 ||
+      (produtoPaiId && term === produtoPaiLabel.trim())
+    ) {
+      setPaiSugestoes([]);
+      setPaiBuscando(false);
+      return;
+    }
+    let cancelled = false;
+    setPaiBuscando(true);
+    const t = window.setTimeout(() => {
+      const p = new URLSearchParams();
+      p.set("q", term);
+      p.set("explodir", "0");
+      p.set("page", "1");
+      p.set("pageSize", "12");
+      void api<{ rows: ArvoreRow[] }>(`/relatorios/arvores?${p.toString()}`)
+        .then((r) => {
+          if (cancelled) return;
+          setPaiSugestoes(
+            r.rows.map((row) => ({
+              produtoPaiId: row.produtoPaiId,
+              codigo: row.codigo,
+              descricao: row.descricao,
+              qtdComponentes: row.qtdComponentes,
+            }))
+          );
+        })
+        .catch(() => {
+          if (!cancelled) setPaiSugestoes([]);
+        })
+        .finally(() => {
+          if (!cancelled) setPaiBuscando(false);
+        });
+    }, 280);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [aba, paiBusca, produtoPaiId, produtoPaiLabel]);
+
+  function aplicarFiltroPai(s: ArvoreSugestao) {
+    setProdutoPaiId(s.produtoPaiId);
+    setProdutoPaiLabel(`${s.codigo} — ${s.descricao}`);
+    setPaiBusca(`${s.codigo} — ${s.descricao}`);
+    setQ("");
+    setPaiOpen(false);
+    setPaiSugestoes([]);
+    setPage(1);
+    setArvoresSelecionadas(new Set());
+    const params = new URLSearchParams();
+    params.set("aba", "arvores");
+    params.set("produtoPaiId", s.produtoPaiId);
+    params.set("explodir", explodir ? "1" : "0");
+    router.replace(`/relatorios?${params.toString()}`, { scroll: false });
+  }
+
+  function aplicarBuscaTextoArvore() {
+    const term = paiBusca.trim();
+    setProdutoPaiId("");
+    setProdutoPaiLabel("");
+    setQ(term);
+    setPaiOpen(false);
+    setPage(1);
+    setArvoresSelecionadas(new Set());
+    const params = new URLSearchParams();
+    params.set("aba", "arvores");
+    if (term) params.set("q", term);
+    params.set("explodir", explodir ? "1" : "0");
+    router.replace(`/relatorios?${params.toString()}`, { scroll: false });
+  }
+
+  function limparFiltroPai() {
+    setProdutoPaiId("");
+    setProdutoPaiLabel("");
+    setPaiBusca("");
+    setQ("");
+    setPaiSugestoes([]);
+    setPaiOpen(false);
+    setPage(1);
+    setArvoresSelecionadas(new Set());
+    const params = new URLSearchParams();
+    params.set("aba", "arvores");
+    params.set("explodir", explodir ? "1" : "0");
+    router.replace(`/relatorios?${params.toString()}`, { scroll: false });
+  }
+
+  function toggleArvoreSelecionada(id: string) {
+    setArvoresSelecionadas((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleTodasArvoresVisiveis() {
+    setArvoresSelecionadas((prev) => {
+      const ids = arvores.map((a) => a.produtoPaiId);
+      const allSelected =
+        ids.length > 0 && ids.every((id) => prev.has(id));
+      if (allSelected) return new Set();
+      return new Set(ids);
+    });
+  }
 
   const load = useCallback(async () => {
     if (aba === "movimentacoes") {
@@ -362,6 +498,15 @@ function RelatoriosInner() {
         setProdutos([]);
         setSaldos([]);
         setTotal(r.total);
+        setArvoresSelecionadas(new Set());
+        if (produtoPaiId) {
+          const match = r.rows.find((row) => row.produtoPaiId === produtoPaiId);
+          if (match) {
+            const label = `${match.codigo} — ${match.descricao}`;
+            setProdutoPaiLabel(label);
+            setPaiBusca(label);
+          }
+        }
         const nivel = r.meta.multinivel ? "multinível" : "1 nível";
         const trunc =
           r.meta.truncado && r.meta.limite
@@ -384,7 +529,7 @@ function RelatoriosInner() {
     } finally {
       if (gen === fetchGen.current) setLoading(false);
     }
-  }, [aba, queryString]);
+  }, [aba, queryString, produtoPaiId]);
 
   useEffect(() => {
     void load();
@@ -404,6 +549,14 @@ function RelatoriosInner() {
       const exportQs = new URLSearchParams(queryString);
       exportQs.delete("page");
       exportQs.delete("pageSize");
+      if (aba === "arvores" && arvoresSelecionadas.size > 0) {
+        exportQs.delete("q");
+        exportQs.delete("produtoPaiId");
+        exportQs.set(
+          "produtoPaiIds",
+          Array.from(arvoresSelecionadas).join(",")
+        );
+      }
       const path = `${base}/export.${format}?${exportQs.toString()}`;
       const { blob, filename } = await apiDownload(path, {
         fallbackFilename: `teep-${aba}.${format}`,
@@ -422,6 +575,10 @@ function RelatoriosInner() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const nArvoresSel = arvoresSelecionadas.size;
+  const todasArvoresVisiveisSelecionadas =
+    arvores.length > 0 &&
+    arvores.every((a) => arvoresSelecionadas.has(a.produtoPaiId));
 
   return (
     <>
@@ -443,7 +600,11 @@ function RelatoriosInner() {
               onClick={() => void exportar("pdf")}
               className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
             >
-              {exporting ? "Gerando…" : "Exportar PDF"}
+              {exporting
+                ? "Gerando…"
+                : nArvoresSel > 0 && aba === "arvores"
+                  ? `Exportar PDF (${nArvoresSel})`
+                  : "Exportar PDF"}
             </button>
             <button
               type="button"
@@ -451,7 +612,9 @@ function RelatoriosInner() {
               onClick={() => void exportar("xlsx")}
               className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
             >
-              Exportar Excel
+              {nArvoresSel > 0 && aba === "arvores"
+                ? `Exportar Excel (${nArvoresSel})`
+                : "Exportar Excel"}
             </button>
           </div>
         )}
@@ -484,22 +647,111 @@ function RelatoriosInner() {
       ) : (
         <>
           <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
-        <label className="min-w-[10rem] flex-1 text-xs">
-          <span className="mb-1 block font-medium text-slate-600">Busca</span>
-          <input
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand"
-            placeholder={
-              aba === "arvores"
-                ? "Código ou descrição do pai…"
-                : "Código ou descrição…"
-            }
-            value={q}
-            onChange={(e) => {
-              setQ(e.target.value);
-              setPage(1);
-            }}
-          />
-        </label>
+        {aba === "arvores" ? (
+          <div className="relative min-w-[14rem] flex-1 text-xs">
+            <span className="mb-1 block font-medium text-slate-600">
+              Produto pai
+            </span>
+            <div className="flex gap-1">
+              <input
+                className="w-full min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand"
+                placeholder="Digite código/descrição e escolha o pai…"
+                value={paiBusca}
+                onChange={(e) => {
+                  setPaiBusca(e.target.value);
+                  setPaiOpen(true);
+                }}
+                onFocus={() => setPaiOpen(true)}
+                onBlur={() => setTimeout(() => setPaiOpen(false), 160)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (paiSugestoes[0]) aplicarFiltroPai(paiSugestoes[0]);
+                    else aplicarBuscaTextoArvore();
+                  }
+                  if (e.key === "Escape") setPaiOpen(false);
+                }}
+                autoComplete="off"
+                aria-autocomplete="list"
+                aria-expanded={
+                  paiOpen &&
+                  paiBusca.trim().length >= 2 &&
+                  !(produtoPaiId && paiBusca.trim() === produtoPaiLabel.trim())
+                }
+              />
+              {(paiBusca || produtoPaiId || q) && (
+                <button
+                  type="button"
+                  onClick={limparFiltroPai}
+                  className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 text-slate-500 hover:bg-slate-50"
+                  title="Limpar filtro"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+            {produtoPaiId && produtoPaiLabel ? (
+              <p className="mt-1.5 text-[11px] text-brand">
+                Filtrando árvore:{" "}
+                <span className="font-semibold">{produtoPaiLabel}</span>
+              </p>
+            ) : null}
+            {paiOpen &&
+              paiBusca.trim().length >= 2 &&
+              !(produtoPaiId && paiBusca.trim() === produtoPaiLabel.trim()) && (
+              <ul className="absolute z-40 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                {paiBuscando ? (
+                  <li className="px-3 py-2 text-sm text-slate-500">
+                    Buscando…
+                  </li>
+                ) : paiSugestoes.length === 0 ? (
+                  <li className="px-3 py-2 text-sm text-slate-500">
+                    Nenhuma árvore encontrada. Enter busca por texto.
+                  </li>
+                ) : (
+                  paiSugestoes.map((s) => (
+                    <li key={s.produtoPaiId}>
+                      <button
+                        type="button"
+                        className="w-full px-3 py-2 text-left text-sm hover:bg-brand-light"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          aplicarFiltroPai(s);
+                        }}
+                      >
+                        <span className="font-mono text-xs font-semibold text-slate-800">
+                          {s.codigo}
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-slate-500">
+                          {s.descricao}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-slate-400">
+                          {s.qtdComponentes} componente(s)
+                        </span>
+                      </button>
+                    </li>
+                  ))
+                )}
+                <li className="border-t border-slate-100 px-3 py-1.5 text-[11px] text-slate-400">
+                  Clique na sugestão ou Enter para filtrar
+                </li>
+              </ul>
+            )}
+          </div>
+        ) : (
+          <label className="min-w-[10rem] flex-1 text-xs">
+            <span className="mb-1 block font-medium text-slate-600">Busca</span>
+            <input
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand"
+              placeholder="Código ou descrição…"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
+        )}
 
         {(aba === "produtos" || aba === "saldos") && (
           <label className="min-w-[9rem] text-xs">
@@ -588,10 +840,10 @@ function RelatoriosInner() {
         )}
 
         {aba === "arvores" && (
-          <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs text-slate-700">
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-xs text-slate-700 sm:items-center">
             <input
               type="checkbox"
-              className="rounded border-slate-300"
+              className="mt-0.5 rounded border-slate-300 sm:mt-0"
               checked={explodir}
               onChange={(e) => {
                 setExplodir(e.target.checked);
@@ -599,9 +851,9 @@ function RelatoriosInner() {
               }}
             />
             <span>
-              Multinível
+              <span className="font-medium">Multinível</span>
               <span className="ml-1 text-slate-400">
-                (inclui subárvores, ex. KIT)
+                — inclui subárvores (ex.: KIT) como cards separados
               </span>
             </span>
           </label>
@@ -610,6 +862,15 @@ function RelatoriosInner() {
         <button
           type="button"
           onClick={() => {
+            if (aba === "arvores") {
+              if (produtoPaiId) {
+                syncUrl(aba);
+                void load();
+              } else {
+                aplicarBuscaTextoArvore();
+              }
+              return;
+            }
             syncUrl(aba);
             void load();
           }}
@@ -771,9 +1032,61 @@ function RelatoriosInner() {
       )}
 
       {aba === "arvores" && (
-        <div className="mt-4 space-y-6">
+        <div className="mt-4 space-y-8">
+          {arvores.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm">
+              <label className="flex cursor-pointer items-center gap-2 text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={todasArvoresVisiveisSelecionadas}
+                  onChange={toggleTodasArvoresVisiveis}
+                  className="rounded border-slate-300 text-brand focus:ring-brand"
+                />
+                <span>
+                  Selecionar todas nesta página
+                  {nArvoresSel > 0 ? (
+                    <span className="ml-1 text-slate-400">
+                      ({nArvoresSel} selecionada
+                      {nArvoresSel === 1 ? "" : "s"})
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+              {nArvoresSel > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={exporting}
+                    onClick={() => void exportar("pdf")}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
+                  >
+                    {exporting ? "Gerando…" : `PDF (${nArvoresSel})`}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={exporting}
+                    onClick={() => void exportar("xlsx")}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:border-brand/40 disabled:opacity-50"
+                  >
+                    Excel ({nArvoresSel})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setArvoresSelecionadas(new Set())}
+                    className="rounded-lg px-2 py-1.5 text-xs text-slate-500 hover:bg-slate-50"
+                  >
+                    Limpar seleção
+                  </button>
+                </div>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  Marque cards para exportar só as árvores escolhidas
+                </p>
+              )}
+            </div>
+          )}
           {arvores.length === 0 && !loading && (
-            <div className="rounded-xl border border-slate-200 bg-white px-3 py-8 text-center text-sm text-slate-500">
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
               Nenhuma árvore encontrada.
             </div>
           )}
@@ -783,15 +1096,17 @@ function RelatoriosInner() {
             );
             if (doGrupo.length === 0) return null;
             return (
-              <section key={grupoId} className="space-y-3">
-                <div className="flex items-baseline justify-between gap-2 border-b border-slate-200 pb-2">
-                  <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+              <section key={grupoId} className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-sm font-semibold tracking-tight text-slate-800">
                     {labelGrupoArvore(grupoId)}
                   </h2>
-                  <span className="text-xs tabular-nums text-slate-400">
-                    {doGrupo.length} árvore(s)
+                  <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-slate-600">
+                    {doGrupo.length}
                   </span>
+                  <div className="h-px flex-1 bg-slate-200" />
                 </div>
+
                 {doGrupo.map((p) => {
                   const somaQtd = p.componentes.reduce(
                     (s, c) => s + Number(c.quantidade || 0),
@@ -801,124 +1116,169 @@ function RelatoriosInner() {
                     (s, c) => s + Number(c.valorLinha || 0),
                     0
                   );
+                  const marcada = arvoresSelecionadas.has(p.produtoPaiId);
                   return (
                     <article
                       key={p.produtoPaiId}
-                      className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm"
+                      className={`overflow-hidden rounded-xl border bg-white shadow-sm transition ${
+                        marcada
+                          ? "border-brand/50 ring-2 ring-brand/15"
+                          : "border-slate-200"
+                      }`}
                     >
-                      <header className="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="font-mono text-sm font-semibold text-slate-900">
-                            {p.codigo}
-                          </p>
-                          <p className="mt-0.5 text-sm text-slate-600">
-                            {p.descricao}
-                          </p>
-                          {p.categoriaNome ? (
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              {p.categoriaNome}
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="flex flex-wrap gap-3 text-right text-xs text-slate-500">
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                              Preço pai
-                            </p>
-                            <p className="tabular-nums font-medium text-slate-800">
-                              {money(p.precoUnitario)}
-                            </p>
+                      <header className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-4 py-3.5 sm:px-5">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                          <div className="flex min-w-0 flex-1 gap-3">
+                            <label className="mt-1 flex shrink-0 cursor-pointer items-start">
+                              <input
+                                type="checkbox"
+                                checked={marcada}
+                                onChange={() =>
+                                  toggleArvoreSelecionada(p.produtoPaiId)
+                                }
+                                className="rounded border-slate-300 text-brand focus:ring-brand"
+                                aria-label={`Selecionar árvore ${p.codigo}`}
+                              />
+                            </label>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-mono text-base font-semibold tracking-tight text-slate-900">
+                                  {p.codigo}
+                                </p>
+                                <span className="rounded-md bg-brand/10 px-2 py-0.5 text-[11px] font-medium text-brand">
+                                  {p.qtdComponentes} componente
+                                  {p.qtdComponentes === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                              <p className="mt-1 text-sm leading-snug text-slate-700">
+                                {p.descricao}
+                              </p>
+                              {p.categoriaNome ? (
+                                <p className="mt-1.5 text-xs text-slate-400">
+                                  {p.categoriaNome}
+                                </p>
+                              ) : null}
+                            </div>
                           </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                              Composição
-                            </p>
-                            <p className="tabular-nums font-medium text-slate-800">
-                              {money(p.totalComposicao)}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                              Só baixa
-                            </p>
-                            <p className="tabular-nums font-medium text-slate-800">
-                              {money(p.totalBaixa)}
-                            </p>
+
+                          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                            <div className="min-w-[5.5rem] rounded-lg border border-slate-100 bg-white px-2.5 py-2 text-center sm:min-w-[6.5rem] sm:px-3">
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                                Preço pai
+                              </p>
+                              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-800">
+                                {money(p.precoUnitario)}
+                              </p>
+                            </div>
+                            <div className="min-w-[5.5rem] rounded-lg border border-slate-100 bg-white px-2.5 py-2 text-center sm:min-w-[6.5rem] sm:px-3">
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                                Composição
+                              </p>
+                              <p className="mt-0.5 text-sm font-semibold tabular-nums text-slate-800">
+                                {money(p.totalComposicao)}
+                              </p>
+                            </div>
+                            <div className="min-w-[5.5rem] rounded-lg border border-emerald-100 bg-emerald-50/50 px-2.5 py-2 text-center sm:min-w-[6.5rem] sm:px-3">
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-emerald-700/70">
+                                Só baixa
+                              </p>
+                              <p className="mt-0.5 text-sm font-semibold tabular-nums text-emerald-900">
+                                {money(p.totalBaixa)}
+                              </p>
+                            </div>
                           </div>
                         </div>
                       </header>
 
-                      <div className="overflow-x-auto px-2 sm:px-3">
-                        <table className="min-w-full text-xs">
-                          <thead className="border-b border-slate-100 text-left text-[10px] uppercase tracking-wide text-slate-400">
+                      <div className="overflow-x-auto">
+                        <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
+                          <thead className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                             <tr>
-                              <th className="px-2 py-2.5">Código</th>
-                              <th className="px-2 py-2.5">Componente</th>
-                              <th className="px-2 py-2.5 text-right">Qtd</th>
-                              <th className="px-2 py-2.5 text-right">Preço</th>
-                              <th className="px-2 py-2.5 text-right">Valor</th>
-                              <th className="px-2 py-2.5">Fantasma</th>
-                              <th className="px-2 py-2.5">Subárvore</th>
+                              <th className="whitespace-nowrap px-4 py-2.5 sm:px-5">
+                                Código
+                              </th>
+                              <th className="min-w-[14rem] px-3 py-2.5">
+                                Componente
+                              </th>
+                              <th className="whitespace-nowrap px-3 py-2.5 text-right">
+                                Qtd
+                              </th>
+                              <th className="whitespace-nowrap px-3 py-2.5 text-right">
+                                Preço
+                              </th>
+                              <th className="whitespace-nowrap px-4 py-2.5 text-right sm:px-5">
+                                Valor
+                              </th>
                             </tr>
                           </thead>
-                          <tbody>
+                          <tbody className="divide-y divide-slate-100">
                             {p.componentes.map((c) => (
                               <tr
                                 key={`${p.produtoPaiId}-${c.codigo}`}
-                                className="border-b border-slate-50 last:border-0"
+                                className="align-middle hover:bg-slate-50/70"
                               >
-                                <td className="px-2 py-2 font-mono text-slate-800">
-                                  {c.codigo}
+                                <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs font-medium text-slate-800 sm:px-5">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    <span
+                                      className="inline-block h-3 w-0.5 rounded-full bg-slate-200"
+                                      aria-hidden
+                                    />
+                                    {c.codigo}
+                                  </span>
                                 </td>
-                                <td className="px-2 py-2 text-slate-700">
-                                  {c.descricao}
+                                <td className="min-w-[14rem] px-3 py-2.5">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span className="font-medium text-slate-800">
+                                      {c.descricao}
+                                    </span>
+                                    {c.fantasma ? (
+                                      <span
+                                        className="rounded border border-amber-200/80 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
+                                        title="Não baixa estoque"
+                                      >
+                                        Fantasma
+                                      </span>
+                                    ) : null}
+                                    {c.temBom ? (
+                                      <span
+                                        className="rounded border border-sky-200/80 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800"
+                                        title="Possui subárvore (ex.: KIT)"
+                                      >
+                                        Subárvore
+                                      </span>
+                                    ) : null}
+                                  </div>
                                 </td>
-                                <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-800">
                                   {qty(c.quantidade)}
                                 </td>
-                                <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-600">
                                   {money(c.precoUnitario)}
                                 </td>
-                                <td className="px-2 py-2 text-right tabular-nums text-slate-800">
+                                <td className="whitespace-nowrap px-4 py-2.5 text-right font-medium tabular-nums text-slate-800 sm:px-5">
                                   {money(c.valorLinha)}
-                                </td>
-                                <td className="px-2 py-2 text-slate-500">
-                                  {c.fantasma ? (
-                                    <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
-                                      Sim
-                                    </span>
-                                  ) : (
-                                    "—"
-                                  )}
-                                </td>
-                                <td className="px-2 py-2 text-slate-500">
-                                  {c.temBom ? (
-                                    <span className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-800">
-                                      Sim
-                                    </span>
-                                  ) : (
-                                    "—"
-                                  )}
                                 </td>
                               </tr>
                             ))}
                           </tbody>
-                          <tfoot className="border-t border-slate-100 bg-slate-50/60 font-medium text-slate-800">
+                          <tfoot className="border-t border-slate-200 bg-slate-50/80 text-sm font-semibold text-slate-800">
                             <tr>
-                              <td className="px-2 py-2.5" colSpan={2}>
-                                {p.qtdComponentes} item(ns)
+                              <td
+                                className="px-4 py-3 text-xs font-medium text-slate-500 sm:px-5"
+                                colSpan={2}
+                              >
+                                Total · {p.qtdComponentes} item
+                                {p.qtdComponentes === 1 ? "" : "s"}
                               </td>
-                              <td className="px-2 py-2.5 text-right tabular-nums">
+                              <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
                                 {qty(somaQtd)}
                               </td>
-                              <td className="px-2 py-2.5 text-right text-slate-400">
+                              <td className="px-3 py-3 text-right text-slate-300">
                                 —
                               </td>
-                              <td className="px-2 py-2.5 text-right tabular-nums">
+                              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums sm:px-5">
                                 {money(somaValor)}
                               </td>
-                              <td className="px-2 py-2.5" />
-                              <td className="px-2 py-2.5" />
                             </tr>
                           </tfoot>
                         </table>

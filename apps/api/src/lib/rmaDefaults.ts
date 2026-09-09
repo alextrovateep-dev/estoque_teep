@@ -15,7 +15,7 @@ export type RmaDefaults = {
   filiaisOrigemTroca: RmaFilialRef[];
   /** Como cada default foi resolvido (útil na UI/admin). */
   fonte: {
-    preparacao: "env" | "sigla" | "none";
+    preparacao: "env" | "sigla" | "tipo" | "none";
     descarte: "env" | "sigla" | "none";
     origemTroca: "env" | "todas_operacionais" | "none";
   };
@@ -78,6 +78,26 @@ export async function resolveRmaDefaults(): Promise<RmaDefaults> {
     if (byS) {
       filialPreparacao = asRef(byS);
       fontePrep = "sigla";
+    }
+  }
+
+  if (!filialPreparacao) {
+    const tipoEntrada = await prisma.tipoMovimentacao.findFirst({
+      where: {
+        rmaEntradaEstoque: true,
+        operacao: "ENTRADA",
+        ativo: true,
+        filialId: { not: null },
+      },
+      select: {
+        filial: {
+          select: { id: true, sigla: true, nome: true, ativo: true },
+        },
+      },
+    });
+    if (tipoEntrada?.filial?.ativo) {
+      filialPreparacao = asRef(tipoEntrada.filial);
+      fontePrep = "tipo";
     }
   }
 

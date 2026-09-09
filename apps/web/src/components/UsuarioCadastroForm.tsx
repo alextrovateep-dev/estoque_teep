@@ -19,7 +19,13 @@ import {
 import { permissoesEditaveisParaPerfil } from "@/lib/access";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 const CADASTRO_KEYS = new Set<string>(
   CADASTROS_PAGINAS.flatMap((p) => [p.ver, p.editar])
@@ -31,6 +37,76 @@ const KPI_KEYS = new Set<string>(DASHBOARD_KPI_KEYS);
 const PERMISSAO_KEYS_LISTA = PERMISSAO_KEYS.filter(
   (k) => !CADASTRO_KEYS.has(k) && !KPI_KEYS.has(k)
 );
+
+function SectionCard({
+  title,
+  subtitle,
+  children,
+  className = "",
+}: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section
+      className={`rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm ${className}`}
+    >
+      <header className="mb-2.5 border-b border-slate-100 pb-1.5">
+        <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
+        {subtitle && (
+          <p className="mt-0.5 text-xs leading-relaxed text-slate-500">
+            {subtitle}
+          </p>
+        )}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function ToggleRow({
+  checked,
+  disabled,
+  onChange,
+  title,
+  hint,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (v: boolean) => void;
+  title: string;
+  hint?: string;
+}) {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition ${
+        disabled
+          ? "cursor-not-allowed border-slate-100 bg-slate-50/60 opacity-55"
+          : checked
+            ? "border-brand/30 bg-brand/5"
+            : "border-slate-200 bg-white hover:border-slate-300"
+      }`}
+    >
+      <input
+        type="checkbox"
+        className="mt-0.5"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-slate-800">{title}</span>
+        {hint && (
+          <span className="mt-0.5 block text-xs leading-snug text-slate-500">
+            {hint}
+          </span>
+        )}
+      </span>
+    </label>
+  );
+}
 
 type Filial = {
   id: string;
@@ -550,9 +626,8 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
             {editId ? "Editar usuário" : "Cadastrar usuário"}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Cadastre Gerente ou Operador (mesmo e-mail e senha de sempre).
-            Administrador não é cadastro separado: conceda acesso total a quem
-            já existe — a pessoa continua entrando com a mesma conta.
+            Cadastre Gerente ou Operador. Acesso administrador é concedido
+            depois, na edição do usuário.
           </p>
         </div>
         <Link
@@ -583,171 +658,165 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
         )}
       </div>
 
-      <form
-        onSubmit={onSubmit}
-        className="mt-6 grid gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:grid-cols-2"
-      >
-        <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-700">Nome</span>
-          <input
-            required
-            placeholder="Nome completo"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2"
-            value={form.nome}
-            onChange={(e) => setForm({ ...form, nome: e.target.value })}
-          />
-        </label>
-        <label className="block text-sm">
-          <span className="mb-1 block font-medium text-slate-700">E-mail</span>
-          <input
-            type="email"
-            required
-            placeholder="usuario@empresa.com"
-            className="w-full rounded-lg border border-slate-200 px-3 py-2"
-            value={form.email}
-            onChange={(e) => setForm({ ...form, email: e.target.value })}
-          />
-        </label>
-        <label className="block text-sm sm:col-span-2 sm:max-w-xs">
-          <span className="mb-1 block font-medium text-slate-700">Perfil</span>
-          <select
-            className="w-full rounded-lg border border-slate-200 px-3 py-2"
-            value={form.perfil}
-            onChange={(e) => onPerfilChange(e.target.value as Perfil)}
-            disabled={editId !== null && form.perfil === "ADMIN"}
-          >
-            <option value="GERENTE">Gerente</option>
-            <option value="OPERADOR">Operador</option>
-            {form.perfil === "ADMIN" && (
-              <option value="ADMIN">Admin</option>
-            )}
-          </select>
-        </label>
+      <form onSubmit={onSubmit} className="mt-5 space-y-3">
+        <SectionCard
+          title="Identidade"
+          subtitle={
+            !editId
+              ? "Ao cadastrar, o sistema gera senha provisória, envia e-mail e exige troca no primeiro login."
+              : undefined
+          }
+        >
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium text-slate-700">Nome</span>
+              <input
+                required
+                placeholder="Nome completo"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={form.nome}
+                onChange={(e) => setForm({ ...form, nome: e.target.value })}
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="mb-1 block font-medium text-slate-700">
+                E-mail
+              </span>
+              <input
+                type="email"
+                required
+                placeholder="usuario@empresa.com"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={form.email}
+                onChange={(e) => setForm({ ...form, email: e.target.value })}
+              />
+            </label>
+            <label className="block text-sm sm:max-w-xs">
+              <span className="mb-1 block font-medium text-slate-700">
+                Perfil
+              </span>
+              <select
+                className="w-full rounded-lg border border-slate-200 px-3 py-2"
+                value={form.perfil}
+                onChange={(e) => onPerfilChange(e.target.value as Perfil)}
+                disabled={editId !== null && form.perfil === "ADMIN"}
+              >
+                <option value="GERENTE">Gerente</option>
+                <option value="OPERADOR">Operador</option>
+                {form.perfil === "ADMIN" && (
+                  <option value="ADMIN">Admin</option>
+                )}
+              </select>
+            </label>
+          </div>
+        </SectionCard>
 
         {editId && (
-          <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 sm:col-span-2">
-            <p className="text-sm font-medium text-violet-950">
-              Acesso administrador
-            </p>
+          <section className="rounded-xl border border-violet-200 bg-violet-50 p-3.5 shadow-sm">
+            <header className="mb-2.5 border-b border-violet-200/80 pb-1.5">
+              <h2 className="text-sm font-semibold text-violet-950">
+                Acesso administrador
+              </h2>
+              <p className="mt-0.5 text-xs leading-relaxed text-violet-900/80">
+                {isAdminForm
+                  ? `Acesso total (Administração, usuários, e-mails, estoques).${
+                      isSelf
+                        ? " Você não pode revogar o próprio acesso por aqui."
+                        : ""
+                    }`
+                  : `Concede menu Administração e acesso total. E-mail e senha não mudam.${
+                      !usuarioAtivo
+                        ? " Ative o usuário antes de conceder administrador."
+                        : ""
+                    }`}
+              </p>
+            </header>
             {isAdminForm ? (
-              <>
-                <p className="mt-1 text-xs text-violet-900/80">
-                  Este usuário tem acesso total (menu Administração, usuários,
-                  e-mails, estoques globais).
-                  {isSelf
-                    ? " Você não pode revogar o próprio acesso por aqui."
-                    : ""}
-                </p>
-                {!isSelf && (
-                  <div className="mt-3 flex flex-wrap items-end gap-3">
-                    <label className="block text-sm">
-                      <span className="mb-1 block font-medium text-violet-950">
-                        Perfil após revogar
-                      </span>
-                      <select
-                        className="rounded-lg border border-violet-200 bg-white px-3 py-2"
-                        value={revokePerfil}
-                        onChange={(e) =>
-                          setRevokePerfil(
-                            e.target.value as "GERENTE" | "OPERADOR"
-                          )
-                        }
-                        disabled={adminBusy}
-                      >
-                        <option value="GERENTE">Gerente</option>
-                        <option value="OPERADOR">Operador</option>
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void revogarAdmin()}
+              !isSelf && (
+                <div className="flex flex-wrap items-end gap-3">
+                  <label className="block text-sm">
+                    <span className="mb-1 block font-medium text-violet-950">
+                      Perfil após revogar
+                    </span>
+                    <select
+                      className="rounded-lg border border-violet-200 bg-white px-3 py-2"
+                      value={revokePerfil}
+                      onChange={(e) =>
+                        setRevokePerfil(
+                          e.target.value as "GERENTE" | "OPERADOR"
+                        )
+                      }
                       disabled={adminBusy}
-                      className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-sm font-medium text-violet-950 hover:bg-violet-100 disabled:opacity-50"
                     >
-                      {adminBusy ? "Aguarde…" : "Revogar acesso administrador"}
-                    </button>
-                  </div>
-                )}
-              </>
+                      <option value="GERENTE">Gerente</option>
+                      <option value="OPERADOR">Operador</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => void revogarAdmin()}
+                    disabled={adminBusy}
+                    className="rounded-lg border border-violet-300 bg-white px-4 py-2 text-sm font-medium text-violet-950 hover:bg-violet-100 disabled:opacity-50"
+                  >
+                    {adminBusy ? "Aguarde…" : "Revogar acesso administrador"}
+                  </button>
+                </div>
+              )
             ) : (
-              <>
-                <p className="mt-1 text-xs text-violet-900/80">
-                  Concede menu Administração e acesso total. E-mail e senha do
-                  usuário não mudam — só o nível de permissão. Pode revogar
-                  depois (volta Gerente ou Operador).
-                  {!usuarioAtivo
-                    ? " Ative o usuário antes de conceder administrador."
-                    : ""}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void concederAdmin()}
-                  disabled={adminBusy || !usuarioAtivo}
-                  className="mt-3 rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800 disabled:opacity-50"
-                >
-                  {adminBusy ? "Aguarde…" : "Conceder acesso administrador"}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => void concederAdmin()}
+                disabled={adminBusy || !usuarioAtivo}
+                className="rounded-lg bg-violet-700 px-4 py-2 text-sm font-medium text-white hover:bg-violet-800 disabled:opacity-50"
+              >
+                {adminBusy ? "Aguarde…" : "Conceder acesso administrador"}
+              </button>
             )}
-          </div>
+          </section>
         )}
 
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 sm:col-span-2">
-          <p className="text-sm font-medium text-slate-800">
-            Estoques{form.perfil === "OPERADOR" ? " *" : ""}
-          </p>
-          <p className="mt-0.5 text-xs text-slate-500">
-            Selecione um ou mais. O primeiro marcado vira o estoque principal.
-            {form.perfil === "OPERADOR"
-              ? " Obrigatório: o Operador só vê saldos e opera nos estoques marcados."
-              : " Opcional para Gerente (hoje Gerente vê todos os estoques ativos)."}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-3">
+        <SectionCard
+          title={
+            form.perfil === "OPERADOR" ? "Estoques *" : "Estoques"
+          }
+          subtitle={
+            form.perfil === "OPERADOR"
+              ? "Obrigatório. O primeiro marcado é o estoque principal; o Operador só opera nos marcados."
+              : "Opcional para Gerente (vê todos os estoques ativos). O primeiro marcado é o principal."
+          }
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
             {filiaisForm.map((f) => {
               const checked = form.filialIds.includes(f.id);
               return (
-                <label
+                <ToggleRow
                   key={f.id}
-                  className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => {
-                      setForm((prev) => {
-                        const next = checked
-                          ? prev.filialIds.filter((id) => id !== f.id)
-                          : [...prev.filialIds, f.id];
-                        return { ...prev, filialIds: next };
-                      });
-                    }}
-                  />
-                  <span>
-                    {f.sigla} — {f.nome}
-                    {f.ativo === false ? " (inativa)" : ""}
-                  </span>
-                </label>
+                  checked={checked}
+                  title={`${f.sigla} — ${f.nome}`}
+                  hint={f.ativo === false ? "Estoque inativo" : undefined}
+                  onChange={(on) => {
+                    setForm((prev) => {
+                      const has = prev.filialIds.includes(f.id);
+                      if (on === has) return prev;
+                      return {
+                        ...prev,
+                        filialIds: on
+                          ? [...prev.filialIds, f.id]
+                          : prev.filialIds.filter((id) => id !== f.id),
+                      };
+                    });
+                  }}
+                />
               );
             })}
-            {filiaisForm.length === 0 && (
-              <span className="text-xs text-slate-400">
-                Nenhum estoque cadastrado
-              </span>
-            )}
           </div>
-        </div>
+          {filiaisForm.length === 0 && (
+            <p className="text-xs text-slate-400">Nenhum estoque cadastrado</p>
+          )}
+        </SectionCard>
 
-        {!editId && (
-          <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:col-span-2">
-            Ao cadastrar, o sistema gera uma senha provisória, envia e-mail de
-            acesso e exige troca no primeiro login. Foto e permissões já podem
-            ser definidas aqui.
-          </p>
-        )}
-
-        <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 sm:col-span-2">
-          <p className="text-sm font-medium text-slate-800">Foto de perfil</p>
-          <div className="mt-3 flex flex-wrap items-center gap-4">
+        <SectionCard title="Foto de perfil">
+          <div className="flex flex-wrap items-center gap-4">
             {avatarSrc ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
@@ -788,83 +857,62 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
               </button>
             )}
           </div>
-        </div>
+        </SectionCard>
 
-        <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 sm:col-span-2">
-          <p className="text-sm font-medium text-slate-800">
-            Acesso a telas e ações
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {isAdminForm
+        <SectionCard
+          title="Acesso a telas e ações"
+          subtitle={
+            isAdminForm
               ? "Admin tem acesso total (área Admin inclusa). Não é editável."
               : form.perfil === "OPERADOR"
-                ? "Operador: telas operacionais. Aprovações, cadastros e inventário exigem perfil Gerente."
-                : "Cada página de cadastro tem sua própria caixa. Marque a página para liberar tudo nela; detalhe para só consultar ou só cadastrar."}
-          </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                ? "Telas operacionais. Aprovações, cadastros e inventário exigem perfil Gerente."
+                : "Marque a página para liberar tudo; use Detalhar para só consultar ou só cadastrar."
+          }
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
             {PERMISSAO_KEYS_LISTA.map((key) => {
               const editaveis = permissoesEditaveisParaPerfil(form.perfil);
               const locked = isAdminForm || !editaveis.includes(key);
               return (
-                <div key={key} className="space-y-1.5">
-                  <label
-                    className={`flex items-start gap-2 text-sm ${
-                      locked ? "opacity-60" : ""
+                <div
+                  key={key}
+                  className={`space-y-1.5 ${
+                    key === "dashboard" ? "sm:col-span-2" : ""
+                  }`}
+                >
+                  <ToggleRow
+                    checked={Boolean(form.permissoes[key])}
+                    disabled={locked}
+                    title={PERMISSAO_LABELS[key].label}
+                    hint={`${PERMISSAO_LABELS[key].descricao}${
+                      locked && !isAdminForm ? " (exige Gerente)" : ""
                     }`}
-                  >
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={Boolean(form.permissoes[key])}
-                      disabled={locked}
-                      onChange={() => togglePermissao(key)}
-                    />
-                    <span>
-                      <span className="font-medium">
-                        {PERMISSAO_LABELS[key].label}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-slate-500">
-                        {PERMISSAO_LABELS[key].descricao}
-                        {locked && !isAdminForm ? " (exige Gerente)" : ""}
-                      </span>
-                    </span>
-                  </label>
+                    onChange={() => togglePermissao(key)}
+                  />
                   {key === "dashboard" && (
-                    <div className="ml-6 space-y-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-2">
+                    <div className="space-y-1.5 rounded-lg border border-slate-200 bg-slate-50/80 px-2.5 py-2">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                         Cards do Dashboard
                       </p>
-                      {DASHBOARD_KPI_KEYS.map((kpi) => {
-                        const kpiLocked =
-                          locked ||
-                          isAdminForm ||
-                          !editaveis.includes(kpi) ||
-                          !form.permissoes.dashboard;
-                        return (
-                          <label
-                            key={kpi}
-                            className={`flex items-start gap-2 text-sm ${
-                              kpiLocked ? "opacity-60" : ""
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              className="mt-0.5"
+                      <div className="grid gap-1.5 sm:grid-cols-2">
+                        {DASHBOARD_KPI_KEYS.map((kpi) => {
+                          const kpiLocked =
+                            locked ||
+                            isAdminForm ||
+                            !editaveis.includes(kpi) ||
+                            !form.permissoes.dashboard;
+                          return (
+                            <ToggleRow
+                              key={kpi}
                               checked={Boolean(form.permissoes[kpi])}
                               disabled={kpiLocked}
+                              title={PERMISSAO_LABELS[kpi].label}
+                              hint={PERMISSAO_LABELS[kpi].descricao}
                               onChange={() => togglePermissao(kpi)}
                             />
-                            <span>
-                              <span className="font-medium">
-                                {PERMISSAO_LABELS[kpi].label}
-                              </span>
-                              <span className="mt-0.5 block text-xs text-slate-500">
-                                {PERMISSAO_LABELS[kpi].descricao}
-                              </span>
-                            </span>
-                          </label>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -872,7 +920,7 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
             })}
           </div>
 
-          <div className="mt-3 space-y-2">
+          <div className="mt-4 space-y-2">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               Páginas de cadastro
             </p>
@@ -892,11 +940,15 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
               return (
                 <div
                   key={pagina.id}
-                  className={`rounded-lg border border-slate-200 bg-white ${
-                    locked ? "opacity-60" : ""
+                  className={`rounded-lg border ${
+                    locked
+                      ? "border-slate-100 bg-slate-50/60 opacity-55"
+                      : full || ver
+                        ? "border-brand/30 bg-brand/5"
+                        : "border-slate-200 bg-white"
                   }`}
                 >
-                  <div className="flex items-start gap-2 px-3 py-2.5">
+                  <div className="flex items-start gap-3 px-3 py-2.5">
                     <input
                       ref={(el) => {
                         paginaRefs.current[pagina.id] = el;
@@ -935,99 +987,58 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
                     </div>
                   </div>
                   {aberto && (
-                    <div className="space-y-2 border-t border-slate-100 px-3 py-2.5 pl-9">
-                      <label className="flex items-start gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={ver}
-                          disabled={locked}
-                          onChange={() => togglePermissao(pagina.ver)}
-                        />
-                        <span>
-                          <span className="font-medium">Consultar</span>
-                          <span className="mt-0.5 block text-xs text-slate-500">
-                            Abrir a página {pagina.label.toLowerCase()}
-                          </span>
-                        </span>
-                      </label>
-                      <label
-                        className={`flex items-start gap-2 text-sm ${
+                    <div className="grid gap-2 border-t border-slate-100 px-3 py-2.5 sm:grid-cols-2">
+                      <ToggleRow
+                        checked={ver}
+                        disabled={locked}
+                        title="Consultar"
+                        hint={`Abrir a página ${pagina.label.toLowerCase()}`}
+                        onChange={() => togglePermissao(pagina.ver)}
+                      />
+                      <ToggleRow
+                        checked={editar}
+                        disabled={
                           isAdminForm || !editaveis.includes(pagina.editar)
-                            ? "opacity-60"
-                            : ""
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={editar}
-                          disabled={
-                            isAdminForm || !editaveis.includes(pagina.editar)
-                          }
-                          onChange={() => togglePermissao(pagina.editar)}
-                        />
-                        <span>
-                          <span className="font-medium">Cadastrar / editar</span>
-                          <span className="mt-0.5 block text-xs text-slate-500">
-                            Botões de criar e alterar nesta página
-                          </span>
-                        </span>
-                      </label>
+                        }
+                        title="Cadastrar / editar"
+                        hint="Botões de criar e alterar nesta página"
+                        onChange={() => togglePermissao(pagina.editar)}
+                      />
                     </div>
                   )}
                 </div>
               );
             })}
           </div>
-        </div>
+        </SectionCard>
 
-        <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 sm:col-span-2">
-          <p className="text-sm font-medium text-slate-800">
-            Notificações no sistema (sino)
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Marque os eventos que aparecem no sino e em toast. Desmarcar um
-            evento remove o aviso no sistema. Senha provisória sempre vai por
-            e-mail (fora desta lista).
-          </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <SectionCard
+          title="Notificações"
+          subtitle="Eventos no sino e em toast. Senha provisória sempre vai por e-mail (fora desta lista)."
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
             {ALERTA_EVENTOS.map((ev) => (
-              <label key={ev} className="flex items-start gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={Boolean(form.alertasEmail[ev])}
-                  onChange={() => toggleAlerta(ev)}
-                />
-                <span>{ALERTA_EVENTO_LABELS[ev]}</span>
-              </label>
+              <ToggleRow
+                key={ev}
+                checked={Boolean(form.alertasEmail[ev])}
+                title={ALERTA_EVENTO_LABELS[ev]}
+                onChange={() => toggleAlerta(ev)}
+              />
             ))}
           </div>
-          <label className="mt-4 flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5"
+          <div className="mt-3">
+            <ToggleRow
               checked={form.receberAlertasEmail}
-              onChange={(e) =>
-                setForm({ ...form, receberAlertasEmail: e.target.checked })
+              title="Também enviar esses eventos por e-mail"
+              hint="Envia e-mail dos eventos marcados (estoque, preço, transferência, RMA). Alerta de retorno usa a lista do lançamento."
+              onChange={(on) =>
+                setForm({ ...form, receberAlertasEmail: on })
               }
             />
-            <span>
-              <span className="font-medium">
-                Também enviar esses eventos por e-mail
-              </span>
-              <span className="mt-0.5 block text-xs font-normal text-slate-500">
-                Envia e-mail dos eventos marcados acima (estoque, preço,
-                transferência, RMA), se o master estiver ligado. Alerta de
-                retorno usa a lista de e-mails do lançamento (independente desta
-                caixa).
-              </span>
-            </span>
-          </label>
-        </div>
+          </div>
+        </SectionCard>
 
-        <div className="flex flex-wrap gap-2 sm:col-span-2">
+        <div className="flex flex-wrap gap-2 pt-1">
           <button
             type="submit"
             disabled={saving || uploading}

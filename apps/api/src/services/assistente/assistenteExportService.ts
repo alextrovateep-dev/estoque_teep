@@ -8,6 +8,12 @@ import { brandAssetBuffer, brandAssetDataUri } from "../../lib/brandAssets";
 import { relacionamentosDoProduto } from "../parceiroHistoricoService";
 import { dateStampSaoPaulo } from "../saldosExportService";
 import type { AssistenteExportFormat } from "./assistenteExportTokenStore";
+import {
+  assertFilialAtiva,
+  findProdutoByCodigoOuNome,
+  operadorEscopoFilialIds,
+  resolveFilialId,
+} from "./assistenteScope";
 
 export type DossieSaldo = {
   filialSigla: string;
@@ -76,86 +82,6 @@ function formatUltimaData(iso: string): string {
   }).format(d);
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function resolveFilialId(
-  user: AuthUser,
-  requested?: string | null,
-  hint?: string | null
-): string | null {
-  if (user.perfil === "OPERADOR") {
-    const ids =
-      user.filialIds?.length > 0
-        ? user.filialIds
-        : user.filialId
-          ? [user.filialId]
-          : [];
-    if (ids.length === 0) return null;
-    const pick = requested || hint;
-    if (pick && ids.includes(pick)) return pick;
-    return user.filialId && ids.includes(user.filialId)
-      ? user.filialId
-      : ids[0]!;
-  }
-  const id = requested || hint || null;
-  if (id && !UUID_RE.test(id)) {
-    throw new AppError(400, "filialId inválido");
-  }
-  return id;
-}
-
-async function findProdutoByCodigoOuNome(codigoOuNome: string) {
-  const q = codigoOuNome.trim();
-  const select = {
-    id: true,
-    codigo: true,
-    descricao: true,
-    unidade: true,
-    precoUnitario: true,
-    categoria: { select: { nome: true } },
-  } as const;
-
-  const exact = await prisma.produto.findFirst({
-    where: { ativo: true, codigo: { equals: q, mode: "insensitive" } },
-    select,
-  });
-  if (exact) return exact;
-
-  const contains = await prisma.produto.findFirst({
-    where: {
-      ativo: true,
-      OR: [
-        { codigo: { contains: q, mode: "insensitive" } },
-        { descricao: { contains: q, mode: "insensitive" } },
-      ],
-    },
-    select,
-    orderBy: { codigo: "asc" },
-  });
-  if (contains) return contains;
-
-  const tokens = q
-    .split(/[\s,/._-]+/)
-    .map((t) => t.trim())
-    .filter((t) => t.length >= 2);
-  if (tokens.length < 2) return null;
-
-  return prisma.produto.findFirst({
-    where: {
-      ativo: true,
-      AND: tokens.map((t) => ({
-        OR: [
-          { codigo: { contains: t, mode: "insensitive" } },
-          { descricao: { contains: t, mode: "insensitive" } },
-        ],
-      })),
-    },
-    select,
-    orderBy: { codigo: "asc" },
-  });
-}
-
 /** Carrega dossiê: produto + estoque + fornecedores + clientes. */
 export async function carregarDossieProduto(
   user: AuthUser,
@@ -163,13 +89,7 @@ export async function carregarDossieProduto(
   opts: { filialId?: string | null; filialHint?: string | null } = {}
 ): Promise<DossieProduto> {
   const filialId = resolveFilialId(user, opts.filialId, opts.filialHint);
-  if (filialId) {
-    const f = await prisma.filial.findFirst({
-      where: { id: filialId, ativo: true },
-      select: { id: true, sigla: true },
-    });
-    if (!f) throw new AppError(404, "Filial não encontrada");
-  }
+  if (filialId) await assertFilialAtiva(filialId);
 
   const produto = await findProdutoByCodigoOuNome(codigoOuNome);
   if (!produto) {
@@ -177,10 +97,15 @@ export async function carregarDossieProduto(
   }
 
   const preco = Number(produto.precoUnitario);
+  const opFiliais = operadorEscopoFilialIds(user);
   const estoques = await prisma.estoque.findMany({
     where: {
       produtoId: produto.id,
-      ...(filialId ? { filialId } : {}),
+      ...(filialId
+        ? { filialId }
+        : opFiliais
+          ? { filialId: { in: opFiliais } }
+          : { filial: { ativo: true } }),
     },
     select: {
       saldoAtual: true,
@@ -201,7 +126,9 @@ export async function carregarDossieProduto(
   const qtyTotal = saldos.reduce((s, r) => s + r.qty, 0);
   const valorTotal = Math.round(qtyTotal * preco * 100) / 100;
 
-  const rel = await relacionamentosDoProduto(produto.id);
+  const rel = await relacionamentosDoProduto(produto.id, {
+    filialIds: opFiliais,
+  });
 
   let escopo = "Consolidado (todas as filiais)";
   if (filialId) {
