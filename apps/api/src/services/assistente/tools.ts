@@ -556,7 +556,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_partner_products",
     description:
-      "Histórico real de um cliente OU fornecedor pelo nome: comprados = produtos que NÓS compramos dele (ENTRADA de compra); vendidos = produtos que NÓS enviamos/vendemos a ele (SAIDA). Ignora estornos e devoluções. Use para 'o que a Facchini já comprou', 'o que já compramos do fornecedor X'.",
+      "Histórico real de um cliente OU fornecedor pelo nome: comprados = produtos que NÓS compramos dele (ENTRADA de compra); vendidos = produtos que NÓS enviamos/vendemos a ele (SAIDA); rma = entrada/saída de manutenção RMA (não é compra). Ignora estornos e devoluções. Use para 'o que a Facchini já comprou', 'o que já compramos do fornecedor X', 'o que entrou em RMA do cliente Y'.",
     parameters: {
       type: "object",
       properties: {
@@ -571,7 +571,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_product_partners",
     description:
-      "Histórico real de um produto: fornecedores = de quem NÓS já compramos (ENTRADA de compra); clientes = para quem NÓS já vendemos/enviamos (SAIDA). Ignora estornos e devoluções. Use para 'quem fornece o produto X', 'quais clientes já compraram Y'.",
+      "Histórico real de um produto: fornecedores = de quem NÓS já compramos (ENTRADA de compra); clientes = para quem NÓS já vendemos/enviamos (SAIDA). Ignora estornos, devoluções e movimentos de RMA (manutenção). Use para 'quem fornece o produto X', 'quais clientes já compraram Y'.",
     parameters: {
       type: "object",
       properties: {
@@ -3266,12 +3266,14 @@ async function getPartnerProducts(
     },
     explicacao: {
       comprados:
-        "Produtos que NÓS compramos deste cadastro (ENTRADA concluída de compra; ignora estorno e devolução)",
+        "Produtos que NÓS compramos deste cadastro (ENTRADA concluída de compra; ignora estorno, devolução e RMA)",
       vendidos:
-        "Produtos que NÓS vendemos/enviamos a este cadastro (SAIDA concluída; ignora estorno e devolução)",
+        "Produtos que NÓS vendemos/enviamos a este cadastro (SAIDA concluída; ignora estorno, devolução e RMA)",
+      rma: "Produtos em entrada/saída de RMA (manutenção) — não conta como compra nem venda",
     },
     comprados: rel.comprados,
     vendidos: rel.vendidos,
+    rma: rel.rma,
   };
 }
 

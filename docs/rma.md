@@ -20,7 +20,7 @@
 
 ## Etapas do item
 
-`AGUARDANDO_RECEBIMENTO` → checklist (se o produto tiver template) + diagnóstico/plano/peças → **Concluir diagnóstico** → `AGUARDANDO_ORCAMENTO` → (página Orçamento: valores + **Fechar orçamento** + **Gerar PDF** + orçar com o cliente) → `AGUARDANDO_APROVACAO` → aprovar por item → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar (**retorno**) → `FINALIZADO`
+`AGUARDANDO_RECEBIMENTO` (**Aguardando inspeção / diagnóstico** — o estoque RMA já entra na abertura) → checklist de inspeção (se o produto tiver template) + diagnóstico/plano/peças → **Concluir diagnóstico** → `AGUARDANDO_ORCAMENTO` → (página Orçamento: valores + **Fechar orçamento** + **Gerar PDF** + orçar com o cliente) → `AGUARDANDO_APROVACAO` → aprovar por item → `AGUARDANDO_MANUTENCAO` → manutenção realizada → `AGUARDANDO_LIBERACAO` → checklist liberação → `AGUARDANDO_ENVIO` → Devolver/Trocar (**retorno**) → `FINALIZADO`
 
 **Fechar orçamento não finaliza o RMA e não trava valores.** Abre a etapa para o comercial gerar PDF, negociar, alterar valores e gerar um PDF novo. O processo só vai a `FECHADO` quando todos os itens tiverem retorno (ou cancelamento).
 
@@ -62,4 +62,4 @@ Recusa do orçamento → `NAO_APROVADO`. Reabrir (só enquanto fechado, ainda n�
 | GET | `/rma/:id/orcamento/arquivo.pdf` — orçamento histórico (aprovado/recusado; RMA fechado) |
 | GET | `/rma/:id/itens/:itemId/laudo/RECEBIMENTO/pdf` · `…/LIBERACAO/pdf` — laudos de entrada/saída |
 
-Gate de avanço: plano/diagnóstico; checklist de entrada só se o produto tiver template (não anexo de laudo).
+Gate de avanço: plano/diagnóstico; checklist de inspeção só se o produto tiver template (não anexo de laudo).

@@ -2504,7 +2504,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
   type LinhaResumo = { key: string; texto: string };
   const linhas: LinhaResumo[] = [];
 
-  // Laudo no sistema = diagnóstico (e, se houver, checklist de entrada concluído).
+  // Laudo no sistema = diagnóstico (e, se houver, checklist de inspeção concluído).
   for (const item of proc.itens || []) {
     if (item.status === "CANCELADO") continue;
     const prod = `${item.produto.codigo}${
@@ -2527,7 +2527,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
     if (recv) {
       linhas.push({
         key: `chk:${item.id}`,
-        texto: `${prod} — checklist de entrada concluído (ver em ${appUrl}/rma/${id})`,
+        texto: `${prod} — checklist de inspeção concluído (ver em ${appUrl}/rma/${id})`,
       });
     }
   }
@@ -2561,7 +2561,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
   if (linhas.length === 0) {
     throw new AppError(
       400,
-      "Nenhum diagnóstico ou checklist de entrada concluído para notificar"
+      "Nenhum diagnóstico ou checklist de inspeção concluído para notificar"
     );
   }
 

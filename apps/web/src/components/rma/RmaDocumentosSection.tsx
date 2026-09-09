@@ -150,7 +150,7 @@ export function RmaDocumentosSection({
           Documentos
         </h3>
         <p className="mt-2 text-sm text-slate-500">
-          Quando houver laudo de entrada, laudo de liberação ou orçamento, eles
+          Quando houver laudo de inspeção, laudo de liberação ou orçamento, eles
           aparecem aqui — inclusive depois do RMA fechado.
         </p>
       </section>
@@ -230,7 +230,7 @@ export function RmaDocumentosSection({
                       className="rounded-lg border bg-white px-2.5 py-1 text-xs font-medium hover:bg-slate-50"
                       onClick={() => setViewer({ item, tipo: "entrada" })}
                     >
-                      Ver laudo entrada
+                      Ver laudo inspeção
                     </button>
                     <button
                       type="button"
@@ -243,7 +243,7 @@ export function RmaDocumentosSection({
                         )
                       }
                     >
-                      {busy === `e-${item.id}` ? "…" : "PDF entrada"}
+                      {busy === `e-${item.id}` ? "…" : "PDF inspeção"}
                     </button>
                   </>
                 ) : null}
@@ -333,7 +333,7 @@ function DocumentoViewer({
   const { item, tipo } = state;
   const titulo =
     tipo === "entrada"
-      ? "Laudo de entrada"
+      ? "Laudo de inspeção"
       : tipo === "liberacao"
         ? "Laudo de saída"
         : "Orçamento";

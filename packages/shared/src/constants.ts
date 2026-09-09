@@ -91,7 +91,8 @@ export const RMA_ITEM_ETAPA = [
 export type RmaItemEtapa = (typeof RMA_ITEM_ETAPA)[number];
 
 export const RMA_ITEM_ETAPA_LABELS: Record<RmaItemEtapa, string> = {
-  AGUARDANDO_RECEBIMENTO: "Aguardando recebimento",
+  /** Estoque já entra na abertura do RMA; esta etapa é inspeção + diagnóstico. */
+  AGUARDANDO_RECEBIMENTO: "Aguardando inspeção / diagnóstico",
   AGUARDANDO_ORCAMENTO: "Aguardando orçamento",
   AGUARDANDO_APROVACAO: "Aguardando aprovação",
   AGUARDANDO_MANUTENCAO: "Aguardando manutenção",
@@ -99,7 +100,7 @@ export const RMA_ITEM_ETAPA_LABELS: Record<RmaItemEtapa, string> = {
   NAO_APROVADO: "Não aprovado",
   AGUARDANDO_ENVIO: "Aguardando envio",
   FINALIZADO: "Finalizado",
-  AGUARDANDO_LAUDO: "Aguardando recebimento",
+  AGUARDANDO_LAUDO: "Aguardando inspeção / diagnóstico",
 };
 
 /** Etapas em que Devolver/Trocar são permitidos */
@@ -215,10 +216,10 @@ export function rmaEtapaEmRecebimento(etapa: string | null | undefined): boolean
 }
 
 export const MSG_CHECKLIST_RECEBIMENTO_PENDENTE =
-  "Conclua o checklist de recebimento antes de concluir o diagnóstico";
+  "Conclua o checklist de inspeção antes de concluir o diagnóstico";
 
 /**
- * Exige checklist de entrada se o produto tem template ou a execução já começou.
+ * Exige checklist de inspeção (entrada) se o produto tem template ou a execução já começou.
  * `temTemplateRecebimento: null` = ainda não sabemos (bloqueia, para não liberar cedo).
  */
 export function mensagemBloqueioDiagnostico(opts: {

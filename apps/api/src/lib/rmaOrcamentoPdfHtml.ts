@@ -199,7 +199,7 @@ export function htmlLaudoChecklist(
   </section>`;
 }
 
-/** Laudo de entrada (recebimento + diagnóstico). */
+/** Laudo de inspeção (checklist de recebimento + diagnóstico). */
 export function htmlLaudoRecebimento(
   itens: ItemLaudoPdf[],
   imageDataUri: (url: string) => string | null
@@ -210,7 +210,7 @@ export function htmlLaudoRecebimento(
       "Checklist, fotos e observações registrados na entrada do equipamento.",
     papelPor: "Recebido por",
     incluirDiagnostico: true,
-    emptyChecklistMsg: "Não há checklist de recebimento para este item.",
+    emptyChecklistMsg: "Não há checklist de inspeção para este item.",
   });
 }
 

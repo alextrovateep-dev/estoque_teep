@@ -34,6 +34,8 @@ export type ClienteRelacionamentos = {
   comprados: ProdutoRelacionado[];
   /** SAIDA de venda/entrega — o que vendemos/enviamos a eles (cliente) */
   vendidos: ProdutoRelacionado[];
+  /** Entrada/saída de RMA (manutenção) — não é compra nem venda */
+  rma: ProdutoRelacionado[];
 };
 
 export type ProdutoRelacionamentos = {
@@ -48,12 +50,18 @@ export type ClienteResumoItem = {
   clienteId: string;
   comprados: number;
   vendidos: number;
+  rma: number;
 };
 
 export type ProdutoResumoItem = {
   produtoId: string;
   fornecedores: number;
   clientes: number;
+};
+
+export type HistoricoParceiroTipoFlags = {
+  rmaEntradaEstoque?: boolean;
+  rmaSaidaCliente?: boolean;
 };
 
 function num(v: { toString(): string } | number): number {
@@ -73,16 +81,34 @@ export function isTipoHistoricoParceiroExcluido(nomeTipo: string): boolean {
   return false;
 }
 
+/** Tipo de movimentação amarrado ao fluxo RMA (flags ou nome). */
+export function isTipoHistoricoRma(
+  nomeTipo: string,
+  flags?: HistoricoParceiroTipoFlags | null
+): boolean {
+  if (flags?.rmaEntradaEstoque || flags?.rmaSaidaCliente) return true;
+  const n = nomeTipo.trim().toLowerCase();
+  return /\brma\b/.test(n);
+}
+
 /** Classifica operação para os buckets da feature (null = ignorar). */
 export function bucketHistoricoParceiro(
   operacao: string,
-  nomeTipo: string
-): "comprados" | "vendidos" | null {
+  nomeTipo: string,
+  flags?: HistoricoParceiroTipoFlags | null
+): "comprados" | "vendidos" | "rma" | null {
   if (isTipoHistoricoParceiroExcluido(nomeTipo)) return null;
+  if (isTipoHistoricoRma(nomeTipo, flags)) return "rma";
   if (operacao === "ENTRADA") return "comprados";
   if (operacao === "SAIDA") return "vendidos";
   return null;
 }
+
+const tipoSelectHistorico = {
+  nome: true,
+  rmaEntradaEstoque: true,
+  rmaSaidaCliente: true,
+} as const;
 
 /** Movimentos válidos para o histórico parceiro↔produto. */
 export function whereHistoricoParceiro(
@@ -124,7 +150,18 @@ export function whereHistoricoParceiro(
   };
 }
 
-/** Produtos já comprados (ENTRADA) e já vendidos (SAIDA) para um cadastro. */
+function flagsDoTipo(tipo: {
+  nome: string;
+  rmaEntradaEstoque?: boolean;
+  rmaSaidaCliente?: boolean;
+}): HistoricoParceiroTipoFlags {
+  return {
+    rmaEntradaEstoque: Boolean(tipo.rmaEntradaEstoque),
+    rmaSaidaCliente: Boolean(tipo.rmaSaidaCliente),
+  };
+}
+
+/** Produtos comprados, vendidos e em RMA para um cadastro. */
 export async function relacionamentosDoCliente(
   clienteId: string,
   opts?: { filialIds?: string[] | null }
@@ -135,7 +172,7 @@ export async function relacionamentosDoCliente(
       operacao: true,
       quantidade: true,
       dataMovimento: true,
-      tipo: { select: { nome: true } },
+      tipo: { select: tipoSelectHistorico },
       produto: {
         select: {
           id: true,
@@ -155,16 +192,26 @@ export async function relacionamentosDoCliente(
   });
 
   const compradosRows = rows.filter(
-    (r) => bucketHistoricoParceiro(r.operacao, r.tipo.nome) === "comprados"
+    (r) =>
+      bucketHistoricoParceiro(r.operacao, r.tipo.nome, flagsDoTipo(r.tipo)) ===
+      "comprados"
   );
   const vendidosRows = rows.filter(
-    (r) => bucketHistoricoParceiro(r.operacao, r.tipo.nome) === "vendidos"
+    (r) =>
+      bucketHistoricoParceiro(r.operacao, r.tipo.nome, flagsDoTipo(r.tipo)) ===
+      "vendidos"
+  );
+  const rmaRows = rows.filter(
+    (r) =>
+      bucketHistoricoParceiro(r.operacao, r.tipo.nome, flagsDoTipo(r.tipo)) ===
+      "rma"
   );
 
   return {
     clienteId,
     comprados: aggregateProdutos(compradosRows),
     vendidos: aggregateProdutos(vendidosRows),
+    rma: aggregateProdutos(rmaRows),
   };
 }
 
@@ -179,7 +226,7 @@ export async function relacionamentosDoProduto(
       operacao: true,
       quantidade: true,
       dataMovimento: true,
-      tipo: { select: { nome: true } },
+      tipo: { select: tipoSelectHistorico },
       cliente: {
         select: { id: true, nome: true, tipo: true },
       },
@@ -191,14 +238,22 @@ export async function relacionamentosDoProduto(
     rows.filter(
       (r) =>
         r.cliente &&
-        bucketHistoricoParceiro(r.operacao, r.tipo.nome) === "comprados"
+        bucketHistoricoParceiro(
+          r.operacao,
+          r.tipo.nome,
+          flagsDoTipo(r.tipo)
+        ) === "comprados"
     )
   );
   const clientes = aggregateParceiros(
     rows.filter(
       (r) =>
         r.cliente &&
-        bucketHistoricoParceiro(r.operacao, r.tipo.nome) === "vendidos"
+        bucketHistoricoParceiro(
+          r.operacao,
+          r.tipo.nome,
+          flagsDoTipo(r.tipo)
+        ) === "vendidos"
     )
   );
 
@@ -209,25 +264,37 @@ export async function relacionamentosDoProduto(
 export async function resumoRelacionamentosClientes(): Promise<
   ClienteResumoItem[]
 > {
+  // Sem distinct por operação: ENTRADA de compra e ENTRADA de RMA do mesmo
+  // produto precisam ser classificadas em buckets diferentes.
   const rows = await prisma.movimentacao.findMany({
     where: whereHistoricoParceiro(),
     select: {
       clienteId: true,
       produtoId: true,
       operacao: true,
-      tipo: { select: { nome: true } },
+      tipo: { select: tipoSelectHistorico },
     },
-    distinct: ["clienteId", "produtoId", "operacao"],
   });
 
-  const map = new Map<string, { comprados: Set<string>; vendidos: Set<string> }>();
+  const map = new Map<
+    string,
+    { comprados: Set<string>; vendidos: Set<string>; rma: Set<string> }
+  >();
   for (const r of rows) {
     if (!r.clienteId) continue;
-    const bucket = bucketHistoricoParceiro(r.operacao, r.tipo.nome);
+    const bucket = bucketHistoricoParceiro(
+      r.operacao,
+      r.tipo.nome,
+      flagsDoTipo(r.tipo)
+    );
     if (!bucket) continue;
     let entry = map.get(r.clienteId);
     if (!entry) {
-      entry = { comprados: new Set(), vendidos: new Set() };
+      entry = {
+        comprados: new Set(),
+        vendidos: new Set(),
+        rma: new Set(),
+      };
       map.set(r.clienteId, entry);
     }
     entry[bucket].add(r.produtoId);
@@ -237,6 +304,7 @@ export async function resumoRelacionamentosClientes(): Promise<
     clienteId,
     comprados: sets.comprados.size,
     vendidos: sets.vendidos.size,
+    rma: sets.rma.size,
   }));
 }
 
@@ -250,9 +318,8 @@ export async function resumoRelacionamentosProdutos(): Promise<
       produtoId: true,
       clienteId: true,
       operacao: true,
-      tipo: { select: { nome: true } },
+      tipo: { select: tipoSelectHistorico },
     },
-    distinct: ["produtoId", "clienteId", "operacao"],
   });
 
   const map = new Map<
@@ -261,8 +328,12 @@ export async function resumoRelacionamentosProdutos(): Promise<
   >();
   for (const r of rows) {
     if (!r.clienteId) continue;
-    const bucket = bucketHistoricoParceiro(r.operacao, r.tipo.nome);
-    if (!bucket) continue;
+    const bucket = bucketHistoricoParceiro(
+      r.operacao,
+      r.tipo.nome,
+      flagsDoTipo(r.tipo)
+    );
+    if (!bucket || bucket === "rma") continue;
     let entry = map.get(r.produtoId);
     if (!entry) {
       entry = { fornecedores: new Set(), clientes: new Set() };

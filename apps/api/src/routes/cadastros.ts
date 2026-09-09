@@ -1414,7 +1414,7 @@ cadastrosRouter.get("/clientes", async (req, res, next) => {
   }
 });
 
-/** Contagens de produtos comprados/vendidos por cadastro (histórico real). */
+/** Contagens de produtos comprados/vendidos/RMA por cadastro (histórico real). */
 cadastrosRouter.get("/clientes/relacionamentos-resumo", async (_req, res, next) => {
   try {
     res.json(await resumoRelacionamentosClientes());
@@ -1470,7 +1470,7 @@ cadastrosRouter.get("/clientes/:id", async (req, res, next) => {
   }
 });
 
-/** Produtos comprados (ENTRADA) e vendidos (SAIDA) para o cadastro. */
+/** Produtos comprados, vendidos e em RMA para o cadastro. */
 cadastrosRouter.get("/clientes/:id/relacionamentos", async (req, res, next) => {
   try {
     const exists = await prisma.cliente.findUnique({

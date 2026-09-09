@@ -229,7 +229,7 @@ export default function RmaChecklistNovoPage() {
 
   const tituloCriar =
     tipo === "RECEBIMENTO"
-      ? "Novo checklist de entrada"
+      ? "Novo checklist de inspeção"
       : "Novo checklist de liberação";
 
   return (

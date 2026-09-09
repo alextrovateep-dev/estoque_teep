@@ -288,7 +288,7 @@ Mapa de dados TEEP (PostgreSQL — só leitura via tools; sem SQL):
   · histórico de envios/retornos de demo/comodato → fluxo correspondente (somenteAbertos=false)
   · NUNCA diga que não tem acesso a comodato/demo/datas de alerta
 - Cliente/Fornecedor × Produto (histórico real) → get_partner_products | get_product_partners
-  · comprados/fornecedores = ENTRADA de compra; vendidos/clientes = SAIDA de venda/entrega; ignora Estorno e Devolução*
+  · comprados/fornecedores = ENTRADA de compra; vendidos/clientes = SAIDA de venda/entrega; rma = entrada/saída de manutenção (não é compra); ignora Estorno e Devolução*
 - Filial no TEEP = estoque (local de saldo), não unidade organizacional. Se citar sigla/nome (PLN, TBO…), passe filialSigla na tool — prevalece sobre o filtro do dashboard
 - PROCESSOS RMA (manutenção / devolução de equipamento — NÃO é o estoque com sigla RMA):
   · “RMAs abertos / pendentes / em aberto” → list_rma_processes com status=ABERTO

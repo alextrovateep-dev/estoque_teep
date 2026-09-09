@@ -497,7 +497,7 @@ export function RmaItemWorkflowPanel({
       <div className="rounded-lg border border-sky-200 bg-sky-50/50 p-3 text-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <p className="font-semibold text-sky-950">
-            Checklist {tipo === "RECEBIMENTO" ? "de entrada" : "de liberação"}
+            Checklist {tipo === "RECEBIMENTO" ? "de inspeção" : "de liberação"}
             {exec ? (
               <span className="ml-2 text-xs font-medium text-sky-800">
                 {exec.status === "CONCLUIDO"
@@ -529,12 +529,12 @@ export function RmaItemWorkflowPanel({
               {tipo !== "RECEBIMENTO"
                 ? "Cadastre o checklist do produto em Checklists RMA e inicie aqui."
                 : checklistConsultaFalhou && temChecklistRecebimento === null
-                  ? "Não foi possível verificar o checklist de entrada. Tente de novo, ou inicie se este produto tiver um."
+                  ? "Não foi possível verificar o checklist de inspeção. Tente de novo, ou inicie se este produto tiver um."
                   : temChecklistRecebimento === false
-                    ? "Não há checklist de entrada para este produto. Pode concluir o diagnóstico."
+                    ? "Não há checklist de inspeção para este produto. Pode concluir o diagnóstico."
                     : temChecklistRecebimento === true
-                      ? "Inicie e conclua o checklist de entrada antes de concluir o diagnóstico."
-                      : "Verificando se há checklist de entrada…"}
+                      ? "Inicie e conclua o checklist de inspeção antes de concluir o diagnóstico."
+                      : "Verificando se há checklist de inspeção…"}
             </p>
             {tipo === "RECEBIMENTO" && checklistConsultaFalhou ? (
               <button
@@ -747,7 +747,7 @@ export function RmaItemWorkflowPanel({
       return "Continuar checklist";
     }
     if (showRecv && !recv && temChecklistRecebimento === true) {
-      return "Abrir checklist de entrada";
+      return "Abrir checklist de inspeção";
     }
     if (showPlano && processoAberto) {
       return item.diagnostico ? "Editar diagnóstico" : "Diagnóstico e plano";
@@ -764,10 +764,10 @@ export function RmaItemWorkflowPanel({
   const resumoCard: string[] = [];
   if (recv) {
     resumoCard.push(
-      `Entrada: ${recv.status === "CONCLUIDO" ? "ok" : "em andamento"}`
+      `Inspeção: ${recv.status === "CONCLUIDO" ? "ok" : "em andamento"}`
     );
   } else if (showRecv && temChecklistRecebimento === true) {
-    resumoCard.push("Entrada: pendente");
+    resumoCard.push("Inspeção: pendente");
   }
   if (item.diagnostico) {
     resumoCard.push("Diagnóstico registrado");
@@ -1023,9 +1023,9 @@ export function RmaItemWorkflowPanel({
                       disabled={busy || checklistEntradaPendente}
                       title={
                         checklistAindaVerificando
-                          ? "Aguarde a verificação do checklist de entrada"
+                          ? "Aguarde a verificação do checklist de inspeção"
                           : checklistEntradaPendente
-                            ? "Conclua o checklist de entrada acima"
+                            ? "Conclua o checklist de inspeção acima"
                             : undefined
                       }
                       onClick={() =>
@@ -1041,12 +1041,12 @@ export function RmaItemWorkflowPanel({
                   {checklistEntradaPendente ? (
                     <p className="mt-2 text-xs text-amber-800">
                       {checklistAindaVerificando
-                        ? "Aguarde a verificação do checklist de entrada."
-                        : "Conclua o checklist de entrada acima para liberar o diagnóstico."}
+                        ? "Aguarde a verificação do checklist de inspeção."
+                        : "Conclua o checklist de inspeção acima para liberar o diagnóstico."}
                     </p>
                   ) : checklistConsultaFalhou && !recv ? (
                     <p className="mt-2 text-xs text-amber-800">
-                      Não foi possível verificar o checklist de entrada. Tente
+                      Não foi possível verificar o checklist de inspeção. Tente
                       de novo acima, ou conclua o diagnóstico.
                     </p>
                   ) : null}

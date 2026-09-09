@@ -1639,7 +1639,7 @@ export async function exportarLaudoRmaItemPdf(
     if (!exec && !temDiag) {
       throw new AppError(
         400,
-        "Laudo de entrada ainda não registrado neste item"
+        "Laudo de inspeção ainda não registrado neste item"
       );
     }
   } else if (!exec || exec.status !== "CONCLUIDO") {

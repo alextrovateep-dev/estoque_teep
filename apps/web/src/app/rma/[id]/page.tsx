@@ -1959,7 +1959,7 @@ export default function RmaDetalhePage() {
                     >
                       {ETAPA_LABEL[i.etapa || ""] ||
                         i.etapa ||
-                        "Aguardando recebimento"}
+                        "Aguardando inspeção / diagnóstico"}
                     </span>
                     <span className="rounded bg-slate-200/80 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
                       {ITEM_STATUS[i.status] || i.status}

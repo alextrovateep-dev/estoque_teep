@@ -29,6 +29,7 @@ type ResumoItem = {
   clienteId: string;
   comprados: number;
   vendidos: number;
+  rma: number;
 };
 
 type ProdutoRel = {
@@ -47,6 +48,7 @@ type Relacionamentos = {
   clienteId: string;
   comprados: ProdutoRel[];
   vendidos: ProdutoRel[];
+  rma: ProdutoRel[];
 };
 
 function formatData(iso: string) {
@@ -166,7 +168,7 @@ function ClientesPageInner() {
 
   function temHistorico(id: string) {
     const r = resumo[id];
-    return !!r && r.comprados + r.vendidos > 0;
+    return !!r && r.comprados + r.vendidos + (r.rma || 0) > 0;
   }
 
   return (
@@ -306,17 +308,19 @@ function ClientesPageInner() {
                     )}
                     {hist && r && (
                       <p className="mt-0.5 text-xs text-slate-500">
-                        {r.comprados > 0 && (
-                          <span>
-                            {r.comprados} comprado{r.comprados === 1 ? "" : "s"}
-                          </span>
-                        )}
-                        {r.comprados > 0 && r.vendidos > 0 && " · "}
-                        {r.vendidos > 0 && (
-                          <span>
-                            {r.vendidos} vendido{r.vendidos === 1 ? "" : "s"}
-                          </span>
-                        )}
+                        {[
+                          r.comprados > 0
+                            ? `${r.comprados} comprado${r.comprados === 1 ? "" : "s"}`
+                            : null,
+                          r.vendidos > 0
+                            ? `${r.vendidos} vendido${r.vendidos === 1 ? "" : "s"}`
+                            : null,
+                          (r.rma || 0) > 0
+                            ? `${r.rma} em RMA`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
                       </p>
                     )}
                   </div>
@@ -346,9 +350,9 @@ function ClientesPageInner() {
                     <p className="text-xs text-slate-400">Carregando…</p>
                   )}
                   {rel && (
-                    <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                       <RelacoesProdutos
-                        titulo="Compramos deles (entrada)"
+                        titulo="Compramos deles (compra)"
                         itens={rel.comprados}
                         vazio="Nenhuma compra registrada."
                       />
@@ -356,6 +360,11 @@ function ClientesPageInner() {
                         titulo="Vendemos / enviamos (saída)"
                         itens={rel.vendidos}
                         vazio="Nenhuma venda/envio registrado."
+                      />
+                      <RelacoesProdutos
+                        titulo="RMA (manutenção)"
+                        itens={rel.rma || []}
+                        vazio="Nenhum movimento de RMA."
                       />
                     </div>
                   )}

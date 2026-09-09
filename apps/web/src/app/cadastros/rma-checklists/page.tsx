@@ -104,8 +104,8 @@ function RmaChecklistsInner() {
       <div className="mt-6 grid gap-3 sm:grid-cols-2">
         <CriarCard
           href="/cadastros/rma-checklists/novo/RECEBIMENTO"
-          titulo="Criar checklist de entrada"
-          descricao="Perguntas na chegada do equipamento (recebimento)."
+          titulo="Criar checklist de inspeção"
+          descricao="Perguntas na inspeção técnica (o estoque já entra na abertura do RMA)."
           accent="sky"
         />
         <CriarCard

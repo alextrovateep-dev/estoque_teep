@@ -36,12 +36,13 @@ export type ChecklistTemplate = {
 };
 
 export const TIPO_LABEL: Record<"RECEBIMENTO" | "LIBERACAO", string> = {
-  RECEBIMENTO: "Recebimento",
+  RECEBIMENTO: "Inspeção",
   LIBERACAO: "Liberação",
 };
 
 export const TIPO_HINT: Record<"RECEBIMENTO" | "LIBERACAO", string> = {
-  RECEBIMENTO: "Na entrada do equipamento no RMA",
+  RECEBIMENTO:
+    "Inspeção técnica após a chegada (o estoque RMA já foi lançado na abertura)",
   LIBERACAO: "Antes de devolver ou trocar",
 };
 
