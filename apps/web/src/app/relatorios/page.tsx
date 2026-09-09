@@ -2,6 +2,7 @@
 
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
+import { ArvoreComponentesTabela } from "@/components/relatorios/ArvoreComponentesTabela";
 import { MovimentacoesRelatorioTab } from "@/components/relatorios/MovimentacoesRelatorioTab";
 import { RmaProdutosRelatorioTab } from "@/components/relatorios/RmaProdutosRelatorioTab";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -59,6 +60,7 @@ type ArvoreRow = {
   totalComposicao: number;
   totalBaixa: number;
   componentes: Array<{
+    produtoFilhoId?: string;
     codigo: string;
     descricao: string;
     quantidade: number;
@@ -861,7 +863,8 @@ function RelatoriosInner() {
             <span>
               <span className="font-medium">Multinível</span>
               <span className="ml-1 text-slate-400">
-                — inclui subárvores (ex.: KIT) como cards separados
+                — lista cada KIT como card separado. Na tabela, clique em
+                Subárvore para expandir
               </span>
             </span>
           </label>
@@ -1120,14 +1123,6 @@ function RelatoriosInner() {
                 </div>
 
                 {doGrupo.map((p) => {
-                  const somaQtd = p.componentes.reduce(
-                    (s, c) => s + Number(c.quantidade || 0),
-                    0
-                  );
-                  const somaValor = p.componentes.reduce(
-                    (s, c) => s + Number(c.valorLinha || 0),
-                    0
-                  );
                   const marcada = arvoresSelecionadas.has(p.produtoPaiId);
                   return (
                     <article
@@ -1202,99 +1197,11 @@ function RelatoriosInner() {
                         </div>
                       </header>
 
-                      <div className="overflow-x-auto">
-                        <table className="w-full min-w-[40rem] border-collapse text-left text-sm">
-                          <thead className="border-b border-slate-100 bg-slate-50/60 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-                            <tr>
-                              <th className="whitespace-nowrap px-4 py-2.5 sm:px-5">
-                                Código
-                              </th>
-                              <th className="min-w-[14rem] px-3 py-2.5">
-                                Componente
-                              </th>
-                              <th className="whitespace-nowrap px-3 py-2.5 text-right">
-                                Qtd
-                              </th>
-                              <th className="whitespace-nowrap px-3 py-2.5 text-right">
-                                Preço
-                              </th>
-                              <th className="whitespace-nowrap px-4 py-2.5 text-right sm:px-5">
-                                Valor
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {p.componentes.map((c) => (
-                              <tr
-                                key={`${p.produtoPaiId}-${c.codigo}`}
-                                className="align-middle hover:bg-slate-50/70"
-                              >
-                                <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs font-medium text-slate-800 sm:px-5">
-                                  <span className="inline-flex items-center gap-1.5">
-                                    <span
-                                      className="inline-block h-3 w-0.5 rounded-full bg-slate-200"
-                                      aria-hidden
-                                    />
-                                    {c.codigo}
-                                  </span>
-                                </td>
-                                <td className="min-w-[14rem] px-3 py-2.5">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <span className="font-medium text-slate-800">
-                                      {c.descricao}
-                                    </span>
-                                    {c.fantasma ? (
-                                      <span
-                                        className="rounded border border-amber-200/80 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800"
-                                        title="Não baixa estoque"
-                                      >
-                                        Fantasma
-                                      </span>
-                                    ) : null}
-                                    {c.temBom ? (
-                                      <span
-                                        className="rounded border border-sky-200/80 bg-sky-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sky-800"
-                                        title="Possui subárvore (ex.: KIT)"
-                                      >
-                                        Subárvore
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                </td>
-                                <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-800">
-                                  {qty(c.quantidade)}
-                                </td>
-                                <td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-slate-600">
-                                  {money(c.precoUnitario)}
-                                </td>
-                                <td className="whitespace-nowrap px-4 py-2.5 text-right font-medium tabular-nums text-slate-800 sm:px-5">
-                                  {money(c.valorLinha)}
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot className="border-t border-slate-200 bg-slate-50/80 text-sm font-semibold text-slate-800">
-                            <tr>
-                              <td
-                                className="px-4 py-3 text-xs font-medium text-slate-500 sm:px-5"
-                                colSpan={2}
-                              >
-                                Total · {p.qtdComponentes} item
-                                {p.qtdComponentes === 1 ? "" : "s"}
-                              </td>
-                              <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
-                                {qty(somaQtd)}
-                              </td>
-                              <td className="px-3 py-3 text-right text-slate-300">
-                                —
-                              </td>
-                              <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums sm:px-5">
-                                {money(somaValor)}
-                              </td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
+                      <ArvoreComponentesTabela
+                        paiId={p.produtoPaiId}
+                        componentes={p.componentes}
+                        qtdComponentes={p.qtdComponentes}
+                      />
                     </article>
                   );
                 })}
