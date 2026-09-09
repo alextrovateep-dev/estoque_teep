@@ -20,6 +20,7 @@ function row(
     saldoAtual: 10,
     estoqueMinimo: 0,
     estoqueMaximo: 0,
+    precoUnitario: 10,
     valor: 100,
     abaixoMinimo: false,
     acimaMaximo: false,

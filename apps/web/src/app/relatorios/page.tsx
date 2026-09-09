@@ -3,6 +3,7 @@
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import { MovimentacoesRelatorioTab } from "@/components/relatorios/MovimentacoesRelatorioTab";
+import { RmaProdutosRelatorioTab } from "@/components/relatorios/RmaProdutosRelatorioTab";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   Suspense,
@@ -13,7 +14,7 @@ import {
   useState,
 } from "react";
 
-type Aba = "saldos" | "movimentacoes" | "produtos" | "arvores";
+type Aba = "saldos" | "movimentacoes" | "produtos" | "arvores" | "rma-produtos";
 
 type Filial = { id: string; nome: string; sigla: string };
 type Categoria = { id: string; nome: string; ativo: boolean };
@@ -40,6 +41,7 @@ type SaldoRow = {
   saldoAtual: number;
   estoqueMinimo: number;
   estoqueMaximo: number;
+  precoUnitario: number;
   valor: number;
   abaixoMinimo: boolean;
   acimaMaximo: boolean;
@@ -79,6 +81,7 @@ const ABAS: Array<{ id: Aba; label: string }> = [
   { id: "movimentacoes", label: "Movimentações" },
   { id: "produtos", label: "Produtos" },
   { id: "arvores", label: "Árvore de produto" },
+  { id: "rma-produtos", label: "Produtos em RMA" },
 ];
 
 function money(n: number) {
@@ -102,7 +105,10 @@ function parseAba(
 ): Aba {
   if (raw === "movimentacoes" && podeMovimentacoes) return "movimentacoes";
   if (
-    (raw === "produtos" || raw === "saldos" || raw === "arvores") &&
+    (raw === "produtos" ||
+      raw === "saldos" ||
+      raw === "arvores" ||
+      raw === "rma-produtos") &&
     podeRelatorios
   ) {
     return raw;
@@ -285,7 +291,7 @@ function RelatoriosInner() {
   }
 
   const queryString = useMemo(() => {
-    if (aba === "movimentacoes") return "";
+    if (aba === "movimentacoes" || aba === "rma-produtos") return "";
     const p = new URLSearchParams();
     if (q.trim()) p.set("q", q.trim());
     if (aba === "saldos") {
@@ -432,7 +438,7 @@ function RelatoriosInner() {
   }
 
   const load = useCallback(async () => {
-    if (aba === "movimentacoes") {
+    if (aba === "movimentacoes" || aba === "rma-produtos") {
       setLoading(false);
       return;
     }
@@ -536,7 +542,7 @@ function RelatoriosInner() {
   }, [load]);
 
   async function exportar(format: "pdf" | "xlsx") {
-    if (aba === "movimentacoes") return;
+    if (aba === "movimentacoes" || aba === "rma-produtos") return;
     setExporting(true);
     setError("");
     try {
@@ -588,11 +594,11 @@ function RelatoriosInner() {
             Relatórios
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Consulte e exporte estoque, movimentações, produtos e árvores de
-            produto (PDF / Excel).
+            Consulte e exporte estoque, movimentações, produtos, RMA e árvores
+            de produto (PDF / Excel).
           </p>
         </div>
-        {aba !== "movimentacoes" && (
+        {aba !== "movimentacoes" && aba !== "rma-produtos" && (
           <div className="flex shrink-0 flex-wrap gap-2">
             <button
               type="button"
@@ -644,6 +650,8 @@ function RelatoriosInner() {
         <div className="mt-4">
           <MovimentacoesRelatorioTab />
         </div>
+      ) : aba === "rma-produtos" ? (
+        <RmaProdutosRelatorioTab />
       ) : (
         <>
           <div className="mt-3 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5">
@@ -970,6 +978,7 @@ function RelatoriosInner() {
                 <th className="px-3 py-2 text-right">Saldo</th>
                 <th className="px-3 py-2 text-right">Mín.</th>
                 <th className="px-3 py-2 text-right">Máx.</th>
+                <th className="px-3 py-2 text-right">Unitário</th>
                 <th className="px-3 py-2 text-right">Valor</th>
                 <th className="px-3 py-2">Alerta</th>
               </tr>
@@ -978,7 +987,7 @@ function RelatoriosInner() {
               {saldos.length === 0 && !loading && (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={10}
                     className="px-3 py-8 text-center text-slate-500"
                   >
                     Nenhuma posição encontrada.
@@ -1013,6 +1022,9 @@ function RelatoriosInner() {
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-slate-500">
                     {r.estoqueMaximo || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">
+                    {money(r.precoUnitario)}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums">
                     {money(r.valor)}

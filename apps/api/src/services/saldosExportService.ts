@@ -30,6 +30,8 @@ export type SaldoExportRow = {
   saldoAtual: number;
   estoqueMinimo: number;
   estoqueMaximo: number;
+  /** Preço unitário cadastrado (0 se sem permissão de valor). */
+  precoUnitario: number;
   valor: number;
   abaixoMinimo: boolean;
   acimaMaximo: boolean;
@@ -331,6 +333,7 @@ export async function carregarSaldosExport(
       saldoAtual: saldo,
       estoqueMinimo: min,
       estoqueMaximo: max,
+      precoUnitario: preco,
       valor: saldo * preco,
       abaixoMinimo: isAbaixoMinimo(saldo, min),
       acimaMaximo: isAcimaMaximo(saldo, max),
@@ -342,7 +345,7 @@ export async function carregarSaldosExport(
   const incluirValor = opts.incluirValor !== false;
   const rows = incluirValor
     ? mapped
-    : mapped.map((r) => ({ ...r, valor: 0 }));
+    : mapped.map((r) => ({ ...r, precoUnitario: 0, valor: 0 }));
   const totais = totaisDasLinhas(rows);
 
   const filialFound = filialId
@@ -409,7 +412,8 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
         <td class="num muted">${r.estoqueMaximo || "—"}</td>
         ${
           meta.incluirValor
-            ? `<td class="num">${escapeHtml(moneyBr(r.valor))}</td>`
+            ? `<td class="num">${escapeHtml(moneyBr(r.precoUnitario))}</td>
+        <td class="num">${escapeHtml(moneyBr(r.valor))}</td>`
             : ""
         }
       </tr>`;
@@ -523,18 +527,24 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
         <th class="num">Saldo</th>
         <th class="num">Mín.</th>
         <th class="num">Máx.</th>
-        ${meta.incluirValor ? `<th class="num">Valor</th>` : ""}
+        ${
+          meta.incluirValor
+            ? `<th class="num">Unitário</th><th class="num">Valor</th>`
+            : ""
+        }
       </tr>
     </thead>
     <tbody>
       ${
         bodyRows ||
-        `<tr><td colspan="${meta.incluirValor ? 8 : 7}" style="text-align:center;padding:16px;color:#64748b">Nenhum saldo para exibir.</td></tr>`
+        `<tr><td colspan="${meta.incluirValor ? 9 : 7}" style="text-align:center;padding:16px;color:#64748b">Nenhum saldo para exibir.</td></tr>`
       }
     </tbody>
   </table>
   <div class="foot">Totais = soma das linhas deste relatório (após filtros).${
-    meta.incluirValor ? " Valor = saldo × preço cadastrado." : ""
+    meta.incluirValor
+      ? " Unitário = preço cadastrado; Valor = saldo × unitário."
+      : ""
   } Destaque = fora do mín./máx.</div>
 </body>
 </html>`;
@@ -644,7 +654,10 @@ export async function exportarSaldosExcel(
     { header: "Mín.", key: "min", width: 10 },
     { header: "Máx.", key: "max", width: 10 },
     ...(meta.incluirValor
-      ? [{ header: "Valor (R$)", key: "valor", width: 14 }]
+      ? [
+          { header: "Unitário (R$)", key: "precoUnitario", width: 14 },
+          { header: "Valor (R$)", key: "valor", width: 14 },
+        ]
       : []),
     { header: "Alerta", key: "alerta", width: 14 },
     { header: "Produto ativo", key: "ativo", width: 12 },
@@ -674,13 +687,17 @@ export async function exportarSaldosExcel(
       min: r.estoqueMinimo || null,
       max: r.estoqueMaximo || null,
       ...(meta.incluirValor
-        ? { valor: Math.round(r.valor * 100) / 100 }
+        ? {
+            precoUnitario: Math.round(r.precoUnitario * 100) / 100,
+            valor: Math.round(r.valor * 100) / 100,
+          }
         : {}),
       alerta,
       ativo: r.produtoAtivo ? "Sim" : "Não",
     });
     row.getCell("saldo").numFmt = "#,##0.####";
     if (meta.incluirValor) {
+      row.getCell("precoUnitario").numFmt = "R$ #,##0.00";
       row.getCell("valor").numFmt = "R$ #,##0.00";
     }
     if (alerta) {

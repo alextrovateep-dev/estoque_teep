@@ -22,6 +22,11 @@ import {
   exportarArvoreExcel,
   exportarArvorePdf,
 } from "../services/arvoreExportService";
+import {
+  carregarRmaProdutosExport,
+  exportarRmaProdutosExcel,
+  exportarRmaProdutosPdf,
+} from "../services/rmaProdutosExportService";
 
 export const relatoriosRouter = Router();
 
@@ -90,6 +95,26 @@ function parseArvoreQuery(req: AuthedRequest) {
       : undefined,
     produtoPaiIds: produtoPaiIds.length > 0 ? produtoPaiIds : undefined,
     explodir,
+  };
+}
+
+function parseRmaProdutosQuery(req: AuthedRequest) {
+  return {
+    q: req.query.q ? String(req.query.q) : undefined,
+    filialId: req.query.filialId ? String(req.query.filialId) : undefined,
+    clienteId: req.query.clienteId ? String(req.query.clienteId) : undefined,
+    produtoId: req.query.produtoId ? String(req.query.produtoId) : undefined,
+    etapa: req.query.etapa ? String(req.query.etapa) : undefined,
+    itemStatus: req.query.itemStatus
+      ? String(req.query.itemStatus)
+      : undefined,
+    processoStatus: req.query.processoStatus
+      ? String(req.query.processoStatus)
+      : undefined,
+    dataInicio: req.query.dataInicio
+      ? String(req.query.dataInicio)
+      : undefined,
+    dataFim: req.query.dataFim ? String(req.query.dataFim) : undefined,
   };
 }
 
@@ -268,6 +293,61 @@ relatoriosRouter.get(
       const { buffer, filename } = await exportarArvoreExcel(
         req.user!,
         parseArvoreQuery(req)
+      );
+      sendXlsx(res, buffer, filename);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** Preview paginado — produtos/itens em processos RMA */
+relatoriosRouter.get("/rma-produtos", async (req: AuthedRequest, res, next) => {
+  try {
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(
+      100,
+      Math.max(1, Number(req.query.pageSize) || 50)
+    );
+    const { rows, meta } = await carregarRmaProdutosExport(
+      req.user!,
+      parseRmaProdutosQuery(req)
+    );
+    const start = (page - 1) * pageSize;
+    res.json({
+      meta,
+      page,
+      pageSize,
+      total: rows.length,
+      rows: rows.slice(start, start + pageSize),
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+relatoriosRouter.get(
+  "/rma-produtos/export.pdf",
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const { buffer, filename } = await exportarRmaProdutosPdf(
+        req.user!,
+        parseRmaProdutosQuery(req)
+      );
+      sendPdf(res, buffer, filename);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+relatoriosRouter.get(
+  "/rma-produtos/export.xlsx",
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const { buffer, filename } = await exportarRmaProdutosExcel(
+        req.user!,
+        parseRmaProdutosQuery(req)
       );
       sendXlsx(res, buffer, filename);
     } catch (e) {
