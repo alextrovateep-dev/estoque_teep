@@ -160,6 +160,7 @@ export const filialSchema = z.object({
   estado: z.string().length(2).optional().nullable(),
   ativo: z.boolean().optional(),
   estoqueAcabados: z.boolean().optional(),
+  estoqueRma: z.boolean().optional(),
 });
 
 export const categoriaSchema = z.object({
@@ -840,6 +841,11 @@ export const createRmaProcessoSchema = z
      * Vazio/omitido → só o criador. Preferir pré-carregar ticks RMA_ABERTO na UI.
      */
     destinatarioIds: z.array(z.string().uuid()).max(50).optional(),
+    /**
+     * Estoque de entrada (marcado como RMA).
+     * Obrigatório na prática quando há mais de um; se omitido e só existir um, a API usa o padrão.
+     */
+    filialId: z.string().uuid().optional().nullable(),
     itens: z
       .array(
         z.object({

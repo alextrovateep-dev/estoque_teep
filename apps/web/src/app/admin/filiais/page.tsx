@@ -13,6 +13,7 @@ type Filial = {
   estado?: string | null;
   ativo: boolean;
   estoqueAcabados?: boolean;
+  estoqueRma?: boolean;
 };
 
 function localLabel(f: Filial): string | null {
@@ -151,6 +152,7 @@ function FiliaisPageInner() {
                   {local ? `${local} · ` : null}
                   {f.ativo ? "Ativo" : "Inativo"}
                   {f.estoqueAcabados ? " · Acabados" : ""}
+                  {f.estoqueRma ? " · RMA" : ""}
                 </div>
               </div>
               <div className="flex gap-3 text-sm">

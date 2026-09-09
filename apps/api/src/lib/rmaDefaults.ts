@@ -9,13 +9,15 @@ export type RmaFilialRef = { id: string; sigla: string; nome: string };
 export type RmaDefaults = {
   filialPreparacaoId: string | null;
   filialPreparacao: RmaFilialRef | null;
+  /** Estoques ativos marcados como RMA (para escolha na abertura). */
+  filiaisRma: RmaFilialRef[];
   filialDescarteId: string | null;
   filialDescarte: RmaFilialRef | null;
   filiaisOrigemTrocaIds: string[];
   filiaisOrigemTroca: RmaFilialRef[];
   /** Como cada default foi resolvido (útil na UI/admin). */
   fonte: {
-    preparacao: "env" | "sigla" | "tipo" | "none";
+    preparacao: "env" | "flag" | "tipo" | "sigla" | "none";
     descarte: "env" | "sigla" | "none";
     origemTroca: "env" | "todas_operacionais" | "none";
   };
@@ -46,7 +48,7 @@ function asRef(f: {
 
 /**
  * Defaults leves da instalação (Fase D).
- * Env opcional; se ausente, cai na sigla RMA/DESC e estoques operacionais.
+ * Preparação RMA: env → flag estoqueRma → filial do tipo entrada → sigla legada RMA.
  */
 export async function resolveRmaDefaults(): Promise<RmaDefaults> {
   const envPrep = process.env.RMA_FILIAL_PREPARACAO_ID?.trim() || "";
@@ -57,11 +59,17 @@ export async function resolveRmaDefaults(): Promise<RmaDefaults> {
 
   const ativas = await prisma.filial.findMany({
     where: { ativo: true },
-    select: { id: true, sigla: true, nome: true },
+    select: {
+      id: true,
+      sigla: true,
+      nome: true,
+      estoqueRma: true,
+    },
     orderBy: { sigla: "asc" },
   });
   const byId = new Map(ativas.map((f) => [f.id, f]));
   const bySigla = new Map(ativas.map((f) => [f.sigla.toUpperCase(), f]));
+  const marcadosRma = ativas.filter((f) => f.estoqueRma);
 
   let filialPreparacao: RmaFilialRef | null = null;
   let fontePrep: RmaDefaults["fonte"]["preparacao"] = "none";
@@ -71,13 +79,16 @@ export async function resolveRmaDefaults(): Promise<RmaDefaults> {
   } else {
     if (envPrep) {
       avisos.push(
-        "RMA_FILIAL_PREPARACAO_ID inválido ou filial inativa — usando sigla RMA (se existir)"
+        "RMA_FILIAL_PREPARACAO_ID inválido ou filial inativa — usando estoque marcado como RMA"
       );
     }
-    const byS = bySigla.get(SIGLA_ESTOQUE_RMA);
-    if (byS) {
-      filialPreparacao = asRef(byS);
-      fontePrep = "sigla";
+    if (marcadosRma.length === 1) {
+      filialPreparacao = asRef(marcadosRma[0]!);
+      fontePrep = "flag";
+    } else if (marcadosRma.length > 1) {
+      avisos.push(
+        "Há mais de um estoque marcado como RMA — use o estoque do tipo de entrada RMA ou RMA_FILIAL_PREPARACAO_ID"
+      );
     }
   }
 
@@ -98,6 +109,14 @@ export async function resolveRmaDefaults(): Promise<RmaDefaults> {
     if (tipoEntrada?.filial?.ativo) {
       filialPreparacao = asRef(tipoEntrada.filial);
       fontePrep = "tipo";
+    }
+  }
+
+  if (!filialPreparacao) {
+    const byS = bySigla.get(SIGLA_ESTOQUE_RMA);
+    if (byS) {
+      filialPreparacao = asRef(byS);
+      fontePrep = "sigla";
     }
   }
 
@@ -152,6 +171,7 @@ export async function resolveRmaDefaults(): Promise<RmaDefaults> {
   return {
     filialPreparacaoId: filialPreparacao?.id ?? null,
     filialPreparacao,
+    filiaisRma: marcadosRma.map(asRef),
     filialDescarteId: filialDescarte?.id ?? null,
     filialDescarte,
     filiaisOrigemTrocaIds: filiaisOrigemTroca.map((f) => f.id),

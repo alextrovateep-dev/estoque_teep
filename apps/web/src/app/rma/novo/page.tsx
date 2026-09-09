@@ -24,6 +24,8 @@ type Produto = {
 
 type UsuarioDest = { id: string; nome: string; email: string };
 
+type EstoqueRmaOpt = { id: string; sigla: string; nome: string };
+
 type LinhaForm = {
   key: string;
   produtoId: string;
@@ -60,6 +62,8 @@ export default function RmaNovoPage() {
   const [destPadrao, setDestPadrao] = useState<UsuarioDest[]>([]);
   const [destTodos, setDestTodos] = useState<UsuarioDest[]>([]);
   const [destIds, setDestIds] = useState<string[]>([]);
+  const [estoquesRma, setEstoquesRma] = useState<EstoqueRmaOpt[]>([]);
+  const [filialId, setFilialId] = useState("");
   const [incluirAberto, setIncluirAberto] = useState(false);
   const [incluirQuery, setIncluirQuery] = useState("");
   const [totalNota, setTotalNota] = useState("");
@@ -92,11 +96,29 @@ export default function RmaNovoPage() {
     Promise.all([
       api<UsuarioDest[]>("/rma/destinatarios-padrao"),
       api<UsuarioDest[]>("/rma/usuarios-destinatarios"),
+      api<{
+        filiaisRma?: EstoqueRmaOpt[];
+        filialPreparacao?: EstoqueRmaOpt | null;
+        filialPreparacaoId?: string | null;
+      }>("/rma/defaults"),
     ])
-      .then(([padrao, todos]) => {
+      .then(([padrao, todos, defs]) => {
         setDestPadrao(padrao);
         setDestTodos(todos);
         setDestIds(padrao.map((u) => u.id));
+        let lista = defs.filiaisRma || [];
+        if (
+          lista.length === 0 &&
+          defs.filialPreparacao?.id
+        ) {
+          lista = [defs.filialPreparacao];
+        }
+        setEstoquesRma(lista);
+        if (defs.filialPreparacaoId) {
+          setFilialId(defs.filialPreparacaoId);
+        } else if (lista.length === 1) {
+          setFilialId(lista[0]!.id);
+        }
       })
       .catch(() => {
         /* destinatários opcionais na UI — API usa criador se vazio */
@@ -287,6 +309,16 @@ export default function RmaNovoPage() {
       setError("Selecione o responsável comercial");
       return;
     }
+    if (estoquesRma.length === 0) {
+      setError(
+        "Nenhum estoque marcado como RMA. Em Admin → Estoques, marque «Estoque de RMA»."
+      );
+      return;
+    }
+    if (estoquesRma.length > 1 && !filialId) {
+      setError("Selecione o estoque RMA de entrada");
+      return;
+    }
     if (!nfEntrada.trim()) {
       setError("Informe o número da NF de entrada");
       return;
@@ -342,6 +374,7 @@ export default function RmaNovoPage() {
           observacao: observacao.trim() || null,
           prazoManutencao: prazoManutencao.trim() || null,
           destinatarioIds: destIds,
+          filialId: filialId || undefined,
           itens: payloadItens,
         }),
       });
@@ -364,7 +397,8 @@ export default function RmaNovoPage() {
       <p className="mt-1 text-sm text-slate-500">
         Um RMA = uma NF de entrada. Informe o número da nota de chegada; se
         vier errada, dá para corrigir no processo. Cada produto/série entra no
-        Estoque RMA. Checklist e diagnóstico ficam no sistema, item a item.
+        estoque RMA escolhido. Checklist e diagnóstico ficam no sistema, item a
+        item.
       </p>
 
       <form
@@ -457,6 +491,33 @@ export default function RmaNovoPage() {
             </span>
           </label>
         </div>
+
+        <label className="block text-sm sm:max-w-md">
+          <span className="mb-1 block font-medium">Estoque RMA de entrada *</span>
+          <select
+            className="w-full rounded-lg border px-3 py-2 text-sm"
+            value={filialId}
+            onChange={(e) => setFilialId(e.target.value)}
+            required={estoquesRma.length > 0}
+            disabled={estoquesRma.length === 0}
+          >
+            <option value="">
+              {estoquesRma.length === 0
+                ? "Nenhum estoque RMA marcado"
+                : "Selecione…"}
+            </option>
+            {estoquesRma.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.sigla} — {f.nome}
+              </option>
+            ))}
+          </select>
+          <span className="mt-0.5 block text-[11px] text-slate-500">
+            {estoquesRma.length > 1
+              ? "Há mais de um estoque RMA — escolha onde os itens desta nota entram."
+              : "Depósitos marcados como «Estoque de RMA» em Admin → Estoques."}
+          </span>
+        </label>
 
         <label className="block text-sm">
           <span className="mb-1 block font-medium">

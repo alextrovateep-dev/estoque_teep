@@ -49,7 +49,7 @@ export const TIPO_TRANSFORMACAO_SAIDA = "Transformação — saída origem";
 /** Sistema: entrada do produto destino na transformação A→B */
 export const TIPO_TRANSFORMACAO_ENTRADA = "Transformação — entrada destino";
 
-/** Locais de estoque especiais (Filial.sigla) */
+/** Locais de estoque especiais (legado por Filial.sigla; preferir flags estoqueRma / DESC) */
 export const SIGLA_ESTOQUE_RMA = "RMA";
 export const SIGLA_ESTOQUE_DESCARTE = "DESC";
 

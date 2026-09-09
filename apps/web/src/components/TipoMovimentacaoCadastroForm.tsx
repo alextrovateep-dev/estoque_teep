@@ -288,13 +288,12 @@ export function TipoMovimentacaoCadastroForm({
       return;
     }
     const skipEstoque =
-      sistemaLocked || form.rmaSaidaCliente || form.saidaPedidoVenda;
+      sistemaLocked ||
+      form.rmaEntradaEstoque ||
+      form.rmaSaidaCliente ||
+      form.saidaPedidoVenda;
     if (!sistemaLocked && !form.codigo.trim()) {
       setError("Informe o código do tipo");
-      return;
-    }
-    if (form.rmaEntradaEstoque && !form.filialId) {
-      setError("Informe o estoque do depósito RMA (destino da entrada)");
       return;
     }
     if (!skipEstoque && !form.filialId) {
@@ -429,6 +428,7 @@ export function TipoMovimentacaoCadastroForm({
   const mostrarEstoques =
     Boolean(form.operacao) &&
     !soRmaFlags &&
+    !form.rmaEntradaEstoque &&
     !form.rmaSaidaCliente &&
     !form.saidaPedidoVenda;
 
@@ -584,28 +584,18 @@ export function TipoMovimentacaoCadastroForm({
 
         {mostrarEstoques && (
           <SectionCard
-            title={
-              form.rmaEntradaEstoque
-                ? "Estoque do depósito RMA"
-                : "Estoques da operação"
-            }
-            subtitle={
-              form.rmaEntradaEstoque
-                ? "Para onde a entrada automática do RMA grava o equipamento. Pode ser qualquer estoque (recomendado: sigla RMA)."
-                : "Fixos neste tipo — no lançamento o operador só escolhe o tipo."
-            }
+            title="Estoques da operação"
+            subtitle="Fixos neste tipo — no lançamento o operador só escolhe o tipo."
             className={emEdicao ? "border-amber-200/80 bg-white/90" : ""}
           >
             <div className="grid gap-2.5 sm:grid-cols-2">
               <label className="block min-w-0">
                 <span className="mb-1 block text-sm font-medium">
-                  {form.rmaEntradaEstoque
-                    ? "Estoque destino RMA *"
-                    : isEntrada
-                      ? "Estoque de entrada *"
-                      : isSaida
-                        ? "Estoque de saída *"
-                        : "Estoque de origem *"}
+                  {isEntrada
+                    ? "Estoque de entrada *"
+                    : isSaida
+                      ? "Estoque de saída *"
+                      : "Estoque de origem *"}
                 </span>
                 <select
                   required
@@ -623,7 +613,7 @@ export function TipoMovimentacaoCadastroForm({
                   ))}
                 </select>
               </label>
-              {isTransf && !form.rmaEntradaEstoque && (
+              {isTransf && (
                 <label className="block min-w-0">
                   <span className="mb-1 block text-sm font-medium">
                     Estoque de destino *
@@ -709,7 +699,7 @@ export function TipoMovimentacaoCadastroForm({
               title="RMA: entrada automática no estoque"
               hint={
                 isEntrada
-                  ? "Usada ao abrir RMA / incluir item. Escolha o estoque destino na seção acima. Só um tipo pode ter esta opção."
+                  ? "Usada ao abrir RMA / incluir item (entra no estoque marcado como «Estoque de RMA»). Só um tipo pode ter esta opção."
                   : "Disponível apenas para natureza Entrada."
               }
             />

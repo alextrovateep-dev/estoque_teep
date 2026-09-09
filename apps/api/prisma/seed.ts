@@ -77,12 +77,13 @@ async function main() {
 
     const estoqueRma = await prisma.filial.upsert({
       where: { sigla: "RMA" },
-      update: { nome: "Estoque RMA", ativo: true },
+      update: { nome: "Estoque RMA", ativo: true, estoqueRma: true },
       create: {
         nome: "Estoque RMA",
         sigla: "RMA",
         cidade: "Paulínia",
         estado: "SP",
+        estoqueRma: true,
       },
     });
 

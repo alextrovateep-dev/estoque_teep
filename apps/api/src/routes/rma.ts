@@ -74,6 +74,7 @@ import {
 } from "../services/rmaWorkflowService";
 import { resolveRmaDefaults } from "../lib/rmaDefaults";
 import { requireEstoqueParaOperar } from "../lib/estoqueGate";
+import { operadorFilialIds } from "../lib/filialScope";
 import type { RmaChecklistTipo } from "@teep/shared";
 
 export const rmaRouter = Router();
@@ -98,13 +99,30 @@ rmaRouter.get("/", requirePermissao("rma"), async (req: AuthedRequest, res, next
   }
 });
 
-/** Defaults de filiais RMA (env + fallback por sigla). */
+/** Defaults de filiais RMA (flag estoqueRma + fallbacks). */
 rmaRouter.get(
   "/defaults",
   requirePermissao("rma"),
-  async (_req, res, next) => {
+  async (req: AuthedRequest, res, next) => {
     try {
-      res.json(await resolveRmaDefaults());
+      const defaults = await resolveRmaDefaults();
+      if (req.user?.perfil === "OPERADOR") {
+        const ids = new Set(operadorFilialIds(req.user));
+        const filiaisRma = defaults.filiaisRma.filter((f) => ids.has(f.id));
+        const prepOk =
+          defaults.filialPreparacao && ids.has(defaults.filialPreparacao.id)
+            ? defaults.filialPreparacao
+            : filiaisRma.length === 1
+              ? filiaisRma[0]!
+              : null;
+        return res.json({
+          ...defaults,
+          filiaisRma,
+          filialPreparacao: prepOk,
+          filialPreparacaoId: prepOk?.id ?? null,
+        });
+      }
+      res.json(defaults);
     } catch (e) {
       next(e);
     }

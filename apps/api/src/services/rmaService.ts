@@ -174,7 +174,51 @@ async function arquivoAnexoAtivo(
 }
 
 const MSG_ESTOQUE_RMA_AUSENTE =
-  "Estoque RMA não definido. Cadastre um estoque com sigla «RMA» em Admin → Estoques, ou vincule o estoque no tipo com «RMA: entrada automática no estoque».";
+  "Estoque RMA não definido. Em Admin → Estoques, marque «Estoque de RMA» no depósito desejado (a sigla pode ser qualquer uma, ex.: RMASP).";
+
+const MSG_ESTOQUE_RMA_ESCOLHER =
+  "Há mais de um estoque marcado como RMA. Selecione em qual a entrada deve entrar.";
+
+async function resolveEstoqueEntradaRma(
+  user: AuthUser,
+  filialIdEscolhido?: string | null
+): Promise<{ id: string; sigla: string }> {
+  const defaults = await resolveRmaDefaults();
+  const marcados = defaults.filiaisRma;
+
+  if (filialIdEscolhido) {
+    const escolhido = await prisma.filial.findFirst({
+      where: { id: filialIdEscolhido, ativo: true },
+      select: { id: true, sigla: true, estoqueRma: true },
+    });
+    const permitido =
+      escolhido &&
+      (escolhido.estoqueRma ||
+        escolhido.id === defaults.filialPreparacaoId);
+    if (!permitido || !escolhido) {
+      throw new AppError(
+        400,
+        "Estoque inválido para RMA. Escolha um estoque marcado como «Estoque de RMA»."
+      );
+    }
+    assertOperadorPodeFilial(user, escolhido.id);
+    return { id: escolhido.id, sigla: escolhido.sigla };
+  }
+
+  if (marcados.length > 1) {
+    throw new AppError(400, MSG_ESTOQUE_RMA_ESCOLHER);
+  }
+
+  if (defaults.filialPreparacao) {
+    assertOperadorPodeFilial(user, defaults.filialPreparacao.id);
+    return {
+      id: defaults.filialPreparacao.id,
+      sigla: defaults.filialPreparacao.sigla,
+    };
+  }
+
+  throw new AppError(400, MSG_ESTOQUE_RMA_AUSENTE);
+}
 
 /** Tipo ENTRADA marcado para entrada automática do RMA (flag no cadastro). */
 async function tipoEntradaRma() {
@@ -745,6 +789,7 @@ export async function criarRmaProcesso(
     nfEntradaNumero?: string | null;
     nfEntradaArquivo?: string | null;
     destinatarioIds?: string[];
+    filialId?: string | null;
     itens: Array<{
       produtoId: string;
       series: string[];
@@ -752,14 +797,7 @@ export async function criarRmaProcesso(
     }>;
   }
 ) {
-  const defaults = await resolveRmaDefaults();
-  if (!defaults.filialPreparacao) {
-    throw new AppError(400, MSG_ESTOQUE_RMA_AUSENTE);
-  }
-  const estoqueRma = defaults.filialPreparacao;
-  if (user.perfil === "OPERADOR") {
-    assertOperadorPodeFilial(user, estoqueRma.id);
-  }
+  const estoqueRma = await resolveEstoqueEntradaRma(user, input.filialId);
 
   const cliente = await prisma.cliente.findFirst({
     where: { id: input.clienteId, ativo: true },

@@ -13,6 +13,7 @@ type Filial = {
   estado?: string | null;
   ativo: boolean;
   estoqueAcabados?: boolean;
+  estoqueRma?: boolean;
 };
 
 const emptyForm = {
@@ -21,6 +22,7 @@ const emptyForm = {
   cidade: "",
   estado: "",
   estoqueAcabados: false,
+  estoqueRma: false,
 };
 
 async function refreshTemEstoque() {
@@ -61,6 +63,7 @@ export function FilialCadastroForm({ filialId }: { filialId?: string }) {
           cidade: f.cidade || "",
           estado: f.estado || "",
           estoqueAcabados: Boolean(f.estoqueAcabados),
+          estoqueRma: Boolean(f.estoqueRma),
         });
       })
       .catch((e) => {
@@ -86,6 +89,7 @@ export function FilialCadastroForm({ filialId }: { filialId?: string }) {
       cidade: form.cidade.trim() || null,
       estado: form.estado ? form.estado.toUpperCase().trim() : null,
       estoqueAcabados: form.estoqueAcabados,
+      estoqueRma: form.estoqueRma,
     };
     try {
       if (editId) {
@@ -215,6 +219,24 @@ export function FilialCadastroForm({ filialId }: { filialId?: string }) {
             </span>
             <span className="mt-0.5 block text-xs text-slate-500">
               Pedidos de venda saem daqui. Pode marcar mais de um estoque.
+            </span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2 text-sm sm:col-span-2">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={form.estoqueRma}
+            onChange={(e) =>
+              setForm({ ...form, estoqueRma: e.target.checked })
+            }
+          />
+          <span>
+            <span className="font-medium text-slate-700">Estoque de RMA</span>
+            <span className="mt-0.5 block text-xs text-slate-500">
+              Entrada automática ao abrir RMA. A sigla pode ser qualquer uma
+              (ex.: RMASP). Pode marcar mais de um — na abertura do RMA escolhe
+              qual recebe a entrada.
             </span>
           </span>
         </label>
