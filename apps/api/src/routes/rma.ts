@@ -643,9 +643,11 @@ rmaRouter.get(
   requirePermissao("rma", "rma_cobranca"),
   async (req: AuthedRequest, res, next) => {
     try {
+      const itemId = String(req.query.itemId || "").trim() || undefined;
       const { buffer, filename } = await exportarOrcamentoRmaPdf(
         req.user!,
-        req.params.id
+        req.params.id,
+        itemId
       );
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader(

@@ -35,7 +35,7 @@ Recusa do orçamento → `NAO_APROVADO`. Reabrir (só enquanto fechado, ainda n�
 | Quem | Onde | Faz |
 |------|------|-----|
 | Técnico | Modal do item | Checklist; serviços com **tempo (minutos)**; Salvar / Concluir diagnóstico |
-| Comercial | `/rma/[id]/orcamento` | Preenche **valor** dos serviços; Salvar; **Fechar orçamento** (libera PDF/negociação; valores continuam editáveis); **Gerar PDF** (orçamento + laudo de recebimento); envia por e-mail/WhatsApp; ajusta e gera PDF de novo; **Aprovar/Recusar**. **Reabrir** volta ao rascunho. |
+| Comercial | `/rma/[id]/orcamento` | Preenche **valor** dos serviços; Salvar; **Fechar orçamento** (status `ENVIADO` + e-mail/sino à equipe; libera PDF/negociação; valores continuam editáveis); **Gerar PDF** (orçamento + laudo de recebimento); envia PDF ao cliente por e-mail/WhatsApp; ajusta e gera PDF de novo; **Aprovar/Recusar** (também avisa a equipe). **Reabrir** volta ao rascunho. |
 
 `RmaOrcamento.status` no banco continua `RASCUNHO | ENVIADO | APROVADO | RECUSADO`. Na tela, `ENVIADO` aparece como **Em negociação**.
 
@@ -56,7 +56,7 @@ Recusa do orçamento → `NAO_APROVADO`. Reabrir (só enquanto fechado, ainda n�
 | PUT/POST | `…/orcamento` · `…/enviar` · `…/fechar` · `…/reabrir` · `…/aprovar` · `…/recusar` |
 | GET | `/rma/:id/orcamento` |
 | PUT | `/rma/:id/orcamento` (lote) |
-| POST | `/rma/:id/orcamento/enviar` `{ itemIds }` (alias: `/fechar`) — fecha rascunhos; status interno `ENVIADO` |
+| POST | `/rma/:id/orcamento/enviar` `{ itemIds }` (alias: `/fechar`) — fecha rascunhos; status interno `ENVIADO`; dispara alerta `RMA_ORCAMENTO` |
 | POST | `/rma/:id/itens/:itemId/orcamento/reabrir` — só `ENVIADO` + `AGUARDANDO_APROVACAO`; volta a rascunho |
 | GET | `/rma/:id/orcamento.pdf` — orçamento de negociação + laudo de recebimento |
 | GET | `/rma/:id/orcamento/arquivo.pdf` — orçamento histórico (aprovado/recusado; RMA fechado) |

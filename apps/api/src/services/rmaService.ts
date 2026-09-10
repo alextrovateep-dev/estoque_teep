@@ -286,8 +286,25 @@ async function lancarSaidaRma(
     usoInternoRma: true,
   });
   const mov = result.movimentacao;
-  if (!mov?.id || mov.status === "PENDENTE") {
-    throw new AppError(400, "Falha ao lançar saída RMA");
+  if (!mov?.id) {
+    throw new AppError(500, "Falha ao lançar saída RMA — sem movimentação");
+  }
+  if (mov.status === "PENDENTE") {
+    // Rede de segurança: RMA não pode ficar pendente. Desfaz e orienta.
+    try {
+      await rejeitarMovimentacao(
+        user,
+        mov.id,
+        "Rollback: saída RMA não pode ficar pendente de aprovação",
+        { bypassPerfil: true }
+      );
+    } catch (err) {
+      console.error("[rma] falha ao rejeitar saída PENDENTE", err);
+    }
+    throw new AppError(
+      400,
+      "A saída RMA ficou pendente de aprovação. Em Admin → Tipos, no tipo marcado «RMA: saída ao devolver/trocar», desative a exigência de aprovação — ou use Gerente/Admin."
+    );
   }
   return { ...mov, id: mov.id };
 }
@@ -511,6 +528,25 @@ function destinatarioIdsDoProcesso(proc: {
   if (ids.length > 0) return ids;
   const criador = proc.criadoPor?.id || proc.criadoPorId;
   return criador ? [criador] : [];
+}
+
+/** Destinatários do processo + comercial (sino/e-mail de orçamento e laudo). */
+export function destinatarioIdsAlertaRma(proc: {
+  destinatarios?: Array<{ usuario: { id: string } }>;
+  criadoPor?: { id: string };
+  criadoPorId?: string;
+  responsavelComercialId?: string | null;
+  responsavelComercial?: { id: string } | null;
+}): string[] {
+  return [
+    ...new Set(
+      [
+        ...destinatarioIdsDoProcesso(proc),
+        proc.responsavelComercialId,
+        proc.responsavelComercial?.id,
+      ].filter((x): x is string => Boolean(x))
+    ),
+  ];
 }
 
 async function listarIdsComTickRmaAberto(): Promise<string[]> {
@@ -2189,6 +2225,38 @@ export async function trocarRmaItem(
     throw new AppError(400, "Estoque de descarte deve ser diferente do RMA");
   }
 
+  // Valida séries antes do claim — evita marcar item e depois falhar
+  const boaDisponivel = await prisma.unidadeSerie.findFirst({
+    where: {
+      produtoId: item.produtoId,
+      numeroSerie: { equals: serieBoa, mode: "insensitive" },
+      status: "EM_ESTOQUE",
+      filialId: input.origemFilialId,
+    },
+    select: { id: true, numeroSerie: true },
+  });
+  if (!boaDisponivel) {
+    throw new AppError(
+      400,
+      "Série substituta não está disponível (EM_ESTOQUE) no estoque de origem informado"
+    );
+  }
+  const ruimNoRma = await prisma.unidadeSerie.findFirst({
+    where: {
+      produtoId: item.produtoId,
+      numeroSerie: { equals: serieRuim, mode: "insensitive" },
+      status: "EM_ESTOQUE",
+      filialId: proc.filialId,
+    },
+    select: { id: true },
+  });
+  if (!ruimNoRma) {
+    throw new AppError(
+      400,
+      "Série do item RMA não está EM_ESTOQUE no estoque do processo — atualize a tela"
+    );
+  }
+
   const { numero: nfSaida, arquivo: nfSaidaArquivo } =
     await exigirDocumentosParaEnvioCliente({
       processoId,
@@ -2225,18 +2293,23 @@ export async function trocarRmaItem(
 
   try {
     // 1) Série boa: origem operacional → preparação (RMA)
-    const prep = await criarTransferenciaImediata(user, {
-      origemFilialId: input.origemFilialId,
-      destinoFilialId: destinoPrepId,
-      guiaTransporte: `RMA-troca-prep ${processoId.slice(0, 8)}`,
-      itens: [
-        {
-          produtoId: item.produtoId,
-          quantidade: 1,
-          series: [serieBoa],
-        },
-      ],
-    });
+    // bypassFilialOperador: quem tem permissão RMA pode puxar peça boa de outro estoque
+    const prep = await criarTransferenciaImediata(
+      user,
+      {
+        origemFilialId: input.origemFilialId,
+        destinoFilialId: destinoPrepId,
+        guiaTransporte: `RMA-troca-prep ${processoId.slice(0, 8)}`,
+        itens: [
+          {
+            produtoId: item.produtoId,
+            quantidade: 1,
+            series: [serieBoa],
+          },
+        ],
+      },
+      { bypassFilialOperador: true }
+    );
     transfPrepId = prep.transferencia.id;
 
     const boa = await prisma.unidadeSerie.findFirst({
@@ -2266,18 +2339,22 @@ export async function trocarRmaItem(
     movSaidaId = saida.id;
 
     // 3) Série ruim: RMA → descarte
-    const desc = await criarTransferenciaImediata(user, {
-      origemFilialId: proc.filialId,
-      destinoFilialId: destinoDescarteId,
-      guiaTransporte: `RMA-descarte ${processoId.slice(0, 8)}`,
-      itens: [
-        {
-          produtoId: item.produtoId,
-          quantidade: 1,
-          series: [serieRuim],
-        },
-      ],
-    });
+    const desc = await criarTransferenciaImediata(
+      user,
+      {
+        origemFilialId: proc.filialId,
+        destinoFilialId: destinoDescarteId,
+        guiaTransporte: `RMA-descarte ${processoId.slice(0, 8)}`,
+        itens: [
+          {
+            produtoId: item.produtoId,
+            quantidade: 1,
+            series: [serieRuim],
+          },
+        ],
+      },
+      { bypassFilialOperador: true }
+    );
     transfDescId = desc.transferencia.id;
     movDescarteId = movSaidaDaTransferencia(desc.transferencia);
     if (!movDescarteId) {
@@ -2511,15 +2588,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
       `Processo ${proc.status === "CANCELADO" ? "cancelado" : "fechado"} — não é possível notificar`
     );
   }
-  const destIds = [
-    ...new Set(
-      [
-        ...destinatarioIdsDoProcesso(proc),
-        proc.responsavelComercialId,
-        proc.responsavelComercial?.id,
-      ].filter((x): x is string => Boolean(x))
-    ),
-  ];
+  const destIds = destinatarioIdsAlertaRma(proc);
   if (destIds.length === 0) {
     throw new AppError(400, "Nenhum destinatário neste RMA");
   }

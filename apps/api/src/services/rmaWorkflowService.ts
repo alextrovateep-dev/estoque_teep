@@ -36,9 +36,14 @@ import {
 import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
 import {
   exigirNfRetornoParaLiberacao,
+  destinatarioIdsAlertaRma,
   obterRma,
   podeDecidirAprovacaoRma,
 } from "./rmaService";
+import {
+  notificarRmaOrcamentoDecisao,
+  notificarRmaOrcamentoPronto,
+} from "./alertaService";
 
 const ETAPAS_RECEBIMENTO = [
   "AGUARDANDO_RECEBIMENTO",
@@ -882,8 +887,6 @@ export async function salvarOrcamentoRmaItem(
     throw new AppError(400, "Plano de manutenção ausente");
   }
 
-  const isAdminGerente =
-    user.perfil === "ADMIN" || user.perfil === "GERENTE";
   const planoServicos = new Set(
     item.manutencaoPlano.servicos.map((s) => s.descricao.trim().toLowerCase())
   );
@@ -893,11 +896,8 @@ export async function salvarOrcamentoRmaItem(
 
   for (const l of input.linhas) {
     if (l.origem === "EXTRA") {
-      if (!isAdminGerente) {
-        throw new AppError(
-          400,
-          "Somente Admin/Gerente pode incluir linhas extras fora do plano"
-        );
+      if (!l.descricao?.trim()) {
+        throw new AppError(400, "Linha extra precisa de descrição");
       }
       continue;
     }
@@ -1014,11 +1014,12 @@ export async function salvarOrcamentoRmaItem(
   return obterRma(user, processoId);
 }
 
-/** Fecha o orçamento (status interno ENVIADO). Não envia e-mail. */
+/** Fecha o orçamento (status interno ENVIADO) e avisa a equipe por e-mail/sino. */
 export async function enviarOrcamentoRmaItem(
   user: AuthUser,
   processoId: string,
-  itemId: string
+  itemId: string,
+  opts?: { silenciarAlerta?: boolean }
 ) {
   const proc = await obterRma(user, processoId);
   assertProcessoAberto(proc.status);
@@ -1051,6 +1052,10 @@ export async function enviarOrcamentoRmaItem(
       throw new AppError(409, "Orçamento não está em rascunho — atualize");
     }
   });
+
+  if (!opts?.silenciarAlerta) {
+    avisarOrcamentoFechado(user, processoId, [itemId]);
+  }
 
   return obterRma(user, processoId);
 }
@@ -1133,7 +1138,26 @@ export async function decidirOrcamentoRmaItem(
     }
   });
 
-  return obterRma(user, processoId);
+  const atualizado = await obterRma(user, processoId);
+  const itemAtual = (atualizado.itens || []).find((i) => i.id === itemId);
+  const destIds = destinatarioIdsAlertaRma(atualizado);
+  if (destIds.length > 0 && itemAtual) {
+    const sn = itemAtual.unidadeSerie?.numeroSerie
+      ? ` · N/S ${itemAtual.unidadeSerie.numeroSerie}`
+      : "";
+    notificarRmaOrcamentoDecisao({
+      processoId,
+      clienteNome: atualizado.cliente.nome,
+      destinatarioIds: destIds,
+      decisao,
+      itemResumo: `${itemAtual.produto.codigo}${sn}`,
+      total: decisao === "APROVADO" ? total : null,
+      decididoPorNome: user.nome,
+      observacao: observacao?.trim() || null,
+    });
+  }
+
+  return atualizado;
 }
 
 export async function reabrirOrcamentoRmaItem(
@@ -1369,6 +1393,7 @@ export async function obterOrcamentoAgregadoRma(
       status: proc.status,
       nfEntradaNumero: proc.nfEntradaNumero,
       nfSaidaNumero: proc.nfSaidaNumero,
+      modalidadeAquisicao: proc.modalidadeAquisicao,
       criadoEm: proc.criadoEm,
       cliente: proc.cliente,
       filial: proc.filial,
@@ -1415,9 +1440,74 @@ export async function enviarOrcamentoAgregadoRma(
 ) {
   const uniq = [...new Set(itemIds)];
   for (const itemId of uniq) {
-    await enviarOrcamentoRmaItem(user, processoId, itemId);
+    await enviarOrcamentoRmaItem(user, processoId, itemId, {
+      silenciarAlerta: true,
+    });
+  }
+  if (uniq.length > 0) {
+    avisarOrcamentoFechado(user, processoId, uniq);
   }
   return obterOrcamentoAgregadoRma(user, processoId);
+}
+
+function resumoItemOrcamento(item: {
+  produto: { codigo: string };
+  unidadeSerie?: { numeroSerie: string } | null;
+  orcamento?: {
+    maoDeObra?: unknown;
+    desconto?: unknown;
+    linhas?: Array<{ quantidade: unknown; valorUnitario: unknown }>;
+  } | null;
+}): string {
+  const sn = item.unidadeSerie?.numeroSerie
+    ? ` · N/S ${item.unidadeSerie.numeroSerie}`
+    : "";
+  const orc = item.orcamento;
+  const total =
+    orc && orc.linhas
+      ? totalOrcamento(
+          orc.linhas.map((l) => ({
+            quantidade: Number(l.quantidade),
+            valorUnitario: Number(l.valorUnitario),
+          })),
+          Number(orc.maoDeObra ?? 0),
+          Number(orc.desconto ?? 0)
+        )
+      : null;
+  const valor =
+    total != null
+      ? ` — ${total.toLocaleString("pt-BR", {
+          style: "currency",
+          currency: "BRL",
+        })}`
+      : "";
+  return `${item.produto.codigo}${sn}${valor}`;
+}
+
+function avisarOrcamentoFechado(
+  user: AuthUser,
+  processoId: string,
+  itemIds: string[]
+) {
+  void obterRma(user, processoId)
+    .then((proc) => {
+      const destIds = destinatarioIdsAlertaRma(proc);
+      if (destIds.length === 0) return;
+      const idSet = new Set(itemIds);
+      const itensResumo = (proc.itens || [])
+        .filter((i) => idSet.has(i.id))
+        .map((i) => resumoItemOrcamento(i));
+      notificarRmaOrcamentoPronto({
+        processoId,
+        clienteNome: proc.cliente.nome,
+        destinatarioIds: destIds,
+        itensResumo,
+        fechadoPorNome: user.nome,
+      });
+    })
+    .catch(() => {
+      /* alerta não bloqueia o fluxo */
+    });
 }
 
 function cssPdfRmaComum(): string {
@@ -1621,25 +1711,32 @@ async function montarPdfOrcamentoRma(opts: {
 /** PDF de negociação: só rascunho / em aprovação (+ laudo de entrada). */
 export async function exportarOrcamentoRmaPdf(
   user: AuthUser,
-  processoId: string
+  processoId: string,
+  itemId?: string
 ) {
   const data = await obterOrcamentoAgregadoRma(user, processoId);
   const short = data.processo.id.slice(0, 8);
-  const itensPdf = data.itens.filter((it) =>
+  let itensPdf = data.itens.filter((it) =>
     rmaItemEntraNoPdfOrcamento({
       etapa: it.etapa,
       orcamentoStatus: it.orcamento?.status,
     })
   );
+  if (itemId) {
+    itensPdf = itensPdf.filter((it) => it.id === itemId);
+  }
   return montarPdfOrcamentoRma({
     user,
     processo: data.processo,
     itensPdf,
     tituloDoc: "Orçamento RMA",
-    filename: `orcamento-rma-${short}.pdf`,
+    filename: itemId
+      ? `orcamento-rma-${short}-${itemId.slice(0, 8)}.pdf`
+      : `orcamento-rma-${short}.pdf`,
     incluirLaudoRecebimento: true,
-    emptyError:
-      "Não há item em orçamento para o PDF. Feche o orçamento (ou gere com itens em rascunho). Itens já aprovados ou recusados não entram. Use o PDF arquivo na seção Documentos para histórico.",
+    emptyError: itemId
+      ? "Este item não entra no PDF de negociação (verifique o status do orçamento)."
+      : "Não há item em orçamento para o PDF. Feche o orçamento (ou gere com itens em rascunho). Itens já aprovados ou recusados não entram. Use o PDF arquivo na seção Documentos para histórico.",
   });
 }
 

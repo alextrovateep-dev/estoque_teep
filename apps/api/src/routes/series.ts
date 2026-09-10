@@ -131,7 +131,12 @@ seriesRouter.get("/disponiveis", async (req: AuthedRequest, res, next) => {
     if (req.user!.perfil === "OPERADOR") {
       const ids = operadorFilialIds(req.user!);
       if (!ids.includes(filialId)) {
-        throw new AppError(403, "Acesso negado a esta filial");
+        // Troca RMA: operador com permissão RMA precisa listar peça boa em outro estoque
+        const { loadPermissoes } = await import("../middleware/permissoes");
+        const perms = await loadPermissoes(req);
+        if (!perms.rma) {
+          throw new AppError(403, "Acesso negado a esta filial");
+        }
       }
     }
     const rows = await prisma.unidadeSerie.findMany({

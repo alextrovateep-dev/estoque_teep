@@ -356,9 +356,10 @@ export async function criarTransferenciaImediata(
     }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     baixaPorArvore?: boolean;
-  }
+  },
+  opts?: { bypassFilialOperador?: boolean }
 ) {
-  return criarTransferenciaInterna(user, input, "IMEDIATO", false);
+  return criarTransferenciaInterna(user, input, "IMEDIATO", false, opts);
 }
 
 /**
@@ -403,7 +404,8 @@ async function criarTransferenciaInterna(
     baixaPorArvore?: boolean;
   },
   creditoDestino: "IMEDIATO" | "AGUARDAR_RECEBIMENTO",
-  pendenteAprovacao: boolean
+  pendenteAprovacao: boolean,
+  opts?: { bypassFilialOperador?: boolean }
 ) {
   const baixaPorArvore = input.baixaPorArvore === true;
   if (baixaPorArvore && pendenteAprovacao) {
@@ -413,13 +415,16 @@ async function criarTransferenciaInterna(
     );
   }
   let origemFilialId = input.origemFilialId;
-  if (user.perfil === "OPERADOR") {
+  const bypassFilial = opts?.bypassFilialOperador === true;
+  if (user.perfil === "OPERADOR" && !bypassFilial) {
     origemFilialId = resolveOperadorFilialId(user, input.origemFilialId);
   }
   if (!origemFilialId) {
     throw new AppError(400, "Filial de origem obrigatória");
   }
-  assertFilialOperadorOrigem(user, origemFilialId);
+  if (!bypassFilial) {
+    assertFilialOperadorOrigem(user, origemFilialId);
+  }
 
   if (origemFilialId === input.destinoFilialId) {
     throw new AppError(400, "Origem e destino devem ser filiais diferentes");

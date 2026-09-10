@@ -2,7 +2,11 @@
 
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
-import { rmaOrcamentoPodeEditar, rmaOrcamentoStatusLabel } from "@teep/shared";
+import {
+  rmaModalidadeAquisicaoLabel,
+  rmaOrcamentoPodeEditar,
+  rmaOrcamentoStatusLabel,
+} from "@teep/shared";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -41,6 +45,7 @@ type OrcPayload = {
     id: string;
     status: string;
     nfEntradaNumero?: string | null;
+    modalidadeAquisicao?: string | null;
     cliente: { id: string; nome: string; documento?: string | null };
     filial: { sigla: string; nome: string };
     responsavelComercial?: { id: string; nome: string } | null;
@@ -69,6 +74,28 @@ function totalItem(linhas: LinhaDraft[], desconto: number) {
   return Math.max(0, Math.round((sub - desconto) * 100) / 100);
 }
 
+function linhasZeradas(linhas: LinhaDraft[]): string[] {
+  return linhas
+    .filter(
+      (l) =>
+        l.descricao.trim() &&
+        Number(l.quantidade) > 0 &&
+        Number(l.valorUnitario) <= 0
+    )
+    .map((l) => l.descricao.trim());
+}
+
+function emptyExtraLine(): LinhaDraft {
+  return {
+    descricao: "",
+    produtoId: null,
+    quantidade: 1,
+    valorUnitario: 0,
+    origem: "EXTRA",
+    tempoMinutos: null,
+  };
+}
+
 export default function RmaOrcamentoPage() {
   const params = useParams();
   const id = String(params.id || "");
@@ -94,7 +121,6 @@ export default function RmaOrcamentoPage() {
       user?.id === data.processo.responsavelComercial.id);
 
   const load = useCallback(async () => {
-    // Negociação (aberto) ou arquivo (fechado / itens já devolvidos)
     let row = await api<OrcPayload>(`/rma/${id}/orcamento`);
     if (row.itens.length === 0 || row.processo.status !== "ABERTO") {
       const arquivo = await api<OrcPayload>(`/rma/${id}/orcamento?arquivo=1`);
@@ -134,6 +160,22 @@ export default function RmaOrcamentoPage() {
     }, 0);
   }, [data, drafts]);
 
+  function confirmarLinhasZeradas(
+    itens: Array<{ label: string; linhas: LinhaDraft[] }>
+  ): boolean {
+    const avisos: string[] = [];
+    for (const it of itens) {
+      const z = linhasZeradas(it.linhas);
+      if (z.length) {
+        avisos.push(`${it.label}: ${z.join(", ")}`);
+      }
+    }
+    if (avisos.length === 0) return true;
+    return window.confirm(
+      `Há linhas com valor R$ 0,00:\n\n${avisos.join("\n")}\n\nFechar mesmo assim?`
+    );
+  }
+
   async function salvar() {
     if (!data) return;
     const itens = data.itens
@@ -150,7 +192,9 @@ export default function RmaOrcamentoPage() {
           itemId: it.id,
           desconto: Number(d.desconto) || 0,
           observacaoComercial: d.obs.trim() || null,
-          linhas: d.linhas,
+          linhas: d.linhas.filter(
+            (l) => l.origem !== "EXTRA" || l.descricao.trim()
+          ),
         };
       });
     if (itens.length === 0) {
@@ -161,11 +205,10 @@ export default function RmaOrcamentoPage() {
     setError("");
     setMsg("");
     try {
-      const row = await api<OrcPayload>(`/rma/${id}/orcamento`, {
+      await api<OrcPayload>(`/rma/${id}/orcamento`, {
         method: "PUT",
         body: JSON.stringify({ itens }),
       });
-      setData(row);
       const negociando = itens.some((rowItem) => {
         const it = data.itens.find((i) => i.id === rowItem.itemId);
         return it?.orcamento?.status === "ENVIADO";
@@ -183,32 +226,56 @@ export default function RmaOrcamentoPage() {
     }
   }
 
-  async function fechar() {
+  async function fecharItens(itemIds?: string[]) {
     if (!data) return;
-    const itensPayload = data.itens
-      .filter((it) => {
-        const st = it.orcamento?.status;
-        const d = drafts[it.id];
-        return (
-          it.etapa === "AGUARDANDO_ORCAMENTO" &&
-          (!st || st === "RASCUNHO") &&
-          d &&
-          d.linhas.length > 0
-        );
-      })
-      .map((it) => {
-        const d = drafts[it.id]!;
-        return {
-          itemId: it.id,
-          desconto: Number(d.desconto) || 0,
-          observacaoComercial: d.obs.trim() || null,
-          linhas: d.linhas,
-        };
-      });
-    if (itensPayload.length === 0) {
-      setError("Não há item em rascunho para fechar.");
+    const filtroIds = itemIds ? new Set(itemIds) : null;
+    const candidatos = data.itens.filter((it) => {
+      if (filtroIds && !filtroIds.has(it.id)) return false;
+      const st = it.orcamento?.status;
+      const d = drafts[it.id];
+      return (
+        it.etapa === "AGUARDANDO_ORCAMENTO" &&
+        (!st || st === "RASCUNHO") &&
+        d &&
+        d.linhas.some((l) => l.origem !== "EXTRA" || l.descricao.trim())
+      );
+    });
+    if (candidatos.length === 0) {
+      setError(
+        itemIds?.length
+          ? "Este item não está em rascunho para fechar."
+          : "Não há item em rascunho para fechar."
+      );
       return;
     }
+
+    const itensPayload = candidatos.map((it) => {
+      const d = drafts[it.id]!;
+      return {
+        itemId: it.id,
+        desconto: Number(d.desconto) || 0,
+        observacaoComercial: d.obs.trim() || null,
+        linhas: d.linhas.filter(
+          (l) => l.origem !== "EXTRA" || l.descricao.trim()
+        ),
+      };
+    });
+
+    if (
+      !confirmarLinhasZeradas(
+        candidatos.map((it) => ({
+          label: `${it.produto.codigo}${
+            it.unidadeSerie?.numeroSerie
+              ? ` · ${it.unidadeSerie.numeroSerie}`
+              : ""
+          }`,
+          linhas: drafts[it.id]!.linhas,
+        }))
+      )
+    ) {
+      return;
+    }
+
     setBusy(true);
     setError("");
     setMsg("");
@@ -224,7 +291,7 @@ export default function RmaOrcamentoPage() {
         }),
       });
       setMsg(
-        "Pronto para negociar. Gere o PDF, ajuste os valores se o cliente pedir, gere de novo e envie. O RMA só é finalizado depois da aprovação, da manutenção e do retorno."
+        "Orçamento fechado (aguardando aprovação). Equipe avisada. Gere o PDF e envie ao cliente pelo e-mail do comercial."
       );
       await load();
     } catch (e) {
@@ -235,14 +302,17 @@ export default function RmaOrcamentoPage() {
     }
   }
 
-  async function pdf() {
+  async function pdf(itemId?: string) {
     setBusy(true);
     setError("");
     try {
-      const path =
+      const base =
         data?.processo.status === "ABERTO"
           ? `/rma/${id}/orcamento.pdf`
           : `/rma/${id}/orcamento/arquivo.pdf`;
+      const path = itemId
+        ? `${base}?itemId=${encodeURIComponent(itemId)}`
+        : base;
       const { blob, filename } = await apiDownload(path, {
         fallbackFilename: `orcamento-rma-${id.slice(0, 8)}.pdf`,
       });
@@ -269,7 +339,11 @@ export default function RmaOrcamentoPage() {
           observacao: (decisaoObs[itemId] || "").trim() || null,
         }),
       });
-      setMsg(decisao === "aprovar" ? "Item aprovado." : "Item recusado.");
+      setMsg(
+        decisao === "aprovar"
+          ? "Item aprovado. Equipe avisada por e-mail/sino."
+          : "Item recusado. Equipe avisada por e-mail/sino."
+      );
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro na decisão");
@@ -294,6 +368,20 @@ export default function RmaOrcamentoPage() {
     }
   }
 
+  function updateLinha(
+    itemId: string,
+    idx: number,
+    patch: Partial<LinhaDraft>
+  ) {
+    setDrafts((prev) => {
+      const d = prev[itemId];
+      if (!d) return prev;
+      const next = [...d.linhas];
+      next[idx] = { ...next[idx]!, ...patch };
+      return { ...prev, [itemId]: { ...d, linhas: next } };
+    });
+  }
+
   if (!can) {
     return <p className="text-sm text-slate-600">Sem permissão.</p>;
   }
@@ -313,6 +401,7 @@ export default function RmaOrcamentoPage() {
 
   const p = data.processo;
   const fechados = data.itens.filter((i) => i.orcamento?.status === "ENVIADO");
+  const modalidadeLabel = rmaModalidadeAquisicaoLabel(p.modalidadeAquisicao);
 
   return (
     <>
@@ -331,6 +420,13 @@ export default function RmaOrcamentoPage() {
             {" · "}
             {p.id.slice(0, 8)}
           </p>
+          <p className="mt-1 text-sm text-slate-700">
+            Modalidade:{" "}
+            <span className="font-medium">{modalidadeLabel}</span>
+            {p.responsavelComercial?.nome
+              ? ` · Comercial: ${p.responsavelComercial.nome}`
+              : ""}
+          </p>
         </div>
         <Link
           href={`/rma/${id}`}
@@ -342,8 +438,8 @@ export default function RmaOrcamentoPage() {
 
       <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
         {p.status === "ABERTO"
-          ? "Fechar o orçamento libera a etapa para o comercial: gerar PDF (orçamento + laudo de recebimento), negociar com o cliente, alterar valores e gerar um PDF novo. O RMA só é finalizado depois de aprovado, com a manutenção realizada e o retorno feito."
-          : "Processo fechado — visualização do orçamento em arquivo. Use a seção Documentos no RMA para baixar PDFs de laudos e orçamento."}
+          ? "Feche o orçamento para ir a “Aguardando aprovação”. Gere o PDF e envie ao cliente pelo e-mail do comercial. Negocie, ajuste valores e gere o PDF de novo. O RMA só finaliza depois da aprovação, manutenção e retorno."
+          : "Processo fechado — visualização do orçamento em arquivo. Use Documentos no RMA para baixar PDFs."}
       </p>
 
       {error ? (
@@ -375,27 +471,83 @@ export default function RmaOrcamentoPage() {
               orcamentoStatus: it.orcamento?.status,
             });
           const tot = totalItem(d.linhas, Number(d.desconto) || 0);
+          const podeFecharItem =
+            p.status === "ABERTO" &&
+            it.etapa === "AGUARDANDO_ORCAMENTO" &&
+            (!it.orcamento?.status || it.orcamento.status === "RASCUNHO");
+          const podeDecidirItem =
+            p.status === "ABERTO" && it.orcamento?.status === "ENVIADO";
 
           return (
             <section
               key={it.id}
               className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
             >
-              <div>
-                <p className="font-mono text-sm font-semibold text-slate-900">
-                  {it.produto.codigo}
-                  {it.unidadeSerie?.numeroSerie
-                    ? ` · N/S ${it.unidadeSerie.numeroSerie}`
-                    : ""}
-                </p>
-                <p className="text-sm text-slate-600">{it.produto.descricao}</p>
-                <p className="mt-1 text-xs text-slate-400">
-                  {it.orcamento
-                    ? `Status: ${rmaOrcamentoStatusLabel(it.orcamento.status)}`
-                    : "Sem orçamento salvo"}
-                  {" · "}
-                  {it.etapa}
-                </p>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <p className="font-mono text-sm font-semibold text-slate-900">
+                    {it.produto.codigo}
+                    {it.unidadeSerie?.numeroSerie
+                      ? ` · N/S ${it.unidadeSerie.numeroSerie}`
+                      : ""}
+                  </p>
+                  <p className="text-sm text-slate-600">{it.produto.descricao}</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {it.orcamento
+                      ? `Status: ${rmaOrcamentoStatusLabel(it.orcamento.status)}`
+                      : "Sem orçamento salvo"}
+                    {" · "}
+                    {it.etapa}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void pdf(it.id)}
+                    className="rounded border px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    PDF
+                  </button>
+                  {podeFecharItem ? (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => void fecharItens([it.id])}
+                      className="rounded bg-amber-700 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+                    >
+                      Fechar
+                    </button>
+                  ) : null}
+                  {podeDecidirItem ? (
+                    <>
+                      <button
+                        type="button"
+                        disabled={busy || !canDecidir}
+                        onClick={() => void decidir(it.id, "aprovar")}
+                        className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+                      >
+                        Aprovar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || !canDecidir}
+                        onClick={() => void decidir(it.id, "recusar")}
+                        className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-700 disabled:opacity-50"
+                      >
+                        Recusar
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void reabrir(it.id)}
+                        className="rounded border border-amber-300 px-2.5 py-1 text-xs text-amber-900 disabled:opacity-50"
+                      >
+                        Reabrir
+                      </button>
+                    </>
+                  ) : null}
+                </div>
               </div>
 
               {it.diagnostico ? (
@@ -412,7 +564,23 @@ export default function RmaOrcamentoPage() {
                     className="grid gap-2 rounded-lg border border-slate-100 p-2 text-sm sm:grid-cols-12"
                   >
                     <div className="sm:col-span-5">
-                      <p className="font-medium text-slate-800">{l.descricao}</p>
+                      {l.origem === "EXTRA" && editavel ? (
+                        <input
+                          className="w-full rounded border px-2 py-1 font-medium"
+                          placeholder="Descrição da linha extra"
+                          disabled={busy}
+                          value={l.descricao}
+                          onChange={(e) =>
+                            updateLinha(it.id, idx, {
+                              descricao: e.target.value,
+                            })
+                          }
+                        />
+                      ) : (
+                        <p className="font-medium text-slate-800">
+                          {l.descricao}
+                        </p>
+                      )}
                       <p className="text-[11px] text-slate-400">
                         {l.origem}
                         {l.origem === "SERVICO"
@@ -427,22 +595,17 @@ export default function RmaOrcamentoPage() {
                         className="mt-0.5 w-full rounded border px-2 py-1"
                         disabled={!editavel || busy}
                         value={l.quantidade}
-                        onChange={(e) => {
-                          const next = [...d.linhas];
-                          next[idx] = {
-                            ...l,
+                        onChange={(e) =>
+                          updateLinha(it.id, idx, {
                             quantidade: Number(e.target.value) || 0,
-                          };
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [it.id]: { ...d, linhas: next },
-                          }));
-                        }}
+                          })
+                        }
                       />
                     </label>
                     <label className="sm:col-span-3">
                       <span className="text-[11px] text-slate-500">
-                        Valor unit. {l.origem === "SERVICO" ? "(comercial)" : ""}
+                        Valor unit.{" "}
+                        {l.origem === "SERVICO" ? "(comercial)" : ""}
                       </span>
                       <input
                         type="number"
@@ -450,27 +613,81 @@ export default function RmaOrcamentoPage() {
                         className="mt-0.5 w-full rounded border px-2 py-1"
                         disabled={!editavel || busy}
                         value={l.valorUnitario}
-                        onChange={(e) => {
-                          const next = [...d.linhas];
-                          next[idx] = {
-                            ...l,
+                        onChange={(e) =>
+                          updateLinha(it.id, idx, {
                             valorUnitario: Number(e.target.value) || 0,
-                          };
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [it.id]: { ...d, linhas: next },
-                          }));
-                        }}
+                          })
+                        }
                       />
                     </label>
-                    <div className="flex items-end justify-end sm:col-span-2">
+                    <div className="flex items-end justify-end gap-2 sm:col-span-2">
                       <p className="text-sm font-medium">
                         {money(Number(l.quantidade) * Number(l.valorUnitario))}
                       </p>
+                      {l.origem === "EXTRA" && editavel ? (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          title="Remover linha"
+                          className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                          onClick={() => {
+                            setDrafts((prev) => {
+                              const cur = prev[it.id];
+                              if (!cur) return prev;
+                              return {
+                                ...prev,
+                                [it.id]: {
+                                  ...cur,
+                                  linhas: cur.linhas.filter((_, i) => i !== idx),
+                                },
+                              };
+                            });
+                          }}
+                        >
+                          Remover
+                        </button>
+                      ) : null}
                     </div>
                   </li>
                 ))}
               </ul>
+
+              {editavel ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  className="mt-2 text-sm font-medium text-brand hover:underline disabled:opacity-50"
+                  onClick={() =>
+                    setDrafts((prev) => {
+                      const cur = prev[it.id];
+                      if (!cur) return prev;
+                      return {
+                        ...prev,
+                        [it.id]: {
+                          ...cur,
+                          linhas: [...cur.linhas, emptyExtraLine()],
+                        },
+                      };
+                    })
+                  }
+                >
+                  + Linha extra
+                </button>
+              ) : null}
+
+              {podeDecidirItem ? (
+                <input
+                  className="mt-3 w-full rounded border px-2 py-1.5 text-xs"
+                  placeholder="Obs. da decisão (opcional)"
+                  value={decisaoObs[it.id] || ""}
+                  onChange={(e) =>
+                    setDecisaoObs((prev) => ({
+                      ...prev,
+                      [it.id]: e.target.value,
+                    }))
+                  }
+                />
+              ) : null}
 
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <label className="text-sm">
@@ -535,7 +752,7 @@ export default function RmaOrcamentoPage() {
         <button
           type="button"
           disabled={busy || p.status !== "ABERTO"}
-          onClick={() => void fechar()}
+          onClick={() => void fecharItens()}
           className="rounded-lg bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50"
         >
           Fechar orçamento
@@ -545,45 +762,42 @@ export default function RmaOrcamentoPage() {
       {fechados.length > 0 ? (
         <section className="mt-8 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
           <h2 className="text-base font-semibold text-amber-950">
-            Orçar com o cliente
+            Aguardando aprovação ({fechados.length})
           </h2>
           <p className="mt-1 text-xs text-amber-900/80">
-            Gere o PDF e envie por e-mail/WhatsApp. O arquivo começa com o
-            orçamento e, na sequência, o laudo de recebimento (checklist, fotos
-            e observações do técnico). Se o cliente negociar, altere os valores
-            acima, salve e gere o PDF de novo. Quando aceitar, aprove. Reabra só
-            se quiser voltar ao rascunho. Isso ainda não finaliza o RMA.
+            Status interno após fechar. Envie o PDF ao cliente pelo e-mail do
+            comercial. Use os atalhos em cada item (PDF / Aprovar / Recusar /
+            Reabrir) ou os botões abaixo.
           </p>
-          <ul className="mt-3 space-y-3">
+          <ul className="mt-3 space-y-2">
             {fechados.map((it) => (
               <li
                 key={it.id}
-                className="rounded-lg border border-amber-100 bg-white p-3 text-sm"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-100 bg-white px-3 py-2 text-sm"
               >
-                <p className="font-mono font-semibold">
+                <span className="font-mono font-semibold">
                   {it.produto.codigo}
                   {it.unidadeSerie?.numeroSerie
                     ? ` · N/S ${it.unidadeSerie.numeroSerie}`
                     : ""}
-                </p>
-                <p className="text-slate-600">Total: {money(it.total)}</p>
-                <input
-                  className="mt-2 w-full rounded border px-2 py-1 text-xs"
-                  placeholder="Obs. da decisão (opcional)"
-                  value={decisaoObs[it.id] || ""}
-                  onChange={(e) =>
-                    setDecisaoObs((prev) => ({
-                      ...prev,
-                      [it.id]: e.target.value,
-                    }))
-                  }
-                />
-                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="ml-2 font-sans font-normal text-slate-600">
+                    {money(it.total)}
+                  </span>
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void pdf(it.id)}
+                    className="rounded border px-2.5 py-1 text-xs disabled:opacity-50"
+                  >
+                    PDF
+                  </button>
                   <button
                     type="button"
                     disabled={busy || p.status !== "ABERTO"}
                     onClick={() => void reabrir(it.id)}
-                    className="rounded border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-900 disabled:opacity-50"
+                    className="rounded border border-amber-300 px-2.5 py-1 text-xs text-amber-900 disabled:opacity-50"
                   >
                     Reabrir
                   </button>
@@ -591,7 +805,7 @@ export default function RmaOrcamentoPage() {
                     type="button"
                     disabled={busy || !canDecidir || p.status !== "ABERTO"}
                     onClick={() => void decidir(it.id, "aprovar")}
-                    className="rounded bg-emerald-700 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                    className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
                   >
                     Aprovar
                   </button>
@@ -599,7 +813,7 @@ export default function RmaOrcamentoPage() {
                     type="button"
                     disabled={busy || !canDecidir || p.status !== "ABERTO"}
                     onClick={() => void decidir(it.id, "recusar")}
-                    className="rounded border border-red-200 px-3 py-1.5 text-xs text-red-700 disabled:opacity-50"
+                    className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-700 disabled:opacity-50"
                   >
                     Recusar
                   </button>

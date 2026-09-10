@@ -222,6 +222,7 @@ export default function RmaDetalhePage() {
   const [serieBoa, setSerieBoa] = useState("");
   const [seriesDisp, setSeriesDisp] = useState<SerieOpt[]>([]);
   const [trocaObs, setTrocaObs] = useState("");
+  const [trocaErro, setTrocaErro] = useState("");
   const [painelAcao, setPainelAcao] = useState<
     null | "cancelar" | "devolver-todos"
   >(null);
@@ -860,6 +861,7 @@ export default function RmaDetalhePage() {
 
   async function abrirTroca(item: RmaItem) {
     setError("");
+    setTrocaErro("");
     setTrocaItemId(item.id);
     setSerieBoa("");
     setTrocaObs("");
@@ -903,10 +905,20 @@ export default function RmaDetalhePage() {
       `/series/disponiveis?produtoId=${encodeURIComponent(produtoId)}&filialId=${encodeURIComponent(origemFilialId)}`
     )
       .then((rows) => {
-        if (!cancelled) setSeriesDisp(rows || []);
+        if (!cancelled) {
+          setSeriesDisp(rows || []);
+          setTrocaErro("");
+        }
       })
-      .catch(() => {
-        if (!cancelled) setSeriesDisp([]);
+      .catch((err) => {
+        if (!cancelled) {
+          setSeriesDisp([]);
+          setTrocaErro(
+            err instanceof Error
+              ? err.message
+              : "Não foi possível listar séries neste estoque"
+          );
+        }
       });
     return () => {
       cancelled = true;
@@ -914,46 +926,49 @@ export default function RmaDetalhePage() {
   }, [trocaItemId, origemFilialId, row]);
 
   async function confirmarTroca() {
-    if (!trocaItemId || actingRef.current) return;
+    if (!trocaItemId) return;
+    if (actingRef.current) {
+      setTrocaErro("Aguarde a operação em andamento…");
+      return;
+    }
+    const falhaLocal = (msg: string) => {
+      setTrocaErro(msg);
+      setError(msg);
+      // Erro no topo + no painel (usuário costuma estar no final da página)
+      requestAnimationFrame(() => {
+        document
+          .getElementById(`troca-painel-${trocaItemId}`)
+          ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    };
     if (!origemFilialId) {
-      setError("Selecione o estoque de origem da peça boa");
+      falhaLocal("Selecione o estoque de origem da peça boa");
       return;
     }
     if (!serieBoa.trim()) {
-      setError("Informe a série substituta");
+      falhaLocal("Informe a série substituta");
       return;
     }
     if (!destinoDescarteId) {
-      setError("Selecione o estoque de descarte");
+      falhaLocal("Selecione o estoque de descarte");
       return;
     }
-    if (!nfSai.trim()) {
-      setError(
-        "Informe o número da NF de retorno antes de enviar ao cliente."
-      );
-      return;
-    }
-    if (!anexoAtivoPorTipo(row?.anexos || [], "NF_SAIDA")) {
-      setError(
-        "Anexe o arquivo da NF de retorno antes de enviar ao cliente."
-      );
-      return;
-    }
-    if (!nfEnt.trim()) {
-      setError(
-        "Informe o número da NF de entrada antes de enviar ao cliente."
-      );
-      return;
-    }
-    if (
-      !confirm(
-        "Confirmar troca? A série boa será transferida e expedida ao cliente; a série ruim vai ao descarte."
-      )
-    ) {
+    const faltaDocs = !nfEnt.trim()
+      ? "Informe o número da NF de entrada"
+      : !anexoAtivoPorTipo(row?.anexos || [], "NF_ENTRADA")
+        ? "Anexe o arquivo da NF de entrada"
+        : !nfSai.trim()
+          ? "Informe o número da NF de retorno"
+          : !anexoAtivoPorTipo(row?.anexos || [], "NF_SAIDA")
+            ? "Anexe o arquivo da NF de retorno"
+            : "";
+    if (faltaDocs) {
+      falhaLocal(`${faltaDocs} antes de enviar ao cliente.`);
       return;
     }
     actingRef.current = true;
     setActing(true);
+    setTrocaErro("");
     setError("");
     setMsg("");
     try {
@@ -968,11 +983,13 @@ export default function RmaDetalhePage() {
           observacao: trocaObs.trim() || undefined,
         }),
       });
-      setMsg("Troca concluída");
+      setMsg("Troca concluída — série boa enviada ao cliente; série ruim no descarte.");
       setTrocaItemId(null);
+      setTrocaErro("");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro");
+      const msg = err instanceof Error ? err.message : "Erro ao confirmar troca";
+      falhaLocal(msg);
     } finally {
       actingRef.current = false;
       setActing(false);
@@ -2340,7 +2357,10 @@ export default function RmaDetalhePage() {
                   )}
                 </div>
                 {trocaItemId === i.id && (
-                  <div className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3">
+                  <div
+                    id={`troca-painel-${i.id}`}
+                    className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3"
+                  >
                     <p className="font-medium text-amber-950 sm:col-span-2 lg:col-span-3">
                       Troca — peça boa de outro estoque; série ruim vai ao
                       descarte
@@ -2424,19 +2444,44 @@ export default function RmaDetalhePage() {
                         maxLength={500}
                       />
                     </label>
+                    {(trocaErro || faltaDocsRetorno) && (
+                      <p
+                        role="alert"
+                        className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-800 sm:col-span-2 lg:col-span-3"
+                      >
+                        {trocaErro ||
+                          `${faltaDocsRetorno} antes de enviar ao cliente.`}
+                      </p>
+                    )}
                     <div className="flex flex-wrap gap-2 pt-1 sm:col-span-2 lg:col-span-3">
                       <button
                         type="button"
-                        disabled={acting}
+                        disabled={
+                          acting ||
+                          !origemFilialId ||
+                          !serieBoa.trim() ||
+                          !destinoDescarteId ||
+                          Boolean(faltaDocsRetorno)
+                        }
+                        title={
+                          faltaDocsRetorno
+                            ? `${faltaDocsRetorno} antes de enviar ao cliente.`
+                            : "Transfere a série boa e envia ao cliente; a série ruim vai ao descarte"
+                        }
                         onClick={() => void confirmarTroca()}
                         className="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-50"
                       >
-                        Confirmar troca
+                        {acting && trocaItemId === i.id
+                          ? "Confirmando…"
+                          : "Confirmar troca"}
                       </button>
                       <button
                         type="button"
                         disabled={acting}
-                        onClick={() => setTrocaItemId(null)}
+                        onClick={() => {
+                          setTrocaItemId(null);
+                          setTrocaErro("");
+                        }}
                         className="rounded border px-3 py-1.5"
                       >
                         Cancelar

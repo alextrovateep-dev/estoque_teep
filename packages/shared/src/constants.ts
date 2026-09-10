@@ -557,6 +557,8 @@ export const ALERTA_EVENTOS = [
   "RMA_FINANCEIRO",
   "RMA_ENCERRADO",
   "RMA_LAUDO",
+  "RMA_ORCAMENTO",
+  "RMA_ORCAMENTO_DECISAO",
   "PEDIDO_SEPARADO",
 ] as const;
 export type AlertaEvento = (typeof ALERTA_EVENTOS)[number];
@@ -574,6 +576,8 @@ export const ALERTA_EVENTO_LABELS: Record<AlertaEvento, string> = {
   RMA_FINANCEIRO: "RMA — atualização financeira",
   RMA_ENCERRADO: "RMA encerrado (fechado ou cancelado)",
   RMA_LAUDO: "RMA — laudo(s) anexado(s)",
+  RMA_ORCAMENTO: "RMA — orçamento pronto (fechar)",
+  RMA_ORCAMENTO_DECISAO: "RMA — orçamento aprovado/recusado",
   PEDIDO_SEPARADO: "Pedido separado",
 };
 

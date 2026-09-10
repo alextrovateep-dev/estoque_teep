@@ -462,6 +462,89 @@ export function notificarRmaLaudos(opts: {
   });
 }
 
+/** Orçamento fechado (ENVIADO) — pronto para PDF / negociação com o cliente. */
+export function notificarRmaOrcamentoPronto(opts: {
+  processoId: string;
+  clienteNome: string;
+  destinatarioIds: string[];
+  itensResumo: string[];
+  fechadoPorNome?: string;
+}): void {
+  const short = opts.processoId.slice(0, 8);
+  const href = `/rma/${opts.processoId}/orcamento`;
+  const lista =
+    opts.itensResumo.length > 0
+      ? opts.itensResumo.map((l) => `• ${l}`).join("\n")
+      : "• (itens do orçamento)";
+  const quem = opts.fechadoPorNome?.trim()
+    ? `Fechado por ${opts.fechadoPorNome.trim()}.`
+    : null;
+  notifyUsuarios(opts.destinatarioIds, {
+    tipo: "RMA_ORCAMENTO",
+    titulo: `Orçamento pronto · ${short}`,
+    mensagem: [
+      `O orçamento do RMA ${short} (${opts.clienteNome}) foi fechado e está pronto para negociar com o cliente.`,
+      lista,
+      quem,
+      "Gere o PDF na tela de orçamento e envie ao cliente (e-mail/WhatsApp).",
+      `Abrir orçamento: ${appBaseUrl()}${href}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    meta: { processoId: opts.processoId, href },
+    dedupeKey: `${opts.processoId}|ORC|${opts.itensResumo.join("|")}`,
+    forceEmail: true,
+  });
+}
+
+/** Decisão comercial do orçamento (aprovado ou recusado). */
+export function notificarRmaOrcamentoDecisao(opts: {
+  processoId: string;
+  clienteNome: string;
+  destinatarioIds: string[];
+  decisao: "APROVADO" | "RECUSADO";
+  itemResumo: string;
+  total?: number | null;
+  decididoPorNome?: string;
+  observacao?: string | null;
+}): void {
+  const short = opts.processoId.slice(0, 8);
+  const href = `/rma/${opts.processoId}`;
+  const aprovado = opts.decisao === "APROVADO";
+  const valor =
+    aprovado && opts.total != null && opts.total > 0
+      ? ` · ${fmtMoneyBr(opts.total)}`
+      : "";
+  const quem = opts.decididoPorNome?.trim()
+    ? `Registrado por ${opts.decididoPorNome.trim()}.`
+    : null;
+  const obs = opts.observacao?.trim()
+    ? `Obs.: ${opts.observacao.trim()}`
+    : null;
+  notifyUsuarios(opts.destinatarioIds, {
+    tipo: "RMA_ORCAMENTO_DECISAO",
+    titulo: aprovado
+      ? `Orçamento aprovado · ${short}`
+      : `Orçamento recusado · ${short}`,
+    mensagem: [
+      `Decisão no orçamento do RMA ${short} (${opts.clienteNome}).`,
+      `• ${opts.itemResumo} — ${aprovado ? "Aprovado" : "Recusado"}${valor}`,
+      quem,
+      obs,
+      `Ver processo: ${appBaseUrl()}${href}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    meta: {
+      processoId: opts.processoId,
+      decisao: opts.decisao,
+      href,
+    },
+    dedupeKey: `${opts.processoId}|ORC_DEC|${opts.itemResumo}|${opts.decisao}`,
+    forceEmail: true,
+  });
+}
+
 export function notificarPedidoSeparado(opts: {
   pedidoId: string;
   egestorCodigo: number;

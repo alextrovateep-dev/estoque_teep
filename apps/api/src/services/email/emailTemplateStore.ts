@@ -337,6 +337,30 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       ].join("\n\n"),
     };
   }
+  if (type === "RMA_ORCAMENTO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Orçamento pronto · b2c3d4e5",
+      mensagem: [
+        "O orçamento do RMA b2c3d4e5 (Cliente Demo LTDA) foi fechado e está pronto para negociar com o cliente.",
+        "• DEMO-01 · N/S ABC123 — R$ 350,00",
+        "Gere o PDF na tela de orçamento e envie ao cliente.",
+        `Abrir orçamento: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001/orcamento`,
+      ].join("\n\n"),
+    };
+  }
+  if (type === "RMA_ORCAMENTO_DECISAO") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Orçamento aprovado · b2c3d4e5",
+      mensagem: [
+        "Decisão no orçamento do RMA b2c3d4e5 (Cliente Demo LTDA).",
+        "• DEMO-01 · N/S ABC123 — Aprovado · R$ 350,00",
+        "Registrado por Carlos Comercial.",
+        `Ver processo: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
   if (type === "PEDIDO_SEPARADO") {
     return {
       nome: "Ana Operações",

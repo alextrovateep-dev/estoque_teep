@@ -163,6 +163,24 @@ async function aplicarEfeitoSaldo(
   });
 }
 
+/**
+ * Fluxos internos (pedido/RMA) não herdam "requer aprovação" do tipo —
+ * senão saída/entrada ficam PENDENTE e quebram devolver/trocar.
+ */
+export function deveFicarPendenteAprovacao(opts: {
+  usoInternoPedido?: boolean;
+  usoInternoRma?: boolean;
+  perfil: AuthUser["perfil"];
+  requerAprovacao: boolean;
+}): boolean {
+  return (
+    !opts.usoInternoPedido &&
+    !opts.usoInternoRma &&
+    opts.perfil === "OPERADOR" &&
+    opts.requerAprovacao === true
+  );
+}
+
 export async function criarMovimentacao(
   user: AuthUser,
   input: {
@@ -640,12 +658,14 @@ export async function criarMovimentacao(
       ? input.precoUnitario
       : Number(produto.precoUnitario);
 
-  // Separação de pedido conclui na hora (fluxo próprio + e-mail aos destinatários).
-  // Não herda "requer aprovação" do tipo — evita PENDENTE indevido na tela Pedidos.
-  const pendente =
-    !input.usoInternoPedido &&
-    user.perfil === "OPERADOR" &&
-    tipo.requerAprovacao === true;
+  // Pedido e RMA (devolver/trocar/entrada) concluem na hora — fluxo próprio.
+  // Não herdam "requer aprovação" do tipo (evita PENDENTE que quebra o fluxo).
+  const pendente = deveFicarPendenteAprovacao({
+    usoInternoPedido: input.usoInternoPedido,
+    usoInternoRma: input.usoInternoRma,
+    perfil: user.perfil,
+    requerAprovacao: tipo.requerAprovacao === true,
+  });
   if (tipo.baixaPorArvore && pendente) {
     throw new AppError(
       400,
