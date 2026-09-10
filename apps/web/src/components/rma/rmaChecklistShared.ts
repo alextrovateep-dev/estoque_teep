@@ -1,4 +1,10 @@
-import { normalizarGatilhoFotoChecklist } from "@teep/shared";
+import {
+  RMA_CHECKLIST_AJUDA_LACRE,
+  RMA_CHECKLIST_TITULO_LACRE,
+  ensureChecklistLacrePrimeiro,
+  isChecklistItemLacreGarantia,
+  normalizarGatilhoFotoChecklist,
+} from "@teep/shared";
 
 export type ProdutoOpt = {
   id: string;
@@ -9,7 +15,7 @@ export type ProdutoOpt = {
 
 export type ItemDraft = {
   titulo: string;
-  tipoCampo: "SIM_NAO" | "TEXTO" | "OPCAO" | "FOTO";
+  tipoCampo: "SIM_NAO" | "TEXTO" | "OPCAO" | "FOTO" | "LACRE_GARANTIA";
   obrigatorio: boolean;
   opcoesText: string;
   ajuda: string;
@@ -57,8 +63,29 @@ export function emptyChecklistItem(): ItemDraft {
   };
 }
 
+export function lacreGarantiaChecklistItem(): ItemDraft {
+  return {
+    titulo: RMA_CHECKLIST_TITULO_LACRE,
+    tipoCampo: "LACRE_GARANTIA",
+    obrigatorio: true,
+    opcoesText: "",
+    ajuda: RMA_CHECKLIST_AJUDA_LACRE,
+    exigeFotoSe: "",
+  };
+}
+
+/** Itens iniciais ao criar checklist (inspeção já vem com lacre). */
+export function defaultChecklistItens(
+  tipo: "RECEBIMENTO" | "LIBERACAO"
+): ItemDraft[] {
+  if (tipo === "RECEBIMENTO") {
+    return [lacreGarantiaChecklistItem()];
+  }
+  return [emptyChecklistItem()];
+}
+
 export function itemsFromTemplate(t: ChecklistTemplate): ItemDraft[] {
-  return t.itens
+  const mapped = t.itens
     .slice()
     .sort((a, b) => a.ordem - b.ordem)
     .map((it) => ({
@@ -68,7 +95,29 @@ export function itemsFromTemplate(t: ChecklistTemplate): ItemDraft[] {
       opcoesText: Array.isArray(it.opcoesJson) ? it.opcoesJson.join(", ") : "",
       ajuda: it.ajuda || "",
       exigeFotoSe: it.exigeFotoSe || "",
+      codigo: it.codigo,
     }));
+  if (t.tipo !== "RECEBIMENTO") {
+    return mapped.map(({ codigo: _c, ...rest }) => rest);
+  }
+  return ensureChecklistLacrePrimeiro(mapped, {
+    ...lacreGarantiaChecklistItem(),
+    codigo: "LACRE",
+  }).map(({ codigo: _c, ...rest }) => rest);
+}
+
+export function normalizeChecklistItensForTipo(
+  tipo: "RECEBIMENTO" | "LIBERACAO",
+  itens: ItemDraft[]
+): ItemDraft[] {
+  if (tipo !== "RECEBIMENTO") return itens;
+  return ensureChecklistLacrePrimeiro(
+    itens.map((it) => ({
+      ...it,
+      codigo: isChecklistItemLacreGarantia(it) ? "LACRE" : undefined,
+    })),
+    { ...lacreGarantiaChecklistItem(), codigo: "LACRE" }
+  ).map(({ codigo: _c, ...rest }) => rest);
 }
 
 export function parseChecklistTipo(

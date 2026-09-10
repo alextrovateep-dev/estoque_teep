@@ -2,17 +2,12 @@
 
 import { api } from "@/lib/api";
 import { useCallback, useRef, useState } from "react";
+import {
+  totaisArvoreVisivel,
+  type ArvoreComponenteRelatorio,
+} from "./arvoreTotaisVisivel";
 
-export type ArvoreComponenteRelatorio = {
-  produtoFilhoId?: string;
-  codigo: string;
-  descricao: string;
-  quantidade: number;
-  fantasma: boolean;
-  temBom?: boolean;
-  precoUnitario: number;
-  valorLinha: number;
-};
+export type { ArvoreComponenteRelatorio };
 
 function money(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -120,14 +115,16 @@ export function ArvoreComponentesTabela({
     [carregarFilhos]
   );
 
-  const somaQtd = componentes.reduce(
-    (s, c) => s + Number(c.quantidade || 0),
-    0
+  const { itens: itensVisiveis, quantidade: somaQtd } = totaisArvoreVisivel(
+    componentes,
+    abertas,
+    filhos
   );
   const somaValor = componentes.reduce(
     (s, c) => s + Number(c.valorLinha || 0),
     0
   );
+  const explodido = itensVisiveis !== qtdComponentes;
 
   return (
     <div className="overflow-x-auto">
@@ -163,8 +160,14 @@ export function ArvoreComponentesTabela({
               className="px-4 py-3 text-xs font-medium text-slate-500 sm:px-5"
               colSpan={2}
             >
-              Total · {qtdComponentes} item
-              {qtdComponentes === 1 ? "" : "s"}
+              Total · {itensVisiveis} item
+              {itensVisiveis === 1 ? "" : "s"}
+              {explodido ? (
+                <span className="font-normal text-slate-400">
+                  {" "}
+                  (kits abertos · {qtdComponentes} no 1º nível)
+                </span>
+              ) : null}
             </td>
             <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
               {qty(somaQtd)}
@@ -233,10 +236,7 @@ function LinhasComponente({
             {podeExpandir ? (
               <Chevron aberto={aberto} />
             ) : (
-              <span
-                className="inline-block h-3 w-3.5"
-                aria-hidden
-              />
+              <span className="inline-block h-3 w-3.5" aria-hidden />
             )}
             {c.codigo}
           </span>

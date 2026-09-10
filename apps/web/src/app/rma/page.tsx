@@ -10,6 +10,7 @@ import {
   RMA_ITEM_ETAPA_LABELS,
   RMA_PROCESSO_STATUS,
   formatYmdBr,
+  rmaModalidadeAquisicaoLabel,
   ymdFromApi,
   ymdVencido,
 } from "@teep/shared";
@@ -22,6 +23,7 @@ type Row = {
   nfEntradaNumero: string | null;
   nfSaidaNumero: string | null;
   prazoManutencao?: string | null;
+  modalidadeAquisicao?: string | null;
   criadoEm: string;
   cliente: { id: string; nome: string; documento?: string | null };
   filial: { id: string; sigla: string; nome: string };
@@ -429,6 +431,12 @@ function RmaListPageInner() {
                       </span>
                     </span>
                   )}
+                  {r.modalidadeAquisicao &&
+                    r.modalidadeAquisicao !== "NENHUM" && (
+                      <span>
+                        {rmaModalidadeAquisicaoLabel(r.modalidadeAquisicao)}
+                      </span>
+                    )}
                   {resumoEtapasItens(r.itens) && (
                     <span className="rounded-full bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">
                       {resumoEtapasItens(r.itens)}

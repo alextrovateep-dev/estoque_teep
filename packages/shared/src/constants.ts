@@ -56,6 +56,37 @@ export const SIGLA_ESTOQUE_DESCARTE = "DESC";
 export const RMA_PROCESSO_STATUS = ["ABERTO", "FECHADO", "CANCELADO"] as const;
 export type RmaProcessoStatus = (typeof RMA_PROCESSO_STATUS)[number];
 
+/**
+ * Modalidade de aquisição do cliente neste RMA (impacta cobrança).
+ * NENHUM = não definida · CONTRATO = compra · LOCACAO = locação
+ */
+export const RMA_MODALIDADE_AQUISICAO = [
+  "NENHUM",
+  "CONTRATO",
+  "LOCACAO",
+] as const;
+export type RmaModalidadeAquisicao =
+  (typeof RMA_MODALIDADE_AQUISICAO)[number];
+
+export const RMA_MODALIDADE_AQUISICAO_LABELS: Record<
+  RmaModalidadeAquisicao,
+  string
+> = {
+  NENHUM: "Nenhum",
+  CONTRATO: "Contrato",
+  LOCACAO: "Locação",
+};
+
+export function rmaModalidadeAquisicaoLabel(
+  raw: string | null | undefined
+): string {
+  const t = String(raw || "NENHUM").toUpperCase();
+  if (t in RMA_MODALIDADE_AQUISICAO_LABELS) {
+    return RMA_MODALIDADE_AQUISICAO_LABELS[t as RmaModalidadeAquisicao];
+  }
+  return RMA_MODALIDADE_AQUISICAO_LABELS.NENHUM;
+}
+
 export const RMA_ITEM_STATUS = [
   "ABERTO",
   "EM_ESTOQUE",
@@ -244,8 +275,120 @@ export const RMA_CHECKLIST_CAMPO_TIPOS = [
   "TEXTO",
   "OPCAO",
   "FOTO",
+  "LACRE_GARANTIA",
 ] as const;
 export type RmaChecklistCampoTipo = (typeof RMA_CHECKLIST_CAMPO_TIPOS)[number];
+
+/** Código estável da pergunta padrão de lacre (inspeção). */
+export const RMA_CHECKLIST_CODIGO_LACRE = "LACRE";
+
+export const RMA_CHECKLIST_TITULO_LACRE =
+  "Possui lacre de garantia?";
+
+export const RMA_CHECKLIST_AJUDA_LACRE =
+  "Se Sim, informe a data impressa no lacre. Se Não, pode registrar uma observação (opcional).";
+
+/** Item padrão — sempre a 1ª pergunta dos checklists de inspeção (RECEBIMENTO). */
+export function rmaChecklistItemPadraoLacre(ordem = 0) {
+  return {
+    codigo: RMA_CHECKLIST_CODIGO_LACRE,
+    titulo: RMA_CHECKLIST_TITULO_LACRE,
+    ajuda: RMA_CHECKLIST_AJUDA_LACRE,
+    tipoCampo: "LACRE_GARANTIA" as const,
+    obrigatorio: true,
+    ordem,
+  };
+}
+
+export function isChecklistItemLacreGarantia(it: {
+  tipoCampo?: string | null;
+  codigo?: string | null;
+}): boolean {
+  // Só pelo tipo — código "LACRE" sozinho não identifica (evita falso positivo).
+  return String(it.tipoCampo || "").toUpperCase() === "LACRE_GARANTIA";
+}
+
+/**
+ * Garante a pergunta de lacre como primeiro item (RECEBIMENTO).
+ * Se já existir, move para o início; senão, insere o padrão.
+ */
+export function ensureChecklistLacrePrimeiro<
+  T extends { tipoCampo: string; codigo?: string; ordem?: number },
+>(itens: T[], padrao?: T): T[] {
+  const base = padrao ?? (rmaChecklistItemPadraoLacre(0) as unknown as T);
+  const idx = itens.findIndex((it) => isChecklistItemLacreGarantia(it));
+  let next: T[];
+  if (idx < 0) {
+    next = [base, ...itens];
+  } else if (idx === 0) {
+    next = itens;
+  } else {
+    const copy = [...itens];
+    const [item] = copy.splice(idx, 1);
+    next = [item, ...copy];
+  }
+  return next.map((it, i) => ({ ...it, ordem: i }));
+}
+
+/** Data do lacre no formato ISO `YYYY-MM-DD`. */
+export function isChecklistDataGarantia(raw?: string | null): boolean {
+  const t = String(raw || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return false;
+  const [y, m, d] = t.split("-").map(Number);
+  if (!y || !m || !d) return false;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return (
+    dt.getUTCFullYear() === y &&
+    dt.getUTCMonth() === m - 1 &&
+    dt.getUTCDate() === d
+  );
+}
+
+export function formatarDataGarantiaPtBr(raw?: string | null): string {
+  const t = String(raw || "").trim();
+  if (!isChecklistDataGarantia(t)) return t;
+  const [y, m, d] = t.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+/** Texto legível da resposta de lacre (UI / PDF). */
+export function formatarRespostaLacreGarantia(opts: {
+  valorBool?: boolean | null;
+  valorTexto?: string | null;
+}): string {
+  if (opts.valorBool === true) {
+    const data = String(opts.valorTexto || "").trim();
+    if (!data) return "Sim";
+    return `Sim — garantia (lacre): ${formatarDataGarantiaPtBr(data)}`;
+  }
+  if (opts.valorBool === false) {
+    const obs = String(opts.valorTexto || "").trim();
+    return obs ? `Não — ${obs}` : "Não";
+  }
+  return "—";
+}
+
+/**
+ * Na conclusão: Sim exige data do lacre; Não não exige observação.
+ * Retorna mensagem de erro ou null.
+ */
+export function mensagemErroLacreGarantia(opts: {
+  obrigatorio?: boolean;
+  valorBool?: boolean | null;
+  valorTexto?: string | null;
+}): string | null {
+  if (opts.obrigatorio !== false && opts.valorBool == null) {
+    return "Informe se possui lacre de garantia";
+  }
+  if (opts.valorBool === true) {
+    const data = String(opts.valorTexto || "").trim();
+    if (!data) return "Informe a data do lacre de garantia";
+    if (!isChecklistDataGarantia(data)) {
+      return "Data do lacre de garantia inválida";
+    }
+  }
+  return null;
+}
 
 function stripAcentosChecklist(s: string): string {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");

@@ -8,13 +8,14 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { RmaChecklistFormEditor } from "@/components/rma/RmaChecklistFormEditor";
 import {
   ChecklistTemplate,
-  emptyChecklistItem,
+  defaultChecklistItens,
   ItemDraft,
   parseChecklistTipo,
   ProdutoOpt,
   TIPO_HINT,
   TIPO_LABEL,
 } from "@/components/rma/rmaChecklistShared";
+import { isChecklistItemLacreGarantia } from "@teep/shared";
 
 export default function RmaChecklistNovoPage() {
   const router = useRouter();
@@ -31,11 +32,16 @@ export default function RmaChecklistNovoPage() {
   const [sugestoes, setSugestoes] = useState<ProdutoOpt[]>([]);
   const [buscaAberta, setBuscaAberta] = useState(false);
   const [buscando, setBuscando] = useState(false);
-  const [itens, setItens] = useState<ItemDraft[]>([emptyChecklistItem()]);
+  const [itens, setItens] = useState<ItemDraft[]>([]);
   const [cloneOrigemId, setCloneOrigemId] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!tipo) return;
+    setItens((prev) => (prev.length === 0 ? defaultChecklistItens(tipo) : prev));
+  }, [tipo]);
 
   const jaExiste = useMemo(() => {
     if (!tipo || !produtoId) return null;
@@ -161,7 +167,7 @@ export default function RmaChecklistNovoPage() {
           nome: nomePadrao.trim(),
           ativo: true,
           itens: limpos.map((it, idx) => ({
-            codigo: String(idx + 1),
+            codigo: isChecklistItemLacreGarantia(it) ? "LACRE" : String(idx + 1),
             titulo: it.titulo,
             ajuda: it.ajuda.trim() || null,
             tipoCampo: it.tipoCampo,

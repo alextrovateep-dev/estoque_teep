@@ -55,6 +55,9 @@ export default function RmaNovoPage() {
   const [clienteQuery, setClienteQuery] = useState("");
   const [clienteOpen, setClienteOpen] = useState(false);
   const [comercialId, setComercialId] = useState("");
+  const [modalidadeAquisicao, setModalidadeAquisicao] = useState<
+    "NENHUM" | "CONTRATO" | "LOCACAO"
+  >("NENHUM");
   const [nfEntrada, setNfEntrada] = useState("");
   const [nfArquivo, setNfArquivo] = useState<string | null>(null);
   const [observacao, setObservacao] = useState("");
@@ -369,6 +372,7 @@ export default function RmaNovoPage() {
         body: JSON.stringify({
           clienteId,
           responsavelComercialId: comercialId,
+          modalidadeAquisicao,
           nfEntradaNumero: nfEntrada.trim(),
           nfEntradaArquivo: nfArquivo,
           observacao: observacao.trim() || null,
@@ -491,6 +495,30 @@ export default function RmaNovoPage() {
             </span>
           </label>
         </div>
+
+        <label className="block text-sm sm:max-w-md">
+          <span className="mb-1 block font-medium">
+            Modalidade de aquisição *
+          </span>
+          <select
+            className="w-full rounded-lg border px-3 py-2 text-sm"
+            value={modalidadeAquisicao}
+            onChange={(e) =>
+              setModalidadeAquisicao(
+                e.target.value as "NENHUM" | "CONTRATO" | "LOCACAO"
+              )
+            }
+            required
+          >
+            <option value="NENHUM">Nenhum</option>
+            <option value="CONTRATO">Contrato</option>
+            <option value="LOCACAO">Locação</option>
+          </select>
+          <span className="mt-0.5 block text-[11px] text-slate-500">
+            Define se o equipamento é de compra (contrato) ou locação — usado
+            nas cobranças.
+          </span>
+        </label>
 
         <label className="block text-sm sm:max-w-md">
           <span className="mb-1 block font-medium">Estoque RMA de entrada *</span>

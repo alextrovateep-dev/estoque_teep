@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS, mensagemBloqueioNfRetorno, mensagemBloqueioNfRetornoSemEntrada, formatYmdBr, ymdFromApi, ymdVencido } from "@teep/shared";
+import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS, RMA_MODALIDADE_AQUISICAO, RMA_MODALIDADE_AQUISICAO_LABELS, mensagemBloqueioNfRetorno, mensagemBloqueioNfRetornoSemEntrada, formatYmdBr, rmaModalidadeAquisicaoLabel, ymdFromApi, ymdVencido, type RmaModalidadeAquisicao } from "@teep/shared";
 
 type RmaAnexo = {
   id: string;
@@ -80,6 +80,7 @@ type Rma = {
   prazoManutencao: string | null;
   criadoEm: string;
   responsavelComercialId?: string | null;
+  modalidadeAquisicao?: string | null;
   cliente: { id: string; nome: string; documento?: string | null };
   filial: { id: string; sigla: string; nome: string };
   criadoPor: { nome: string };
@@ -246,6 +247,9 @@ export default function RmaDetalhePage() {
   const [usuariosComercial, setUsuariosComercial] = useState<
     Array<{ id: string; nome: string; email: string }>
   >([]);
+  const [editModalidade, setEditModalidade] = useState(false);
+  const [modalidadeEdit, setModalidadeEdit] =
+    useState<RmaModalidadeAquisicao>("NENHUM");
   const [addProdutoId, setAddProdutoId] = useState("");
   const [addProdutoQuery, setAddProdutoQuery] = useState("");
   const [addProdutoSugestoes, setAddProdutoSugestoes] = useState<ProdutoOpt[]>(
@@ -794,6 +798,40 @@ export default function RmaDetalhePage() {
     }
   }
 
+  function abrirEditarModalidade() {
+    setError("");
+    setEditModalidade(true);
+    setEditComercial(false);
+    const cur = String(row?.modalidadeAquisicao || "NENHUM").toUpperCase();
+    setModalidadeEdit(
+      (RMA_MODALIDADE_AQUISICAO as readonly string[]).includes(cur)
+        ? (cur as RmaModalidadeAquisicao)
+        : "NENHUM"
+    );
+  }
+
+  async function salvarModalidade() {
+    if (actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/modalidade`, {
+        method: "PATCH",
+        body: JSON.stringify({ modalidadeAquisicao: modalidadeEdit }),
+      });
+      setMsg("Modalidade de aquisição atualizada");
+      setEditModalidade(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
   async function marcarManutencaoRealizada(itemId: string) {
     if (actingRef.current) return;
     actingRef.current = true;
@@ -1239,10 +1277,66 @@ export default function RmaDetalhePage() {
               {row.responsavelComercial?.nome || "—"}
             </span>
           </span>
+          <span className="text-slate-400">·</span>
+          <span className="text-slate-700">
+            Modalidade:{" "}
+            <span className="font-medium">
+              {rmaModalidadeAquisicaoLabel(row.modalidadeAquisicao)}
+            </span>
+          </span>
           {resumoEtapas && (
             <span className="text-xs text-slate-500">· {resumoEtapas}</span>
           )}
         </div>
+        {processoAberto && !editModalidade && (
+          <button
+            type="button"
+            disabled={acting}
+            onClick={() => abrirEditarModalidade()}
+            className="mt-2 rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+          >
+            Alterar modalidade
+          </button>
+        )}
+        {editModalidade && processoAberto && (
+          <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <label className="min-w-[14rem] flex-1 text-xs">
+              <span className="mb-1 block font-medium text-slate-600">
+                Modalidade de aquisição
+              </span>
+              <select
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                value={modalidadeEdit}
+                onChange={(e) =>
+                  setModalidadeEdit(e.target.value as RmaModalidadeAquisicao)
+                }
+                disabled={acting}
+              >
+                {RMA_MODALIDADE_AQUISICAO.map((m) => (
+                  <option key={m} value={m}>
+                    {RMA_MODALIDADE_AQUISICAO_LABELS[m]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              disabled={acting}
+              onClick={() => void salvarModalidade()}
+              className="rounded-md bg-brand px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+            >
+              Salvar
+            </button>
+            <button
+              type="button"
+              disabled={acting}
+              onClick={() => setEditModalidade(false)}
+              className="rounded-md border px-3 py-2 text-xs disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+          </div>
+        )}
         {editComercial && podeEditarComercial && (
           <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
             <label className="min-w-[16rem] flex-1 text-xs">

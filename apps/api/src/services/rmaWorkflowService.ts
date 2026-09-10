@@ -3,8 +3,12 @@ import {
   BRAND_COLOR,
   RMA_CHECKLIST_CAMPO_TIPOS,
   checklistFotoExigida,
+  ensureChecklistLacrePrimeiro,
+  isChecklistItemLacreGarantia,
   mensagemBloqueioDiagnostico,
   mensagemBloqueioReabrirOrcamento,
+  mensagemErroLacreGarantia,
+  rmaChecklistItemPadraoLacre,
   rmaEtapaEmRecebimento,
   rmaOrcamentoPodeEditar,
   rmaItemEntraNoPdfOrcamento,
@@ -171,7 +175,19 @@ export async function upsertRmaChecklistTemplate(input: {
   });
   if (!produto) throw new AppError(400, "Produto inválido");
 
-  for (const it of input.itens) {
+  let itensInput = input.itens;
+  if (input.tipo === "RECEBIMENTO") {
+    itensInput = ensureChecklistLacrePrimeiro(
+      itensInput.map((it) => ({ ...it })),
+      {
+        ...rmaChecklistItemPadraoLacre(0),
+        opcoes: undefined,
+        exigeFotoSe: null,
+      }
+    );
+  }
+
+  for (const it of itensInput) {
     if (
       !(RMA_CHECKLIST_CAMPO_TIPOS as readonly string[]).includes(it.tipoCampo)
     ) {
@@ -186,7 +202,7 @@ export async function upsertRmaChecklistTemplate(input: {
     where: { produtoId: input.produtoId, tipo: input.tipo, ativo: true },
   });
 
-  const itensCreate = input.itens.map((it, idx) => ({
+  const itensCreate = itensInput.map((it, idx) => ({
     codigo: it.codigo.trim(),
     titulo: it.titulo.trim(),
     ajuda: it.ajuda?.trim() || null,
@@ -314,7 +330,7 @@ async function resolverTemplateAtivo(
   produtoId: string,
   tipo: RmaChecklistTipo
 ) {
-  const t = await prisma.rmaChecklistTemplate.findFirst({
+  let t = await prisma.rmaChecklistTemplate.findFirst({
     where: { produtoId, tipo, ativo: true },
     include: { itens: { orderBy: { ordem: "asc" } } },
   });
@@ -323,6 +339,34 @@ async function resolverTemplateAtivo(
       400,
       `Cadastre o checklist de ${tipo.toLowerCase()} para este produto em Cadastros → Checklists RMA`
     );
+  }
+  if (
+    tipo === "RECEBIMENTO" &&
+    !t.itens.some((it) => isChecklistItemLacreGarantia(it))
+  ) {
+    const padrao = rmaChecklistItemPadraoLacre(0);
+    const itens = ensureChecklistLacrePrimeiro(
+      t.itens.map((it) => ({
+        codigo: it.codigo,
+        titulo: it.titulo,
+        ajuda: it.ajuda,
+        tipoCampo: it.tipoCampo,
+        obrigatorio: it.obrigatorio,
+        ordem: it.ordem,
+        opcoes: Array.isArray(it.opcoesJson)
+          ? (it.opcoesJson as string[])
+          : undefined,
+        exigeFotoSe: it.exigeFotoSe,
+      })),
+      { ...padrao, opcoes: undefined, exigeFotoSe: null }
+    );
+    t = await upsertRmaChecklistTemplate({
+      produtoId,
+      tipo,
+      nome: t.nome,
+      ativo: true,
+      itens,
+    });
   }
   return t;
 }
@@ -409,7 +453,10 @@ function validarRespostasContraTemplate(
     if (!concluir) continue;
 
     if (ti.obrigatorio) {
-      if (ti.tipoCampo === "SIM_NAO" && r?.valorBool == null) {
+      if (
+        (ti.tipoCampo === "SIM_NAO" || ti.tipoCampo === "LACRE_GARANTIA") &&
+        r?.valorBool == null
+      ) {
         throw new AppError(400, `Responda: ${ti.codigo}`);
       }
       if (
@@ -421,6 +468,15 @@ function validarRespostasContraTemplate(
       if (ti.tipoCampo === "FOTO" && fotos.length === 0) {
         throw new AppError(400, `Anexe foto: ${ti.codigo}`);
       }
+    }
+
+    if (ti.tipoCampo === "LACRE_GARANTIA") {
+      const err = mensagemErroLacreGarantia({
+        obrigatorio: ti.obrigatorio,
+        valorBool: r?.valorBool,
+        valorTexto: r?.valorTexto,
+      });
+      if (err) throw new AppError(400, `${err} (${ti.codigo})`);
     }
 
     if (ti.tipoCampo === "OPCAO" && r?.valorTexto?.trim()) {

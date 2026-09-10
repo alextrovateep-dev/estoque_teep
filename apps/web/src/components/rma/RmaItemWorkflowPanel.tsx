@@ -6,6 +6,7 @@ import {
   checklistFotoExigida,
   checklistMostrarCampoFoto,
   mensagemBloqueioDiagnostico,
+  mensagemErroLacreGarantia,
   rmaEtapaEmRecebimento,
   rmaOrcamentoStatusLabel,
 } from "@teep/shared";
@@ -96,6 +97,35 @@ function asFotos(raw: unknown): string[] {
   return Array.isArray(raw) ? (raw as string[]) : [];
 }
 
+function parseOpcoesJson(raw: unknown): string[] {
+  if (Array.isArray(raw)) return raw as string[];
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+type RespMap = Record<
+  string,
+  { valorTexto?: string; valorBool?: boolean | null; fotos: string[] }
+>;
+
+function respMapFromExec(exec: Execucao): RespMap {
+  const m: RespMap = {};
+  for (const ti of exec.template.itens) {
+    const r = exec.respostas.find((x) => x.templateItemId === ti.id);
+    m[ti.id] = {
+      valorTexto: r?.valorTexto || "",
+      valorBool: r?.valorBool ?? null,
+      fotos: asFotos(r?.fotos),
+    };
+  }
+  return m;
+}
+
 function minutosOuNull(raw: string): number | null {
   const t = raw.trim();
   if (!t) return null;
@@ -132,6 +162,7 @@ export function RmaItemWorkflowPanel({
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
   const [localError, setLocalError] = useState("");
+  const [localOk, setLocalOk] = useState("");
   const [produtos, setProdutos] = useState<ProdutoOpt[]>([]);
   const [temChecklistRecebimento, setTemChecklistRecebimento] = useState<
     boolean | null
@@ -141,10 +172,16 @@ export function RmaItemWorkflowPanel({
   >("loading");
   const [checklistRetry, setChecklistRetry] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
-
   function reportError(msg: string) {
+    setLocalOk("");
     setLocalError(msg);
     onError(msg);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function reportOk(msg: string) {
+    setLocalError("");
+    setLocalOk(msg);
     scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -165,12 +202,7 @@ export function RmaItemWorkflowPanel({
     checklistConsulta === "loading";
   const checklistConsultaFalhou = checklistConsulta === "erro";
 
-  const [respMap, setRespMap] = useState<
-    Record<
-      string,
-      { valorTexto?: string; valorBool?: boolean | null; fotos: string[] }
-    >
-  >({});
+  const [respMap, setRespMap] = useState<RespMap>({});
 
   const [resumo, setResumo] = useState(item.diagnostico?.resumoProblema || "");
   const [obsTec, setObsTec] = useState(
@@ -201,16 +233,10 @@ export function RmaItemWorkflowPanel({
         : rmaEtapaEmRecebimento(etapa)
           ? recv
           : null;
-    if (!exec) return `${item.id}:${etapa}:`;
-    const respFp = [...exec.respostas]
-      .map(
-        (r) =>
-          `${r.templateItemId}:${r.valorTexto ?? ""}:${r.valorBool ?? ""}:${asFotos(r.fotos).join(",")}`
-      )
-      .sort()
-      .join("|");
-    return `${item.id}:${etapa}:${exec.id}:${exec.status}:${respFp}`;
-  }, [item.id, etapa, recv, lib]);
+    // Não incluir respostas no fingerprint: o reload pós-save apagava
+    // edições locais (e dava a sensação de que "não salvou").
+    return `${item.id}:${etapa}:${exec?.id || ""}:${exec?.status || ""}:${open ? "1" : "0"}`;
+  }, [item.id, etapa, recv?.id, recv?.status, lib?.id, lib?.status, open]);
 
   const planoSyncKey = useMemo(
     () =>
@@ -243,16 +269,7 @@ export function RmaItemWorkflowPanel({
           ? recv
           : null;
     if (!exec) return;
-    const m: typeof respMap = {};
-    for (const ti of exec.template.itens) {
-      const r = exec.respostas.find((x) => x.templateItemId === ti.id);
-      m[ti.id] = {
-        valorTexto: r?.valorTexto || "",
-        valorBool: r?.valorBool ?? null,
-        fotos: asFotos(r?.fotos),
-      };
-    }
-    setRespMap(m);
+    setRespMap(respMapFromExec(exec));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checklistSyncKey]);
 
@@ -348,6 +365,41 @@ export function RmaItemWorkflowPanel({
       return;
     }
     if (concluir) {
+      const faltaLacre = exec.template.itens.find((ti) => {
+        if (ti.tipoCampo !== "LACRE_GARANTIA") return false;
+        const r = respMap[ti.id];
+        return Boolean(
+          mensagemErroLacreGarantia({
+            obrigatorio: ti.obrigatorio,
+            valorBool: r?.valorBool,
+            valorTexto: r?.valorTexto,
+          })
+        );
+      });
+      if (faltaLacre) {
+        const r = respMap[faltaLacre.id];
+        reportError(
+          mensagemErroLacreGarantia({
+            obrigatorio: faltaLacre.obrigatorio,
+            valorBool: r?.valorBool,
+            valorTexto: r?.valorTexto,
+          }) || `Preencha: ${faltaLacre.codigo}`
+        );
+        return;
+      }
+      const faltaCampo = exec.template.itens.find((ti) => {
+        if (!ti.obrigatorio) return false;
+        const r = respMap[ti.id];
+        if (ti.tipoCampo === "SIM_NAO") return r?.valorBool == null;
+        if (ti.tipoCampo === "TEXTO" || ti.tipoCampo === "OPCAO") {
+          return !r?.valorTexto?.trim();
+        }
+        return false;
+      });
+      if (faltaCampo) {
+        reportError(`Preencha o campo obrigatório: ${faltaCampo.codigo}`);
+        return;
+      }
       const faltaFoto = exec.template.itens.find((ti) => {
         const r = respMap[ti.id];
         if (
@@ -374,15 +426,29 @@ export function RmaItemWorkflowPanel({
     }
     setBusy(true);
     setLocalError("");
+    setLocalOk("");
     try {
       const path = concluir
         ? `/rma/${processoId}/itens/${item.id}/checklist/${tipo}/concluir`
         : `/rma/${processoId}/itens/${item.id}/checklist/${tipo}`;
-      await api(path, {
+      // Resposta traz URLs finais das fotos (_tmp → atual). Sem isso, o
+      // 2º save falha com paths temporários já promovidos.
+      const saved = await api<{
+        itens?: Array<{ id: string; checklistExecucoes?: Execucao[] }>;
+      }>(path, {
         method: concluir ? "POST" : "PUT",
         body: JSON.stringify(payloadRespostas(exec)),
       });
+      const execSalva = saved.itens
+        ?.find((i) => i.id === item.id)
+        ?.checklistExecucoes?.find((e) => e.tipo === tipo);
+      if (execSalva?.template?.itens?.length) {
+        setRespMap(respMapFromExec(execSalva));
+      }
       await onUpdated();
+      reportOk(
+        concluir ? "Checklist concluído." : "Checklist salvo."
+      );
     } catch (e) {
       reportError(e instanceof Error ? e.message : "Erro no checklist");
     } finally {
@@ -552,8 +618,8 @@ export function RmaItemWorkflowPanel({
         ) : (
           <ul className="space-y-2">
             {exec.template.itens.map((ti) => {
-              const r = respMap[ti.id] || { fotos: [] };
-              const opcoes = Array.isArray(ti.opcoesJson) ? ti.opcoesJson : [];
+              const r = respMap[ti.id] || { fotos: [] as string[] };
+              const opcoes = parseOpcoesJson(ti.opcoesJson);
               return (
                 <li key={ti.id} className="rounded-lg border bg-white p-3">
                   <p className="font-medium text-slate-800">
@@ -578,7 +644,10 @@ export function RmaItemWorkflowPanel({
                             onChange={() =>
                               setRespMap((p) => ({
                                 ...p,
-                                [ti.id]: { ...r, valorBool: v === "SIM" },
+                                [ti.id]: {
+                                  ...(p[ti.id] || { fotos: [] }),
+                                  valorBool: v === "SIM",
+                                },
                               }))
                             }
                           />
@@ -587,18 +656,102 @@ export function RmaItemWorkflowPanel({
                       ))}
                     </div>
                   ) : null}
+                  {ti.tipoCampo === "LACRE_GARANTIA" ? (
+                    <div className="mt-2 space-y-2">
+                      <div className="flex gap-4">
+                        {(["SIM", "NAO"] as const).map((v) => (
+                          <label key={v} className="flex items-center gap-1.5">
+                            <input
+                              type="radio"
+                              disabled={readOnly || busy}
+                              checked={
+                                v === "SIM"
+                                  ? r.valorBool === true
+                                  : r.valorBool === false
+                              }
+                              onChange={() =>
+                                setRespMap((p) => ({
+                                  ...p,
+                                  [ti.id]: {
+                                    ...(p[ti.id] || { fotos: [] }),
+                                    valorBool: v === "SIM",
+                                    // Troca Sim/Não limpa data ou observação anterior.
+                                    valorTexto: "",
+                                  },
+                                }))
+                              }
+                            />
+                            {v === "SIM" ? "Sim" : "Não"}
+                          </label>
+                        ))}
+                      </div>
+                      {r.valorBool === true ? (
+                        <label className="block text-sm text-slate-700">
+                          Data no lacre de garantia *
+                          <input
+                            type="date"
+                            disabled={readOnly || busy}
+                            className="mt-1 w-full max-w-xs rounded-lg border px-3 py-2"
+                            value={r.valorTexto || ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRespMap((p) => ({
+                                ...p,
+                                [ti.id]: {
+                                  ...(p[ti.id] || { fotos: [] }),
+                                  valorBool: true,
+                                  valorTexto: v,
+                                },
+                              }));
+                            }}
+                          />
+                          <span className="mt-0.5 block text-[11px] text-slate-500">
+                            Informe a data impressa no lacre (vencimento ou
+                            validade da garantia).
+                          </span>
+                        </label>
+                      ) : null}
+                      {r.valorBool === false ? (
+                        <label className="block text-sm text-slate-700">
+                          Observação (opcional)
+                          <textarea
+                            disabled={readOnly || busy}
+                            className="mt-1 w-full rounded-lg border px-3 py-2"
+                            rows={2}
+                            placeholder="Ex.: lacre rompido, ausente, ilegível…"
+                            value={r.valorTexto || ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setRespMap((p) => ({
+                                ...p,
+                                [ti.id]: {
+                                  ...(p[ti.id] || { fotos: [] }),
+                                  valorBool: false,
+                                  valorTexto: v,
+                                },
+                              }));
+                            }}
+                          />
+                        </label>
+                      ) : null}
+                    </div>
+                  ) : null}
                   {ti.tipoCampo === "TEXTO" ? (
                     <textarea
                       disabled={readOnly || busy}
                       className="mt-2 w-full rounded-lg border px-3 py-2"
                       rows={2}
                       value={r.valorTexto || ""}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = e.target.value;
                         setRespMap((p) => ({
                           ...p,
-                          [ti.id]: { ...r, valorTexto: e.target.value },
-                        }))
-                      }
+                          [ti.id]: {
+                            ...(p[ti.id] || { fotos: [] }),
+                            valorTexto: v,
+                          },
+                        }));
+                      }}
                     />
                   ) : null}
                   {ti.tipoCampo === "OPCAO" ? (
@@ -606,12 +759,16 @@ export function RmaItemWorkflowPanel({
                       disabled={readOnly || busy}
                       className="mt-2 w-full rounded-lg border px-3 py-2"
                       value={r.valorTexto || ""}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const v = e.target.value;
                         setRespMap((p) => ({
                           ...p,
-                          [ti.id]: { ...r, valorTexto: e.target.value },
-                        }))
-                      }
+                          [ti.id]: {
+                            ...(p[ti.id] || { fotos: [] }),
+                            valorTexto: v,
+                          },
+                        }));
+                      }}
                     >
                       <option value="">—</option>
                       {opcoes.map((o) => (
@@ -696,38 +853,6 @@ export function RmaItemWorkflowPanel({
             })}
           </ul>
         )}
-        {exec && exec.status !== "CONCLUIDO" && processoAberto ? (
-          <>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void salvarChecklist(tipo, false)}
-                className="rounded-lg border bg-white px-3 py-1.5 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
-              >
-                Salvar
-              </button>
-              <button
-                type="button"
-                disabled={
-                  busy || (tipo === "LIBERACAO" && Boolean(bloqueioNfRetorno))
-                }
-                title={
-                  tipo === "LIBERACAO" && bloqueioNfRetorno
-                    ? bloqueioNfRetorno
-                    : undefined
-                }
-                onClick={() => void salvarChecklist(tipo, true)}
-                className="rounded-lg bg-sky-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-sky-800 disabled:opacity-50"
-              >
-                Concluir checklist
-              </button>
-            </div>
-            {tipo === "LIBERACAO" && bloqueioNfRetorno ? (
-              <p className="mt-2 text-xs text-amber-800">{bloqueioNfRetorno}</p>
-            ) : null}
-          </>
-        ) : null}
       </div>
     );
   }
@@ -735,6 +860,12 @@ export function RmaItemWorkflowPanel({
   const showRecv = rmaEtapaEmRecebimento(etapa);
   const showPlano = showRecv;
   const showLib = etapa === "AGUARDANDO_LIBERACAO";
+  const checklistFooterTipo: "RECEBIMENTO" | "LIBERACAO" | null =
+    showRecv && recv && recv.status !== "CONCLUIDO" && processoAberto
+      ? "RECEBIMENTO"
+      : showLib && lib && lib.status !== "CONCLUIDO" && processoAberto
+        ? "LIBERACAO"
+        : null;
   const hasWorkflowUi =
     showRecv || showPlano || showLib || Boolean(item.diagnostico);
 
@@ -801,6 +932,7 @@ export function RmaItemWorkflowPanel({
           type="button"
           onClick={() => {
             setLocalError("");
+            setLocalOk("");
             setOpen(true);
           }}
           className="flex min-h-10 w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm font-medium text-slate-800 hover:border-brand/40 hover:bg-brand/5"
@@ -857,6 +989,11 @@ export function RmaItemWorkflowPanel({
               {localError ? (
                 <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
                   {localError}
+                </p>
+              ) : null}
+              {localOk ? (
+                <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {localOk}
                 </p>
               ) : null}
 
@@ -1072,6 +1209,55 @@ export function RmaItemWorkflowPanel({
 
               {showLib ? renderChecklist("LIBERACAO", lib) : null}
             </div>
+
+            {checklistFooterTipo ? (
+              <footer className="shrink-0 border-t border-sky-200 bg-sky-50 px-4 py-3 sm:px-5">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      void salvarChecklist(checklistFooterTipo, false)
+                    }
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {busy ? "Salvando…" : "Salvar checklist"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      busy ||
+                      (checklistFooterTipo === "LIBERACAO" &&
+                        Boolean(bloqueioNfRetorno))
+                    }
+                    title={
+                      checklistFooterTipo === "LIBERACAO" && bloqueioNfRetorno
+                        ? bloqueioNfRetorno
+                        : undefined
+                    }
+                    onClick={() =>
+                      void salvarChecklist(checklistFooterTipo, true)
+                    }
+                    className="rounded-lg bg-sky-700 px-3 py-2 text-sm font-semibold text-white hover:bg-sky-800 disabled:opacity-50"
+                  >
+                    Concluir checklist
+                  </button>
+                </div>
+                <p className="mt-1.5 text-[11px] text-slate-500">
+                  Use <strong>Salvar checklist</strong> para gravar o rascunho
+                  (pode incompleto). <strong>Concluir</strong> exige todos os
+                  campos obrigatórios.
+                  {checklistFooterTipo === "RECEBIMENTO" && showPlano
+                    ? " O diagnóstico tem botão próprio na seção abaixo."
+                    : null}
+                </p>
+                {checklistFooterTipo === "LIBERACAO" && bloqueioNfRetorno ? (
+                  <p className="mt-2 text-xs text-amber-800">
+                    {bloqueioNfRetorno}
+                  </p>
+                ) : null}
+              </footer>
+            ) : null}
           </div>
         </div>
       ) : null}

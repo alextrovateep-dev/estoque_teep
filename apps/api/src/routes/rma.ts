@@ -6,6 +6,7 @@ import {
   atualizarRmaClienteSchema,
   atualizarRmaComercialSchema,
   atualizarRmaDestinatariosSchema,
+  atualizarRmaModalidadeSchema,
   cancelarRmaSchema,
   clonarRmaChecklistTemplateSchema,
   createRmaProcessoSchema,
@@ -38,6 +39,7 @@ import {
   atualizarRmaDestinatarios,
   atualizarRmaFinanceiro,
   atualizarRmaItemFinanceiro,
+  atualizarRmaModalidade,
   cancelarRma,
   criarRmaProcesso,
   devolverRmaItens,
@@ -286,6 +288,21 @@ rmaRouter.patch(
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(await atualizarRmaComercial(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.patch(
+  "/:id/modalidade",
+  requirePermissao("rma"),
+  validateBody(atualizarRmaModalidadeSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await atualizarRmaModalidade(req.user!, req.params.id, req.body)
+      );
     } catch (e) {
       next(e);
     }

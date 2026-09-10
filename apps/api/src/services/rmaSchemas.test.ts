@@ -10,6 +10,10 @@ import {
   checklistFotoExigida,
   checklistMostrarCampoFoto,
   emailsAlertaDeUsuariosRma,
+  ensureChecklistLacrePrimeiro,
+  formatarRespostaLacreGarantia,
+  isChecklistDataGarantia,
+  mensagemErroLacreGarantia,
   parseYmd,
   mensagemErroValidacao,
   RMA_ORCAMENTO_STATUS_LABELS,
@@ -49,6 +53,23 @@ describe("createRmaProcessoSchema", () => {
       itens: [{ produtoId: UUID_B, series: ["SN-001"] }],
     });
     assert.equal(r.success, true);
+    if (r.success) {
+      assert.equal(r.data.modalidadeAquisicao, "NENHUM");
+    }
+  });
+
+  it("aceita modalidade Contrato ou Locação", () => {
+    const r = createRmaProcessoSchema.safeParse({
+      clienteId: UUID_A,
+      responsavelComercialId: UUID_A,
+      nfEntradaNumero: "4040",
+      modalidadeAquisicao: "LOCACAO",
+      itens: [{ produtoId: UUID_B, series: ["SN-001"] }],
+    });
+    assert.equal(r.success, true);
+    if (r.success) {
+      assert.equal(r.data.modalidadeAquisicao, "LOCACAO");
+    }
   });
 
   it("aceita prazo de manutenção válido", () => {
@@ -488,6 +509,78 @@ describe("checklistFotoExigida", () => {
       }),
       false
     );
+  });
+});
+
+describe("lacre de garantia", () => {
+  it("valida data ISO e formata resposta", () => {
+    assert.equal(isChecklistDataGarantia("2026-09-10"), true);
+    assert.equal(isChecklistDataGarantia("2026-13-01"), false);
+    assert.equal(isChecklistDataGarantia("10/09/2026"), false);
+    assert.equal(
+      formatarRespostaLacreGarantia({
+        valorBool: true,
+        valorTexto: "2026-09-10",
+      }),
+      "Sim — garantia (lacre): 10/09/2026"
+    );
+    assert.equal(
+      formatarRespostaLacreGarantia({
+        valorBool: false,
+        valorTexto: "lacre rompido",
+      }),
+      "Não — lacre rompido"
+    );
+  });
+
+  it("exige data só quando Sim", () => {
+    assert.match(
+      mensagemErroLacreGarantia({
+        obrigatorio: true,
+        valorBool: true,
+        valorTexto: "",
+      }) || "",
+      /data/i
+    );
+    assert.equal(
+      mensagemErroLacreGarantia({
+        obrigatorio: true,
+        valorBool: false,
+        valorTexto: "",
+      }),
+      null
+    );
+  });
+
+  it("garante pergunta de lacre como primeira", () => {
+    const out = ensureChecklistLacrePrimeiro([
+      {
+        codigo: "2",
+        titulo: "Outra",
+        tipoCampo: "TEXTO",
+        obrigatorio: true,
+        ordem: 0,
+      },
+    ]);
+    assert.equal(out[0].tipoCampo, "LACRE_GARANTIA");
+    assert.equal(out[0].ordem, 0);
+    assert.equal(out[1].titulo, "Outra");
+    assert.equal(out[1].ordem, 1);
+  });
+
+  it("não trata código LACRE sozinho como pergunta de lacre", () => {
+    const out = ensureChecklistLacrePrimeiro([
+      {
+        codigo: "LACRE",
+        titulo: "Outra pergunta antiga",
+        tipoCampo: "SIM_NAO",
+        obrigatorio: true,
+        ordem: 0,
+      },
+    ]);
+    assert.equal(out[0].tipoCampo, "LACRE_GARANTIA");
+    assert.equal(out[1].tipoCampo, "SIM_NAO");
+    assert.equal(out[1].codigo, "LACRE");
   });
 });
 

@@ -8,7 +8,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { RmaChecklistFormEditor } from "@/components/rma/RmaChecklistFormEditor";
 import {
   ChecklistTemplate,
-  emptyChecklistItem,
+  defaultChecklistItens,
   ItemDraft,
   itemsFromTemplate,
   parseChecklistTipo,
@@ -16,6 +16,7 @@ import {
   TIPO_HINT,
   TIPO_LABEL,
 } from "@/components/rma/rmaChecklistShared";
+import { isChecklistItemLacreGarantia } from "@teep/shared";
 
 export default function RmaChecklistEditorPage() {
   const router = useRouter();
@@ -75,7 +76,7 @@ export default function RmaChecklistEditorPage() {
         setItens(
           atual?.itens.length
             ? itemsFromTemplate(atual)
-            : [emptyChecklistItem()]
+            : defaultChecklistItens(tipo)
         );
       })
       .catch((e) => {
@@ -112,7 +113,7 @@ export default function RmaChecklistEditorPage() {
           nome: nomePadrao.trim(),
           ativo: true,
           itens: limpos.map((it, idx) => ({
-            codigo: String(idx + 1),
+            codigo: isChecklistItemLacreGarantia(it) ? "LACRE" : String(idx + 1),
             titulo: it.titulo,
             ajuda: it.ajuda.trim() || null,
             tipoCampo: it.tipoCampo,

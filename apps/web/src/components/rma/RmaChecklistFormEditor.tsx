@@ -6,8 +6,10 @@ import {
   emptyChecklistItem,
   exigeFotoSeSelectValue,
   ItemDraft,
+  normalizeChecklistItensForTipo,
   TIPO_LABEL,
 } from "@/components/rma/rmaChecklistShared";
+import { isChecklistItemLacreGarantia } from "@teep/shared";
 
 type Props = {
   tipo: "RECEBIMENTO" | "LIBERACAO";
@@ -28,6 +30,7 @@ const TIPO_CAMPO_LABEL: Record<ItemDraft["tipoCampo"], string> = {
   TEXTO: "Texto",
   OPCAO: "Lista",
   FOTO: "Foto",
+  LACRE_GARANTIA: "Lacre de garantia",
 };
 
 export function RmaChecklistFormEditor({
@@ -45,9 +48,17 @@ export function RmaChecklistFormEditor({
   const [previewOpen, setPreviewOpen] = useState(false);
 
   function update(idx: number, patch: Partial<ItemDraft>) {
+    const cur = itens[idx];
+    if (isChecklistItemLacreGarantia(cur) && patch.tipoCampo && patch.tipoCampo !== "LACRE_GARANTIA") {
+      return;
+    }
     const next = [...itens];
     next[idx] = { ...next[idx], ...patch };
-    onChangeItens(next);
+    onChangeItens(normalizeChecklistItensForTipo(tipo, next));
+  }
+
+  function setItens(next: ItemDraft[]) {
+    onChangeItens(normalizeChecklistItensForTipo(tipo, next));
   }
 
   return (
@@ -64,6 +75,9 @@ export function RmaChecklistFormEditor({
           <p className="mt-0.5 text-xs text-slate-500">
             Monte o que a equipe responde no processo de{" "}
             {TIPO_LABEL[tipo].toLowerCase()}.
+            {tipo === "RECEBIMENTO"
+              ? " A pergunta de lacre de garantia fica sempre em primeiro."
+              : null}
           </p>
         </div>
 
@@ -89,6 +103,7 @@ export function RmaChecklistFormEditor({
                     <select
                       className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs"
                       value={it.tipoCampo}
+                      disabled={isChecklistItemLacreGarantia(it)}
                       onChange={(e) =>
                         update(idx, {
                           tipoCampo: e.target
@@ -100,11 +115,17 @@ export function RmaChecklistFormEditor({
                       <option value="TEXTO">Texto</option>
                       <option value="OPCAO">Lista de opções</option>
                       <option value="FOTO">Só foto</option>
+                      {tipo === "RECEBIMENTO" ? (
+                        <option value="LACRE_GARANTIA">
+                          Lacre de garantia
+                        </option>
+                      ) : null}
                     </select>
                     <label className="flex items-center gap-1.5 text-xs text-slate-600">
                       <input
                         type="checkbox"
                         checked={it.obrigatorio}
+                        disabled={isChecklistItemLacreGarantia(it)}
                         onChange={(e) =>
                           update(idx, { obrigatorio: e.target.checked })
                         }
@@ -127,16 +148,27 @@ export function RmaChecklistFormEditor({
                         </select>
                       </label>
                     ) : null}
-                    <button
-                      type="button"
-                      className="ml-auto text-xs text-red-600 hover:underline"
-                      onClick={() =>
-                        onChangeItens(itens.filter((_, i) => i !== idx))
-                      }
-                    >
-                      Remover
-                    </button>
+                    {isChecklistItemLacreGarantia(it) ? (
+                      <span className="text-[11px] font-medium text-sky-800">
+                        Padrão · 1ª pergunta
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        className="ml-auto text-xs text-red-600 hover:underline"
+                        onClick={() =>
+                          setItens(itens.filter((_, i) => i !== idx))
+                        }
+                      >
+                        Remover
+                      </button>
+                    )}
                   </div>
+                  {it.tipoCampo === "LACRE_GARANTIA" ? (
+                    <p className="text-[11px] text-slate-500">
+                      Sim → data do lacre. Não → observação opcional.
+                    </p>
+                  ) : null}
                   {it.tipoCampo === "OPCAO" ? (
                     <input
                       className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs"
@@ -183,7 +215,7 @@ export function RmaChecklistFormEditor({
           <button
             type="button"
             className="text-sm font-medium text-brand hover:underline"
-            onClick={() => onChangeItens([...itens, emptyChecklistItem()])}
+            onClick={() => setItens([...itens, emptyChecklistItem()])}
           >
             + Pergunta
           </button>
@@ -304,7 +336,8 @@ function ChecklistPreviewModal({
                         : ""}
                     </p>
 
-                    {it.tipoCampo === "SIM_NAO" ? (
+                    {it.tipoCampo === "SIM_NAO" ||
+                    it.tipoCampo === "LACRE_GARANTIA" ? (
                       <div className="mt-2 flex gap-4 text-sm text-slate-700">
                         <label className="flex items-center gap-1.5">
                           <input type="radio" disabled name={`pv-${idx}`} />
@@ -315,6 +348,11 @@ function ChecklistPreviewModal({
                           Não
                         </label>
                       </div>
+                    ) : null}
+                    {it.tipoCampo === "LACRE_GARANTIA" ? (
+                      <p className="mt-2 text-[11px] text-slate-500">
+                        Se Sim: data do lacre. Se Não: observação opcional.
+                      </p>
                     ) : null}
                     {it.tipoCampo === "TEXTO" ? (
                       <textarea

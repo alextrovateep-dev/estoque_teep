@@ -784,6 +784,7 @@ export async function criarRmaProcesso(
   input: {
     clienteId: string;
     responsavelComercialId: string;
+    modalidadeAquisicao?: string;
     observacao?: string | null;
     prazoManutencao?: string | null;
     nfEntradaNumero?: string | null;
@@ -905,6 +906,10 @@ export async function criarRmaProcesso(
       })(),
       criadoPorId: user.id,
       responsavelComercialId: input.responsavelComercialId,
+      modalidadeAquisicao: (() => {
+        const m = String(input.modalidadeAquisicao || "NENHUM").toUpperCase();
+        return m === "CONTRATO" || m === "LOCACAO" ? m : "NENHUM";
+      })(),
     },
   });
 
@@ -1117,6 +1122,29 @@ export async function atualizarRmaComercial(
   await prisma.rmaProcesso.update({
     where: { id },
     data: { responsavelComercialId: input.responsavelComercialId },
+  });
+  return obterRma(user, id);
+}
+
+export async function atualizarRmaModalidade(
+  user: AuthUser,
+  id: string,
+  input: { modalidadeAquisicao: string }
+) {
+  const proc = await obterRma(user, id);
+  if (proc.status !== "ABERTO") {
+    throw new AppError(
+      400,
+      "Só é possível alterar a modalidade em RMA aberto"
+    );
+  }
+  const m = String(input.modalidadeAquisicao || "").toUpperCase();
+  if (m !== "NENHUM" && m !== "CONTRATO" && m !== "LOCACAO") {
+    throw new AppError(400, "Modalidade de aquisição inválida");
+  }
+  await prisma.rmaProcesso.update({
+    where: { id },
+    data: { modalidadeAquisicao: m },
   });
   return obterRma(user, id);
 }

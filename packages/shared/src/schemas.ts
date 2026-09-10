@@ -819,6 +819,12 @@ export const createRmaProcessoSchema = z
     responsavelComercialId: z.string().uuid({
       message: "Selecione o responsável comercial",
     }),
+    /** NENHUM | CONTRATO | LOCACAO — relevante para cobranças */
+    modalidadeAquisicao: z
+      .enum(["NENHUM", "CONTRATO", "LOCACAO"], {
+        errorMap: () => ({ message: "Selecione a modalidade de aquisição" }),
+      })
+      .default("NENHUM"),
     observacao: z.string().max(2000).optional().nullable(),
     prazoManutencao: z.preprocess(
       (v) => (v == null || String(v).trim() === "" ? null : String(v).trim()),
@@ -970,6 +976,13 @@ export const atualizarRmaClienteSchema = z.object({
 /** Alterar responsável comercial (só ABERTO + aprovação PENDENTE). */
 export const atualizarRmaComercialSchema = z.object({
   responsavelComercialId: z.string().uuid(),
+});
+
+/** Alterar modalidade de aquisição (só RMA aberto). */
+export const atualizarRmaModalidadeSchema = z.object({
+  modalidadeAquisicao: z.enum(["NENHUM", "CONTRATO", "LOCACAO"], {
+    errorMap: () => ({ message: "Selecione a modalidade de aquisição" }),
+  }),
 });
 
 /** Decisão comercial de manutenção por item. */
@@ -1136,6 +1149,7 @@ const rmaChecklistCampoTipo = z.enum([
   "TEXTO",
   "OPCAO",
   "FOTO",
+  "LACRE_GARANTIA",
 ]);
 
 export const rmaChecklistTemplateItemSchema = z.object({

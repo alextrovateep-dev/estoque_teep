@@ -1,5 +1,7 @@
 /** HTML do laudo de recebimento anexado ao PDF de orçamento RMA. */
 
+import { formatarRespostaLacreGarantia } from "@teep/shared";
+
 export function escHtmlPdf(s: string): string {
   return String(s || "")
     .replace(/&/g, "&amp;")
@@ -30,6 +32,12 @@ export function formatarRespostaChecklistCampo(opts: {
   valorBool?: boolean | null;
 }): string {
   const tipo = String(opts.tipoCampo || "").toUpperCase();
+  if (tipo === "LACRE_GARANTIA") {
+    return formatarRespostaLacreGarantia({
+      valorBool: opts.valorBool,
+      valorTexto: opts.valorTexto,
+    });
+  }
   if (tipo === "SIM_NAO") {
     if (opts.valorBool === true) return "Sim";
     if (opts.valorBool === false) return "Não";
