@@ -139,7 +139,13 @@ function etapaBadgeClass(etapa: string) {
   }
 }
 
-type FilialOpt = { id: string; nome: string; sigla: string; ativo?: boolean };
+type FilialOpt = {
+  id: string;
+  nome: string;
+  sigla: string;
+  ativo?: boolean;
+  estoqueRma?: boolean;
+};
 type SerieOpt = { id: string; numeroSerie: string };
 type ClienteOpt = {
   id: string;
@@ -875,12 +881,13 @@ export default function RmaDetalhePage() {
       setFiliais(ativas);
       setRmaDefaults(defs);
 
-      // Defaults vêm da API (env ou fallback por sigla de instalação) — sem preferir estoques fixos
+      // Defaults vêm da API (env / flag estoqueRma / descarte) — sem estoque chumbado
       const descarteId = defs.filialDescarteId || "";
       setDestinoDescarteId(
         descarteId && descarteId !== row?.filial.id ? descarteId : ""
       );
 
+      // Origem padrão: primeiro operacional dos defaults (já exclui RMA/descarte)
       const origemPadrao = (defs.filiaisOrigemTroca || []).find(
         (f) => f.id !== row?.filial.id
       );
@@ -945,6 +952,12 @@ export default function RmaDetalhePage() {
       falhaLocal("Selecione o estoque de origem da peça boa");
       return;
     }
+    if (origemFilialId === row?.filial.id) {
+      falhaLocal(
+        "Origem da peça boa deve ser diferente do estoque RMA deste processo"
+      );
+      return;
+    }
     if (!serieBoa.trim()) {
       falhaLocal("Informe a série substituta");
       return;
@@ -977,6 +990,8 @@ export default function RmaDetalhePage() {
         body: JSON.stringify({
           itemId: trocaItemId,
           origemFilialId,
+          // Destino da peça boa = estoque RMA do processo (definido na abertura)
+          destinoPreparacaoFilialId: row?.filial.id,
           numeroSerieBoa: serieBoa.trim(),
           destinoDescarteFilialId: destinoDescarteId,
           nfSaidaNumero: nfSai.trim() || undefined,
@@ -2030,8 +2045,13 @@ export default function RmaDetalhePage() {
           {itensAtivos.map((i) => {
             const origemIds = new Set(rmaDefaults?.filiaisOrigemTrocaIds || []);
             const descarteId = rmaDefaults?.filialDescarteId;
+            const estoquesRmaIds = new Set(
+              filiais.filter((f) => f.estoqueRma).map((f) => f.id)
+            );
+            // Origem = operacionais (defaults), nunca RMA do processo / outros RMA / descarte
             const filiaisOrigem = filiais.filter((f) => {
               if (f.id === row.filial.id) return false;
+              if (estoquesRmaIds.has(f.id)) return false;
               if (descarteId && f.id === descarteId) return false;
               if (
                 !descarteId &&
@@ -2042,7 +2062,10 @@ export default function RmaDetalhePage() {
               if (origemIds.size > 0) return origemIds.has(f.id);
               return true;
             });
-            const filiaisDescarte = filiais.filter((f) => f.id !== row.filial.id);
+            // Descarte: ≠ processo e ≠ qualquer estoque RMA
+            const filiaisDescarte = filiais.filter(
+              (f) => f.id !== row.filial.id && !estoquesRmaIds.has(f.id)
+            );
             const descLimpa = descricaoProdutoLimpa(
               i.produto.codigo,
               i.produto.descricao
@@ -2362,8 +2385,8 @@ export default function RmaDetalhePage() {
                     className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3"
                   >
                     <p className="font-medium text-amber-950 sm:col-span-2 lg:col-span-3">
-                      Troca — peça boa de outro estoque; série ruim vai ao
-                      descarte
+                      Troca — peça boa: origem → estoque RMA do processo →
+                      cliente; série ruim → descarte
                     </p>
                     {rmaDefaults?.avisos && rmaDefaults.avisos.length > 0 && (
                       <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950 sm:col-span-2 lg:col-span-3">
@@ -2388,6 +2411,20 @@ export default function RmaDetalhePage() {
                         ))}
                       </select>
                     </label>
+                    <div className="block">
+                      <span className="text-slate-600">
+                        Destino da peça boa (estoque RMA do processo)
+                      </span>
+                      <p
+                        className="mt-0.5 rounded border border-amber-200 bg-white px-2 py-1.5 font-medium text-slate-900"
+                        title="Definido na abertura do RMA — não se escolhe na troca"
+                      >
+                        {row.filial.sigla} — {row.filial.nome}
+                      </p>
+                      <span className="mt-0.5 block text-[10px] text-slate-500">
+                        Estoque deste RMA (definido na abertura do processo).
+                      </span>
+                    </div>
                     <label className="block">
                       <span className="text-slate-600">Série substituta</span>
                       {seriesDisp.length > 0 ? (

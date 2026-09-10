@@ -2200,13 +2200,13 @@ export async function trocarRmaItem(
   if (destinoPrepId !== proc.filialId) {
     throw new AppError(
       400,
-      `Destino de preparação deve ser o estoque do processo (${proc.filial.sigla})`
+      `Destino da peça boa é o estoque RMA do processo (${proc.filial.sigla}) — definido na abertura`
     );
   }
   if (input.origemFilialId === destinoPrepId) {
     throw new AppError(
       400,
-      "Origem da peça boa deve ser um estoque diferente do RMA"
+      "Origem da peça boa deve ser um estoque diferente do RMA do processo"
     );
   }
 
@@ -2223,6 +2223,19 @@ export async function trocarRmaItem(
   }
   if (destinoDescarteId === proc.filialId) {
     throw new AppError(400, "Estoque de descarte deve ser diferente do RMA");
+  }
+  const destDescarte = await prisma.filial.findFirst({
+    where: { id: destinoDescarteId, ativo: true },
+    select: { id: true, sigla: true, estoqueRma: true },
+  });
+  if (!destDescarte) {
+    throw new AppError(400, "Estoque de descarte inválido ou inativo");
+  }
+  if (destDescarte.estoqueRma) {
+    throw new AppError(
+      400,
+      "Estoque de descarte não pode ser um depósito marcado como RMA"
+    );
   }
 
   // Valida séries antes do claim — evita marcar item e depois falhar

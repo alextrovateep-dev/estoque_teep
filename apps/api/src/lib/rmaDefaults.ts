@@ -141,6 +141,10 @@ export async function resolveRmaDefaults(): Promise<RmaDefaults> {
   const excluir = new Set<string>();
   if (filialPreparacao) excluir.add(filialPreparacao.id);
   if (filialDescarte) excluir.add(filialDescarte.id);
+  // Origem da peça boa = estoques operacionais — nunca depósitos RMA
+  for (const f of marcadosRma) {
+    excluir.add(f.id);
+  }
 
   let filiaisOrigemTroca: RmaFilialRef[] = [];
   let fonteOrigem: RmaDefaults["fonte"]["origemTroca"] = "none";
