@@ -9,6 +9,7 @@ import { RmaChecklistFormEditor } from "@/components/rma/RmaChecklistFormEditor"
 import {
   ChecklistTemplate,
   defaultChecklistItens,
+  emptyChecklistItem,
   ItemDraft,
   itemsFromTemplate,
   parseChecklistTipo,
