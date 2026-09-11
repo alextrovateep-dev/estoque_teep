@@ -1,13 +1,20 @@
 "use client";
 
-import { api, getStoredUser } from "@/lib/api";
+import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import { userCanEditCadastro } from "@/lib/access";
 import { formatMoney } from "@/lib/money";
 import { resolveAssetUrl } from "@/lib/assets";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Fragment, Suspense, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 type FotoLightbox = {
   images: string[];
@@ -53,6 +60,9 @@ type RelProduto = {
   clientes: ParceiroRel[];
 };
 
+type FiltroAtivo = "todos" | "ativos" | "inativos";
+type FiltroSerie = "todos" | "com" | "sem";
+
 function asFotos(raw: unknown): string[] {
   return Array.isArray(raw) ? (raw as string[]) : [];
 }
@@ -95,9 +105,16 @@ function ProdutosPageInner() {
   })();
   const isAdmin = getStoredUser()?.perfil === "ADMIN";
   const [lista, setLista] = useState<Produto[]>([]);
+  const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [busca, setBusca] = useState("");
+  const [buscaDebounced, setBuscaDebounced] = useState("");
+  const [filtroAtivo, setFiltroAtivo] = useState<FiltroAtivo>("todos");
+  const [filtroCategoriaId, setFiltroCategoriaId] = useState("");
+  const [filtroSerie, setFiltroSerie] = useState<FiltroSerie>("todos");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
   const [resumo, setResumo] = useState<Record<string, ResumoProduto>>({});
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [relCache, setRelCache] = useState<Record<string, RelProduto>>({});
@@ -105,21 +122,57 @@ function ProdutosPageInner() {
   const [fotoLightbox, setFotoLightbox] = useState<FotoLightbox | null>(null);
   const [excluindoId, setExcluindoId] = useState<string | null>(null);
 
-  async function load() {
-    const [p, resumos] = await Promise.all([
-      api<Produto[]>("/produtos?ativas=0"),
-      api<ResumoProduto[]>("/produtos/relacionamentos-resumo"),
-    ]);
-    setLista(p);
-    const map: Record<string, ResumoProduto> = {};
-    for (const r of resumos) map[r.produtoId] = r;
-    setResumo(map);
-    setRelCache({});
-    setExpandidoId(null);
-  }
+  useEffect(() => {
+    const t = setTimeout(() => setBuscaDebounced(busca.trim()), 300);
+    return () => clearTimeout(t);
+  }, [busca]);
+
+  const queryParams = useMemo(() => {
+    const qs = new URLSearchParams();
+    qs.set("limit", "2000");
+    if (buscaDebounced) qs.set("q", buscaDebounced);
+    if (filtroCategoriaId) qs.set("categoriaId", filtroCategoriaId);
+    if (filtroAtivo === "ativos") qs.set("ativo", "1");
+    else if (filtroAtivo === "inativos") qs.set("ativo", "0");
+    else qs.set("ativas", "0");
+    if (filtroSerie === "com") qs.set("controlaSerie", "1");
+    else if (filtroSerie === "sem") qs.set("controlaSerie", "0");
+    return qs;
+  }, [buscaDebounced, filtroAtivo, filtroCategoriaId, filtroSerie]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [p, resumos] = await Promise.all([
+        api<Produto[]>(`/produtos?${queryParams.toString()}`),
+        api<ResumoProduto[]>("/produtos/relacionamentos-resumo"),
+      ]);
+      setLista(p);
+      const map: Record<string, ResumoProduto> = {};
+      for (const r of resumos) map[r.produtoId] = r;
+      setResumo(map);
+      setRelCache({});
+      setExpandidoId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao carregar produtos");
+    } finally {
+      setLoading(false);
+    }
+  }, [queryParams]);
 
   useEffect(() => {
-    load().catch((e) => setError(e.message));
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    api<Categoria[]>("/categorias?ativas=0")
+      .then((rows) =>
+        setCategorias(
+          (rows || []).slice().sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"))
+        )
+      )
+      .catch(() => setCategorias([]));
   }, []);
 
   useEffect(() => {
@@ -128,16 +181,42 @@ function ProdutosPageInner() {
     else if (ok === "atualizado") setMsg("Produto atualizado");
   }, [searchParams]);
 
-  const filtrados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return lista;
-    return lista.filter(
-      (p) =>
-        p.codigo.toLowerCase().includes(q) ||
-        p.descricao.toLowerCase().includes(q) ||
-        (p.categoria?.nome || "").toLowerCase().includes(q)
-    );
-  }, [lista, busca]);
+  const temFiltro =
+    Boolean(buscaDebounced) ||
+    filtroAtivo !== "todos" ||
+    Boolean(filtroCategoriaId) ||
+    filtroSerie !== "todos";
+
+  function limparFiltros() {
+    setBusca("");
+    setBuscaDebounced("");
+    setFiltroAtivo("todos");
+    setFiltroCategoriaId("");
+    setFiltroSerie("todos");
+  }
+
+  async function exportar(format: "pdf" | "xlsx") {
+    setExporting(format);
+    setError("");
+    try {
+      const { blob, filename } = await apiDownload(
+        `/produtos/export.${format}?${queryParams.toString()}`,
+        {
+          fallbackFilename: `teep-produtos.${format === "pdf" ? "pdf" : "xlsx"}`,
+        }
+      );
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro ao exportar");
+    } finally {
+      setExporting(null);
+    }
+  }
 
   async function toggleAtivo(p: Produto) {
     setError("");
@@ -207,15 +286,38 @@ function ProdutosPageInner() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Produtos</h1>
+          <p className="mt-0.5 text-sm text-slate-500">
+            {loading
+              ? "Carregando…"
+              : `${lista.length} produto(s)${temFiltro ? " (filtrado)" : ""}`}
+          </p>
         </div>
-        {canEdit && (
-          <Link
-            href="/cadastros/produtos/novo"
-            className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white"
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={exporting !== null || loading || lista.length === 0}
+            onClick={() => void exportar("pdf")}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 disabled:opacity-50"
           >
-            Cadastrar
-          </Link>
-        )}
+            {exporting === "pdf" ? "Gerando…" : "Exportar PDF"}
+          </button>
+          <button
+            type="button"
+            disabled={exporting !== null || loading || lista.length === 0}
+            onClick={() => void exportar("xlsx")}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800 disabled:opacity-50"
+          >
+            {exporting === "xlsx" ? "Gerando…" : "Exportar Excel"}
+          </button>
+          {canEdit && (
+            <Link
+              href="/cadastros/produtos/novo"
+              className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white"
+            >
+              Cadastrar
+            </Link>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -229,14 +331,68 @@ function ProdutosPageInner() {
         </p>
       )}
 
-      <div className="mt-4">
-        <input
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          placeholder="Buscar código, descrição ou categoria…"
-          className="w-full rounded-lg border bg-white px-3 py-2.5"
-          autoComplete="off"
-        />
+      <div className="mt-4 grid gap-2 rounded-xl border bg-white p-3 sm:grid-cols-2 lg:grid-cols-4">
+        <label className="block sm:col-span-2 lg:col-span-2">
+          <span className="text-xs font-medium text-slate-500">Busca</span>
+          <input
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            placeholder="Código, descrição ou categoria…"
+            className="mt-0.5 w-full rounded-lg border bg-white px-3 py-2 text-sm"
+            autoComplete="off"
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium text-slate-500">Categoria</span>
+          <select
+            value={filtroCategoriaId}
+            onChange={(e) => setFiltroCategoriaId(e.target.value)}
+            className="mt-0.5 w-full rounded-lg border bg-white px-3 py-2 text-sm"
+          >
+            <option value="">Todas</option>
+            {categorias.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.nome}
+                {!c.ativo ? " (inativa)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium text-slate-500">Status</span>
+          <select
+            value={filtroAtivo}
+            onChange={(e) => setFiltroAtivo(e.target.value as FiltroAtivo)}
+            className="mt-0.5 w-full rounded-lg border bg-white px-3 py-2 text-sm"
+          >
+            <option value="todos">Todos</option>
+            <option value="ativos">Somente ativos</option>
+            <option value="inativos">Somente inativos</option>
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-xs font-medium text-slate-500">Série</span>
+          <select
+            value={filtroSerie}
+            onChange={(e) => setFiltroSerie(e.target.value as FiltroSerie)}
+            className="mt-0.5 w-full rounded-lg border bg-white px-3 py-2 text-sm"
+          >
+            <option value="todos">Todas</option>
+            <option value="com">Controla série</option>
+            <option value="sem">Sem série</option>
+          </select>
+        </label>
+        {temFiltro && (
+          <div className="flex items-end sm:col-span-2 lg:col-span-3">
+            <button
+              type="button"
+              onClick={limparFiltros}
+              className="text-sm font-medium text-brand hover:underline"
+            >
+              Limpar filtros
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="mt-3 overflow-x-auto rounded-xl border bg-white">
@@ -256,7 +412,7 @@ function ProdutosPageInner() {
             </tr>
           </thead>
           <tbody>
-            {filtrados.map((p) => {
+            {lista.map((p) => {
               const fotos = fotosResolvidas(p.fotos);
               const capaUrl = fotos[0] ?? null;
               const r = resumo[p.id];
@@ -438,13 +594,14 @@ function ProdutosPageInner() {
                 </Fragment>
               );
             })}
-            {filtrados.length === 0 && (
+            {!loading && lista.length === 0 && (
               <tr>
                 <td
                   colSpan={10}
                   className="px-3 py-6 text-center text-slate-500"
                 >
                   Nenhum produto encontrado.
+                  {temFiltro ? " Ajuste ou limpe os filtros." : ""}
                 </td>
               </tr>
             )}

@@ -30,6 +30,8 @@ export type ProdutosExportOpts = {
   categoriaId?: string | null;
   /** null = todos; true = só ativos; false = só inativos */
   ativo?: boolean | null;
+  /** null = todos; true = só com série; false = só sem série */
+  controlaSerie?: boolean | null;
 };
 
 export type ProdutosExportMeta = {
@@ -39,6 +41,7 @@ export type ProdutosExportMeta = {
   busca: string | null;
   categoria: string | null;
   filtroAtivo: string;
+  filtroSerie: string;
   linhas: number;
   truncado: boolean;
   total: number;
@@ -79,12 +82,22 @@ export async function carregarProdutosExport(
       : opts.ativo === false
         ? { ativo: false }
         : {}),
+    ...(opts.controlaSerie === true
+      ? { controlaSerie: true }
+      : opts.controlaSerie === false
+        ? { controlaSerie: false }
+        : {}),
     ...(opts.categoriaId ? { categoriaId: opts.categoriaId } : {}),
     ...(q
       ? {
           OR: [
             { codigo: { contains: q, mode: "insensitive" as const } },
             { descricao: { contains: q, mode: "insensitive" as const } },
+            {
+              categoria: {
+                nome: { contains: q, mode: "insensitive" as const },
+              },
+            },
           ],
         }
       : {}),
@@ -144,6 +157,12 @@ export async function carregarProdutosExport(
           : opts.ativo === false
             ? "Somente inativos"
             : "Todos",
+      filtroSerie:
+        opts.controlaSerie === true
+          ? "Somente com série"
+          : opts.controlaSerie === false
+            ? "Somente sem série"
+            : "Todas",
       linhas: rows.length,
       truncado: total > LIMITE,
       total,
@@ -160,6 +179,7 @@ function buildProdutosHtml(
   if (meta.categoria) filtros.push(`categoria: ${escapeHtml(meta.categoria)}`);
   if (meta.busca) filtros.push(`busca: “${escapeHtml(meta.busca)}”`);
   filtros.push(meta.filtroAtivo);
+  if (meta.filtroSerie !== "Todas") filtros.push(meta.filtroSerie);
 
   const bodyRows = rows
     .map(

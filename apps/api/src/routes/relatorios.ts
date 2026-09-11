@@ -68,12 +68,22 @@ function parseProdutosQuery(req: AuthedRequest) {
   } else if (ativoRaw === "0" || ativoRaw === "false" || ativoRaw === "nao") {
     ativo = false;
   }
+  const serieRaw = String(req.query.controlaSerie ?? "")
+    .trim()
+    .toLowerCase();
+  let controlaSerie: boolean | null = null;
+  if (serieRaw === "1" || serieRaw === "true" || serieRaw === "sim") {
+    controlaSerie = true;
+  } else if (serieRaw === "0" || serieRaw === "false" || serieRaw === "nao") {
+    controlaSerie = false;
+  }
   return {
     q: req.query.q ? String(req.query.q) : undefined,
     categoriaId: req.query.categoriaId
       ? String(req.query.categoriaId)
       : undefined,
     ativo,
+    controlaSerie,
   };
 }
 

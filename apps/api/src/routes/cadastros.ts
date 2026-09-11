@@ -29,6 +29,10 @@ import {
   excluirProdutoSeLivre,
 } from "../services/produtoExclusaoService";
 import {
+  exportarProdutosExcel,
+  exportarProdutosPdf,
+} from "../services/produtosExportService";
+import {
   authenticate,
   requirePerfil,
   requireFilialOperador,
@@ -863,18 +867,54 @@ const produtoInclude = {
 cadastrosRouter.get("/produtos", async (req, res, next) => {
   try {
     const q = String(req.query.q || "").trim();
-    const ativas = req.query.ativas !== "0";
+    const categoriaId = String(req.query.categoriaId || "").trim();
+    const ativoRaw = String(req.query.ativo ?? "").trim().toLowerCase();
+    const serieRaw = String(req.query.controlaSerie ?? "")
+      .trim()
+      .toLowerCase();
+    /** Legado: ativas=0 lista todos; sem ativo explícito + ativas≠0 → só ativos */
+    let ativoFiltro: boolean | null = null;
+    if (ativoRaw === "1" || ativoRaw === "true" || ativoRaw === "sim") {
+      ativoFiltro = true;
+    } else if (ativoRaw === "0" || ativoRaw === "false" || ativoRaw === "nao") {
+      ativoFiltro = false;
+    } else if (req.query.ativas === "0") {
+      ativoFiltro = null;
+    } else {
+      ativoFiltro = true;
+    }
+    let controlaSerie: boolean | null = null;
+    if (serieRaw === "1" || serieRaw === "true" || serieRaw === "sim") {
+      controlaSerie = true;
+    } else if (serieRaw === "0" || serieRaw === "false" || serieRaw === "nao") {
+      controlaSerie = false;
+    }
     const take = Math.min(
       2000,
       Math.max(1, Number(req.query.limit) || 200)
     );
     const where = {
-      ...(ativas ? { ativo: true } : {}),
+      ...(ativoFiltro === true
+        ? { ativo: true }
+        : ativoFiltro === false
+          ? { ativo: false }
+          : {}),
+      ...(controlaSerie === true
+        ? { controlaSerie: true }
+        : controlaSerie === false
+          ? { controlaSerie: false }
+          : {}),
+      ...(categoriaId ? { categoriaId } : {}),
       ...(q
         ? {
             OR: [
               { codigo: { contains: q, mode: "insensitive" as const } },
               { descricao: { contains: q, mode: "insensitive" as const } },
+              {
+                categoria: {
+                  nome: { contains: q, mode: "insensitive" as const },
+                },
+              },
             ],
           }
         : {}),
@@ -891,6 +931,79 @@ cadastrosRouter.get("/produtos", async (req, res, next) => {
     next(e);
   }
 });
+
+function parseProdutosExportQuery(req: AuthedRequest) {
+  const ativoRaw = String(req.query.ativo ?? "").trim().toLowerCase();
+  let ativo: boolean | null = null;
+  if (ativoRaw === "1" || ativoRaw === "true" || ativoRaw === "sim") {
+    ativo = true;
+  } else if (ativoRaw === "0" || ativoRaw === "false" || ativoRaw === "nao") {
+    ativo = false;
+  }
+  const serieRaw = String(req.query.controlaSerie ?? "")
+    .trim()
+    .toLowerCase();
+  let controlaSerie: boolean | null = null;
+  if (serieRaw === "1" || serieRaw === "true" || serieRaw === "sim") {
+    controlaSerie = true;
+  } else if (serieRaw === "0" || serieRaw === "false" || serieRaw === "nao") {
+    controlaSerie = false;
+  }
+  return {
+    q: req.query.q ? String(req.query.q) : undefined,
+    categoriaId: req.query.categoriaId
+      ? String(req.query.categoriaId)
+      : undefined,
+    ativo,
+    controlaSerie,
+  };
+}
+
+/** Export cadastro de produtos (mesmos filtros da listagem). */
+cadastrosRouter.get(
+  "/produtos/export.pdf",
+  requirePermissao("cadastros_produtos_ver", "cadastros_produtos_editar"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const { buffer, filename } = await exportarProdutosPdf(
+        req.user!,
+        parseProdutosExportQuery(req)
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+cadastrosRouter.get(
+  "/produtos/export.xlsx",
+  requirePermissao("cadastros_produtos_ver", "cadastros_produtos_editar"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const { buffer, filename } = await exportarProdutosExcel(
+        req.user!,
+        parseProdutosExportQuery(req)
+      );
+      res.setHeader(
+        "Content-Type",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      );
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 /** Lista produtos que já têm árvore (BOM) — página Árvore. */
 cadastrosRouter.get(
