@@ -198,10 +198,9 @@ export default function TransformacaoPage() {
           Transformação de produto
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Acabado A (N/S) sai do estoque e nasce o produto B com N/S novo. O
-          sistema baixa só o delta da árvore 1 nível (o que B precisa e A ainda
-          não traz). Componentes só em A não voltam ao estoque. Sem estorno
-          automático.
+          Troca um produto serializado por outro na mesma filial. O sistema
+          calcula automaticamente quais peças ainda faltam e baixa só essas do
+          estoque.
         </p>
         <p className="mt-1 text-xs text-slate-400">
           <Link href="/lancamentos/novo" className="text-brand hover:underline">
@@ -336,104 +335,155 @@ export default function TransformacaoPage() {
         </label>
 
         {filialId && produtoDestinoId && !produtoOrigemId && (
-          <p className="rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-sm text-slate-600">
-            Selecione o produto origem (A) para calcular o diff de componentes.
+          <p className="rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-600">
+            Escolha o produto de origem para ver quais peças serão baixadas.
           </p>
         )}
 
         {preview && (
-          <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Diff de componentes
-              {origem && destino
-                ? ` (${origem.codigo} → ${destino.codigo})`
-                : ""}
-            </p>
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+            <div className="border-b border-slate-100 px-4 py-3">
+              <p className="text-sm font-semibold text-slate-900">
+                Peças desta transformação
+              </p>
+              {origem && destino ? (
+                <p className="mt-0.5 text-xs text-slate-500">
+                  De{" "}
+                  <span className="font-mono font-medium text-slate-700">
+                    {origem.codigo}
+                  </span>{" "}
+                  para{" "}
+                  <span className="font-mono font-medium text-slate-700">
+                    {destino.codigo}
+                  </span>
+                </p>
+              ) : null}
+              {preview.linhas.length > 0 && (
+                <p className="mt-2 text-sm text-slate-600">
+                  {preview.aBaixar.length === 0 ? (
+                    <>Nenhuma peça sai do estoque — tudo já veio no produto de origem.</>
+                  ) : (
+                    <>
+                      <span className="font-semibold text-slate-900">
+                        {preview.aBaixar.reduce((s, l) => s + l.qtdBaixar, 0)}
+                      </span>{" "}
+                      {preview.aBaixar.reduce((s, l) => s + l.qtdBaixar, 0) === 1
+                        ? "peça sai"
+                        : "peças saem"}{" "}
+                      do estoque
+                      {preview.linhas.some((l) => l.motivo === "COBERTO_ORIGEM")
+                        ? " · o restante já veio no produto de origem"
+                        : ""}
+                      .
+                    </>
+                  )}
+                </p>
+              )}
+            </div>
+
             {preview.avisos.length > 0 && (
-              <ul className="mt-2 space-y-1">
+              <div
+                className={`space-y-1.5 border-b px-4 py-2.5 text-sm leading-snug ${
+                  preview.bomOrigemVazia
+                    ? "border-amber-100 bg-amber-50 text-amber-950"
+                    : "border-slate-100 bg-slate-50 text-slate-600"
+                }`}
+              >
                 {preview.avisos.map((a, i) => (
-                  <li
-                    key={i}
-                    className={`text-xs leading-snug ${
-                      preview.bomOrigemVazia && i === 0
-                        ? "font-medium text-amber-800"
-                        : "text-slate-500"
-                    }`}
-                  >
-                    {a}
-                  </li>
+                  <p key={i}>{a}</p>
                 ))}
-              </ul>
+              </div>
             )}
+
             {preview.linhas.length === 0 ? (
-              <p className="mt-2 text-sm text-slate-600">
-                Nenhum componente na árvore do destino (ou só fantasmas).
+              <p className="px-4 py-4 text-sm text-slate-600">
+                O produto destino não tem peças na árvore. Cadastre a árvore
+                antes de transformar.
               </p>
             ) : (
-              <table className="mt-2 w-full text-xs">
-                <thead>
-                  <tr className="text-left text-slate-400">
-                    <th className="py-1">Código</th>
-                    <th className="py-1 text-right">Em A</th>
-                    <th className="py-1 text-right">Em B</th>
-                    <th className="py-1 text-right">Baixar</th>
-                    <th className="py-1 text-right">Disp.</th>
-                    <th className="py-1">Situação</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.linhas.map((l) => (
-                    <tr key={l.produtoFilhoId} className="border-t border-slate-100">
-                      <td className="py-1.5 font-mono">{l.codigo}</td>
-                      <td className="py-1.5 text-right tabular-nums">
-                        {l.motivo === "EXCLUIDO_ORIGEM_ACABADO" ? "—" : l.qtdOrigem}
-                      </td>
-                      <td className="py-1.5 text-right tabular-nums">
-                        {l.qtdDestino}
-                      </td>
-                      <td
-                        className={`py-1.5 text-right tabular-nums ${
-                          l.qtdBaixar > 0 ? "font-semibold text-slate-900" : ""
-                        }`}
-                      >
-                        {l.qtdBaixar}
-                      </td>
-                      <td className="py-1.5 text-right tabular-nums">
-                        {l.motivo === "BAIXAR" ? l.saldoDisponivel : "—"}
-                      </td>
-                      <td className="py-1.5">
-                        {l.motivo === "BAIXAR" ? (
-                          l.faltante > 0 ? (
-                            <span className="font-medium text-red-600">
-                              Falta {l.faltante}
-                            </span>
-                          ) : (
-                            <span className="text-emerald-700">A baixar</span>
-                          )
-                        ) : l.motivo === "COBERTO_ORIGEM" ? (
-                          <span className="text-slate-500">Já em A</span>
-                        ) : (
-                          <span className="text-slate-500">Origem (A)</span>
-                        )}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[28rem] text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      <th className="px-4 py-2 font-semibold">Peça</th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Sai do estoque
+                      </th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Disponível
+                      </th>
+                      <th className="px-4 py-2 font-semibold">Situação</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {preview.linhas.map((l) => {
+                      const saiEstoque = l.motivo === "BAIXAR" && l.qtdBaixar > 0;
+                      return (
+                        <tr
+                          key={l.produtoFilhoId}
+                          className={`border-b border-slate-50 last:border-0 ${
+                            saiEstoque ? "bg-white" : "bg-slate-50/40"
+                          }`}
+                        >
+                          <td className="px-4 py-2.5">
+                            <div className="font-mono text-[13px] font-medium text-slate-900">
+                              {l.codigo}
+                            </div>
+                            {l.descricao && l.descricao !== l.codigo ? (
+                              <div className="mt-0.5 line-clamp-1 text-xs text-slate-500">
+                                {l.descricao}
+                              </div>
+                            ) : null}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">
+                            {saiEstoque ? (
+                              <span className="font-semibold text-slate-900">
+                                {l.qtdBaixar}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-slate-600">
+                            {saiEstoque ? l.saldoDisponivel : "—"}
+                          </td>
+                          <td className="px-4 py-2.5">
+                            {l.motivo === "BAIXAR" ? (
+                              l.faltante > 0 ? (
+                                <span className="inline-flex rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
+                                  Falta {l.faltante} no estoque
+                                </span>
+                              ) : (
+                                <span className="inline-flex rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-800">
+                                  Pronto para baixar
+                                </span>
+                              )
+                            ) : l.motivo === "COBERTO_ORIGEM" ? (
+                              <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                                Já veio no produto origem
+                              </span>
+                            ) : (
+                              <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
+                                É o próprio produto origem
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
-            {preview.aBaixar.length === 0 && preview.linhas.length > 0 && (
-              <p className="mt-2 text-sm text-slate-600">
-                Nada a baixar do estoque — todos os componentes de B já estão em
-                A.
-              </p>
-            )}
+
             {!preview.okSaldo && (
-              <p className="mt-2 text-sm text-red-600">
-                Saldo insuficiente:{" "}
+              <div className="border-t border-red-100 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+                Não é possível transformar: falta estoque de{" "}
                 {preview.faltantes
-                  .map((f) => `${f.codigo} (−${f.faltante})`)
+                  .map((f) => `${f.codigo} (${f.faltante})`)
                   .join(", ")}
-              </p>
+                .
+              </div>
             )}
           </div>
         )}

@@ -241,19 +241,16 @@ export async function previewTransformacao(opts: {
   const avisos: string[] = [];
   if (bomOrigemVazia) {
     avisos.push(
-      `A árvore de ${origem.codigo} está vazia (ou só fantasmas). O diff não cobre nenhum componente — a baixa usa a árvore inteira de ${destino.codigo}. Cadastre a BOM de A se componentes já estiverem “dentro” do acabado.`
+      `O produto ${origem.codigo} está sem árvore cadastrada. Todas as peças de ${destino.codigo} serão pedidas ao estoque. Se alguma peça já estiver no acabado, cadastre a árvore do produto origem.`
     );
   }
   if (sobrasOrigem.length > 0) {
     avisos.push(
-      `Componentes só em ${origem.codigo} (${sobrasOrigem
+      `Peças só em ${origem.codigo} (${sobrasOrigem
         .map((s) => s.codigo)
-        .join(", ")}) saem com A e não voltam ao estoque.`
+        .join(", ")}) saem com o produto e não voltam ao estoque.`
     );
   }
-  avisos.push(
-    "O diff compara só 1 nível da árvore (não explode kits em peças internas)."
-  );
 
   return {
     produtoOrigem: origem,
