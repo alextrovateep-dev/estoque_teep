@@ -12,8 +12,8 @@ import { assertOperadorPodeFilial } from "../lib/filialScope";
 import {
   criarTransformacao,
   listarTransformacoes,
+  previewTransformacao,
 } from "../services/transformacaoService";
-import { calcularSimulacaoArvore } from "../services/simulacaoArvoreService";
 
 export const transformacoesRouter = Router();
 
@@ -43,7 +43,7 @@ transformacoesRouter.get(
   }
 );
 
-/** Preview: componentes da BOM do destino que serão baixados (exclui origem se estiver na árvore). */
+/** Preview: diff BOM A→B — exige origem e destino. */
 transformacoesRouter.get(
   "/preview",
   requirePermissao("lancamentos"),
@@ -52,31 +52,20 @@ transformacoesRouter.get(
       const filialId = String(req.query.filialId || "");
       const produtoOrigemId = String(req.query.produtoOrigemId || "");
       const produtoDestinoId = String(req.query.produtoDestinoId || "");
-      if (!filialId || !produtoDestinoId) {
-        throw new AppError(400, "filialId e produtoDestinoId são obrigatórios");
+      if (!filialId || !produtoOrigemId || !produtoDestinoId) {
+        throw new AppError(
+          400,
+          "filialId, produtoOrigemId e produtoDestinoId são obrigatórios"
+        );
       }
       assertOperadorPodeFilial(req.user!, filialId);
-      const sim = await calcularSimulacaoArvore({
-        produtoId: produtoDestinoId,
-        filialId,
-        quantidade: 1,
-      });
-      const linhas = sim.linhas.filter(
-        (l) =>
-          !l.fantasma &&
-          (!produtoOrigemId || l.produtoFilhoId !== produtoOrigemId)
+      res.json(
+        await previewTransformacao({
+          filialId,
+          produtoDestinoId,
+          produtoOrigemId,
+        })
       );
-      const faltantes = linhas.filter((l) => l.faltante > 0);
-      res.json({
-        produto: sim.produto,
-        filial: sim.filial,
-        linhas,
-        okSaldo: faltantes.length === 0,
-        faltantes: faltantes.map((l) => ({
-          codigo: l.codigo,
-          faltante: l.faltante,
-        })),
-      });
     } catch (e) {
       next(e);
     }

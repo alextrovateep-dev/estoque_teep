@@ -1,6 +1,6 @@
 # Transformação de produto (A → B)
 
-**Status:** implementado (MVP).  
+**Status:** implementado.  
 **Tela:** Operações → **Transformação** (`/lancamentos/transformacao`).  
 **Permissão:** `lancamentos`.
 
@@ -11,9 +11,11 @@
 Um acabado **A** já está no estoque com número de série. Ele é transformado em outro produto **B** da linha:
 
 1. A sai do estoque; a série de A fica **SAIDO** (morre).
-2. Componentes da **árvore de B** (1 nível, não-fantasma) são baixados no mesmo estoque — **exceto** o próprio A, se A estiver na BOM de B.
+2. Componentes baixados = **diff** das árvores 1 nível: o que B precisa **além** do que A já carrega (`max(0, qtyB − qtyA)` por filho).
 3. B entra no estoque; nasce **série nova** de B.
 4. O vínculo A↔B fica em `produto_transformacoes` (histórico obrigatório).
+
+Exemplo: TMP-1144-W (árvore: `KIT-MP-ESP32-W`) → TMP-1144-WE (árvore: `KIT-MP-ESP32-W` + `MP-REDE-W5500`) → baixa só `MP-REDE-W5500`.
 
 Não reaproveita a montagem por transferência: aquela nasce o pai sem consumir série de acabado.
 
@@ -24,7 +26,11 @@ Não reaproveita a montagem por transferência: aquela nasce o pai sem consumir 
 - Origem e destino ativos, **diferentes**, ambos com `controlaSerie`.
 - Série de A deve estar `EM_ESTOQUE` na filial escolhida (não em trânsito).
 - B precisa ter BOM cadastrada.
-- Filho com série na BOM de B (não-fantasma) continua **bloqueado** (igual montagem).
+- Diff 1 nível, não-fantasma. Fantasma em A **não cobre** necessidade de B.
+- Se o próprio A aparecer como filho na BOM de B, essa linha é excluída (A já está saindo como acabado).
+- Se a BOM de A estiver vazia, o preview **avisa** e a baixa usa a árvore inteira de B (nada coberto).
+- Componentes só em A (e não em B) saem com A e **não voltam** ao estoque.
+- Filho com série na BOM de B (não-fantasma) continua **bloqueado** no delta (igual montagem).
 - Série de B: informada ou **alocada** automaticamente (`/series/alocar`).
 - **Sem estorno automático** no MVP.
 
@@ -41,7 +47,7 @@ Operação **atômica** na filial escolhida (ex.: Produção). Se o fluxo físic
 | Método | Path |
 |--------|------|
 | `GET` | `/transformacoes` — lista (filialId, q, page) |
-| `GET` | `/transformacoes/preview?filialId=&produtoDestinoId=&produtoOrigemId=` |
+| `GET` | `/transformacoes/preview?filialId=&produtoOrigemId=&produtoDestinoId=` — diff + saldos + avisos |
 | `POST` | `/transformacoes` — body: filialId, produtoOrigemId, numeroSerieOrigem, produtoDestinoId, numeroSerieDestino?, observacao? |
 | `GET` | `/series/:id/historico` — inclui `transformacoes` (originadoDe / transformadoEm) |
 
@@ -55,7 +61,7 @@ Tipos de sistema (seed / boot):
 
 ## Serviços
 
-- `apps/api/src/services/transformacaoService.ts`
+- `apps/api/src/services/transformacaoService.ts` (`diffBomTransformacao`, `previewTransformacao`, `criarTransformacao`)
 - Reuso: `montagemService`, `serieService`, `geracaoSerieService`
 
 ---
@@ -66,3 +72,4 @@ Tipos de sistema (seed / boot):
 - TeepAI
 - Manter o mesmo N/S mudando só o código do produto
 - Explosão multinível na baixa
+- Seleção manual de quais linhas baixar (override do diff)

@@ -7,11 +7,15 @@ import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
 import { prisma } from "../lib/prisma";
 import { assertOperadorPodeFilial, operadorFilialIds } from "../lib/filialScope";
-import { aplicarSaldo } from "./estoqueService";
+import {
+  aplicarSaldo,
+  qtyReservadaTransferenciaPendente,
+} from "./estoqueService";
 import {
   assertSaldoComponentes,
   carregarBomProduto,
   linhasConsumoMontagem,
+  type BomLinha,
 } from "./montagemService";
 import { alocarSeriesProduto } from "./geracaoSerieService";
 import {
@@ -36,6 +40,235 @@ async function tipoPorNome(nome: string) {
   return t;
 }
 
+/** Linha do diff A→B (1 nível, não-fantasma). */
+export type DiffBomDetalhe = {
+  produtoFilhoId: string;
+  codigo: string;
+  descricao: string;
+  qtdDestino: number;
+  qtdOrigem: number;
+  qtdBaixar: number;
+  /** BAIXAR = delta > 0; COBERTO = já vem de A; EXCLUIDO = o próprio acabado A na BOM de B */
+  motivo: "BAIXAR" | "COBERTO_ORIGEM" | "EXCLUIDO_ORIGEM_ACABADO";
+};
+
+/**
+ * Diff de árvores 1 nível: baixa só o que B precisa além do que A já carrega.
+ * Fantasma não cobre nem gera baixa. O SKU do acabado A na BOM de B nunca é baixado.
+ */
+export function diffBomTransformacao(
+  bomOrigem: BomLinha[],
+  bomDestino: BomLinha[],
+  produtoOrigemId: string
+): { detalhe: DiffBomDetalhe[]; bomDelta: BomLinha[] } {
+  const qtdOrigemPorFilho = new Map<string, number>();
+  for (const l of bomOrigem) {
+    if (l.fantasma) continue;
+    qtdOrigemPorFilho.set(
+      l.produtoFilhoId,
+      (qtdOrigemPorFilho.get(l.produtoFilhoId) || 0) + l.quantidade
+    );
+  }
+
+  const detalhe: DiffBomDetalhe[] = [];
+  const bomDelta: BomLinha[] = [];
+
+  for (const l of bomDestino) {
+    if (l.fantasma) continue;
+
+    if (l.produtoFilhoId === produtoOrigemId) {
+      detalhe.push({
+        produtoFilhoId: l.produtoFilhoId,
+        codigo: l.filho.codigo,
+        descricao: l.filho.descricao,
+        qtdDestino: l.quantidade,
+        qtdOrigem: 0,
+        qtdBaixar: 0,
+        motivo: "EXCLUIDO_ORIGEM_ACABADO",
+      });
+      continue;
+    }
+
+    const qtdOrigem = qtdOrigemPorFilho.get(l.produtoFilhoId) || 0;
+    const qtdBaixar = Math.max(0, l.quantidade - qtdOrigem);
+    const motivo: DiffBomDetalhe["motivo"] =
+      qtdBaixar > 1e-9 ? "BAIXAR" : "COBERTO_ORIGEM";
+
+    detalhe.push({
+      produtoFilhoId: l.produtoFilhoId,
+      codigo: l.filho.codigo,
+      descricao: l.filho.descricao,
+      qtdDestino: l.quantidade,
+      qtdOrigem,
+      qtdBaixar,
+      motivo,
+    });
+
+    if (qtdBaixar > 1e-9) {
+      bomDelta.push({
+        ...l,
+        quantidade: qtdBaixar,
+      });
+    }
+  }
+
+  return { detalhe, bomDelta };
+}
+
+export type PreviewTransformacao = {
+  produtoOrigem: { id: string; codigo: string; descricao: string };
+  produtoDestino: { id: string; codigo: string; descricao: string };
+  filial: { id: string; sigla: string; nome: string };
+  /** Todas as linhas relevantes (baixar + cobertas + excluídas). */
+  linhas: Array<
+    DiffBomDetalhe & {
+      saldoDisponivel: number;
+      faltante: number;
+    }
+  >;
+  /** Só o que sai do estoque. */
+  aBaixar: Array<
+    DiffBomDetalhe & {
+      saldoDisponivel: number;
+      faltante: number;
+    }
+  >;
+  /** Componentes em A que B não usa — saem com A, não voltam ao estoque. */
+  sobrasOrigem: Array<{
+    produtoFilhoId: string;
+    codigo: string;
+    descricao: string;
+    quantidade: number;
+  }>;
+  bomOrigemVazia: boolean;
+  avisos: string[];
+  okSaldo: boolean;
+  faltantes: { codigo: string; faltante: number }[];
+};
+
+export async function previewTransformacao(opts: {
+  filialId: string;
+  produtoOrigemId: string;
+  produtoDestinoId: string;
+}): Promise<PreviewTransformacao> {
+  const filial = await prisma.filial.findFirst({
+    where: { id: opts.filialId, ativo: true },
+    select: { id: true, sigla: true, nome: true },
+  });
+  if (!filial) throw new AppError(400, "Estoque inválido ou inativo");
+
+  if (!opts.produtoOrigemId?.trim()) {
+    throw new AppError(400, "produtoOrigemId é obrigatório para o diff");
+  }
+
+  const [origem, destino] = await Promise.all([
+    prisma.produto.findFirst({
+      where: { id: opts.produtoOrigemId, ativo: true },
+      select: { id: true, codigo: true, descricao: true },
+    }),
+    prisma.produto.findFirst({
+      where: { id: opts.produtoDestinoId, ativo: true },
+      select: { id: true, codigo: true, descricao: true },
+    }),
+  ]);
+  if (!origem) throw new AppError(400, "Produto origem inválido ou inativo");
+  if (!destino) throw new AppError(400, "Produto destino inválido ou inativo");
+
+  const bomDestino = await carregarBomProduto(prisma, destino.id);
+  if (!bomDestino.length) {
+    throw new AppError(
+      400,
+      `Produto ${destino.codigo} não tem árvore de componentes. Cadastre a BOM antes de transformar.`
+    );
+  }
+
+  const bomOrigem = await carregarBomProduto(prisma, origem.id);
+  const bomOrigemVazia = bomOrigem.filter((l) => !l.fantasma).length === 0;
+
+  const { detalhe } = diffBomTransformacao(bomOrigem, bomDestino, origem.id);
+
+  const filhosDestino = new Set(
+    bomDestino.filter((l) => !l.fantasma).map((l) => l.produtoFilhoId)
+  );
+  const sobrasOrigem = bomOrigem
+    .filter(
+      (l) =>
+        !l.fantasma &&
+        l.produtoFilhoId !== destino.id &&
+        !filhosDestino.has(l.produtoFilhoId)
+    )
+    .map((l) => ({
+      produtoFilhoId: l.produtoFilhoId,
+      codigo: l.filho.codigo,
+      descricao: l.filho.descricao,
+      quantidade: l.quantidade,
+    }));
+
+  const linhas = [];
+  for (const d of detalhe) {
+    if (d.motivo !== "BAIXAR") {
+      linhas.push({
+        ...d,
+        saldoDisponivel: 0,
+        faltante: 0,
+      });
+      continue;
+    }
+    const est = await prisma.estoque.findUnique({
+      where: {
+        uniq_produto_filial: {
+          produtoId: d.produtoFilhoId,
+          filialId: filial.id,
+        },
+      },
+    });
+    const bruto = est ? Number(est.saldoAtual) : 0;
+    const reservada = await qtyReservadaTransferenciaPendente(
+      prisma,
+      d.produtoFilhoId,
+      filial.id
+    );
+    const saldoDisponivel = Math.max(0, bruto - reservada);
+    const faltante = Math.max(0, d.qtdBaixar - saldoDisponivel);
+    linhas.push({ ...d, saldoDisponivel, faltante });
+  }
+
+  const aBaixar = linhas.filter((l) => l.motivo === "BAIXAR");
+  const faltantes = aBaixar
+    .filter((l) => l.faltante > 0)
+    .map((l) => ({ codigo: l.codigo, faltante: l.faltante }));
+
+  const avisos: string[] = [];
+  if (bomOrigemVazia) {
+    avisos.push(
+      `A árvore de ${origem.codigo} está vazia (ou só fantasmas). O diff não cobre nenhum componente — a baixa usa a árvore inteira de ${destino.codigo}. Cadastre a BOM de A se componentes já estiverem “dentro” do acabado.`
+    );
+  }
+  if (sobrasOrigem.length > 0) {
+    avisos.push(
+      `Componentes só em ${origem.codigo} (${sobrasOrigem
+        .map((s) => s.codigo)
+        .join(", ")}) saem com A e não voltam ao estoque.`
+    );
+  }
+  avisos.push(
+    "O diff compara só 1 nível da árvore (não explode kits em peças internas)."
+  );
+
+  return {
+    produtoOrigem: origem,
+    produtoDestino: destino,
+    filial,
+    linhas,
+    aBaixar,
+    sobrasOrigem,
+    bomOrigemVazia,
+    avisos,
+    okSaldo: faltantes.length === 0,
+    faltantes,
+  };
+}
+
 export type CriarTransformacaoInput = {
   filialId: string;
   produtoOrigemId: string;
@@ -47,7 +280,7 @@ export type CriarTransformacaoInput = {
 
 /**
  * Acabado A (N/S) morre → produto B nasce (N/S novo).
- * Baixa componentes da árvore de B (exceto o próprio A se estiver na BOM).
+ * Baixa só o delta da árvore B − A (componentes que B precisa além dos de A).
  * Histórico em produto_transformacoes.
  */
 export async function criarTransformacao(
@@ -149,16 +382,21 @@ export async function criarTransformacao(
       // Usa o N/S canônico cadastrado (evita mismatch de caixa no unique)
       const serieOrigemCanon = unidadeOrigem.numeroSerie;
 
-      const bom = await carregarBomProduto(tx, destino.id);
-      if (!bom.length) {
+      const bomDestino = await carregarBomProduto(tx, destino.id);
+      if (!bomDestino.length) {
         throw new AppError(
           400,
           `Produto ${destino.codigo} não tem árvore de componentes. Cadastre a BOM antes de transformar.`
         );
       }
-      const bomSemOrigem = bom.filter((l) => l.produtoFilhoId !== origem.id);
+      const bomOrigem = await carregarBomProduto(tx, origem.id);
+      const { bomDelta } = diffBomTransformacao(
+        bomOrigem,
+        bomDestino,
+        origem.id
+      );
       const consumo =
-        bomSemOrigem.length > 0 ? linhasConsumoMontagem(bomSemOrigem, 1) : [];
+        bomDelta.length > 0 ? linhasConsumoMontagem(bomDelta, 1) : [];
 
       if (consumo.length > 0) {
         await assertSaldoComponentes(tx, {

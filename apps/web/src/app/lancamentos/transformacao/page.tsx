@@ -22,9 +22,12 @@ type PreviewLinha = {
   produtoFilhoId: string;
   codigo: string;
   descricao: string;
-  qtdNecessaria: number;
+  qtdDestino: number;
+  qtdOrigem: number;
+  qtdBaixar: number;
   saldoDisponivel: number;
   faltante: number;
+  motivo: "BAIXAR" | "COBERTO_ORIGEM" | "EXCLUIDO_ORIGEM_ACABADO";
 };
 type TransformacaoRow = {
   id: string;
@@ -51,6 +54,10 @@ export default function TransformacaoPage() {
   const [observacao, setObservacao] = useState("");
   const [preview, setPreview] = useState<{
     linhas: PreviewLinha[];
+    aBaixar: PreviewLinha[];
+    sobrasOrigem: Array<{ codigo: string; quantidade: number }>;
+    bomOrigemVazia: boolean;
+    avisos: string[];
     okSaldo: boolean;
     faltantes: { codigo: string; faltante: number }[];
   } | null>(null);
@@ -114,17 +121,25 @@ export default function TransformacaoPage() {
   }, [serieQ, produtoOrigemId, filialId]);
 
   useEffect(() => {
-    if (!filialId || !produtoDestinoId) {
+    if (!filialId || !produtoOrigemId || !produtoDestinoId) {
+      setPreview(null);
+      return;
+    }
+    if (produtoOrigemId === produtoDestinoId) {
       setPreview(null);
       return;
     }
     const qs = new URLSearchParams({
       filialId,
+      produtoOrigemId,
       produtoDestinoId,
     });
-    if (produtoOrigemId) qs.set("produtoOrigemId", produtoOrigemId);
     api<{
       linhas: PreviewLinha[];
+      aBaixar: PreviewLinha[];
+      sobrasOrigem: Array<{ codigo: string; quantidade: number }>;
+      bomOrigemVazia: boolean;
+      avisos: string[];
       okSaldo: boolean;
       faltantes: { codigo: string; faltante: number }[];
     }>(`/transformacoes/preview?${qs}`)
@@ -183,8 +198,10 @@ export default function TransformacaoPage() {
           Transformação de produto
         </h1>
         <p className="mt-1 text-sm text-slate-500">
-          Acabado A (N/S) sai do estoque e nasce o produto B com N/S novo. A
-          árvore de B define os componentes a baixar. Sem estorno automático.
+          Acabado A (N/S) sai do estoque e nasce o produto B com N/S novo. O
+          sistema baixa só o delta da árvore 1 nível (o que B precisa e A ainda
+          não traz). Componentes só em A não voltam ao estoque. Sem estorno
+          automático.
         </p>
         <p className="mt-1 text-xs text-slate-400">
           <Link href="/lancamentos/novo" className="text-brand hover:underline">
@@ -318,24 +335,50 @@ export default function TransformacaoPage() {
           />
         </label>
 
+        {filialId && produtoDestinoId && !produtoOrigemId && (
+          <p className="rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-sm text-slate-600">
+            Selecione o produto origem (A) para calcular o diff de componentes.
+          </p>
+        )}
+
         {preview && (
           <div className="rounded-lg border border-slate-100 bg-slate-50/80 p-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-              Componentes a baixar (árvore de {destino?.codigo || "B"})
+              Diff de componentes
+              {origem && destino
+                ? ` (${origem.codigo} → ${destino.codigo})`
+                : ""}
             </p>
+            {preview.avisos.length > 0 && (
+              <ul className="mt-2 space-y-1">
+                {preview.avisos.map((a, i) => (
+                  <li
+                    key={i}
+                    className={`text-xs leading-snug ${
+                      preview.bomOrigemVazia && i === 0
+                        ? "font-medium text-amber-800"
+                        : "text-slate-500"
+                    }`}
+                  >
+                    {a}
+                  </li>
+                ))}
+              </ul>
+            )}
             {preview.linhas.length === 0 ? (
               <p className="mt-2 text-sm text-slate-600">
-                Nenhum componente além da origem (ou só fantasmas). Só A será
-                baixado.
+                Nenhum componente na árvore do destino (ou só fantasmas).
               </p>
             ) : (
               <table className="mt-2 w-full text-xs">
                 <thead>
                   <tr className="text-left text-slate-400">
                     <th className="py-1">Código</th>
-                    <th className="py-1 text-right">Precisa</th>
+                    <th className="py-1 text-right">Em A</th>
+                    <th className="py-1 text-right">Em B</th>
+                    <th className="py-1 text-right">Baixar</th>
                     <th className="py-1 text-right">Disp.</th>
-                    <th className="py-1 text-right">Falta</th>
+                    <th className="py-1">Situação</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -343,22 +386,46 @@ export default function TransformacaoPage() {
                     <tr key={l.produtoFilhoId} className="border-t border-slate-100">
                       <td className="py-1.5 font-mono">{l.codigo}</td>
                       <td className="py-1.5 text-right tabular-nums">
-                        {l.qtdNecessaria}
+                        {l.motivo === "EXCLUIDO_ORIGEM_ACABADO" ? "—" : l.qtdOrigem}
                       </td>
                       <td className="py-1.5 text-right tabular-nums">
-                        {l.saldoDisponivel}
+                        {l.qtdDestino}
                       </td>
                       <td
                         className={`py-1.5 text-right tabular-nums ${
-                          l.faltante > 0 ? "font-semibold text-red-600" : ""
+                          l.qtdBaixar > 0 ? "font-semibold text-slate-900" : ""
                         }`}
                       >
-                        {l.faltante}
+                        {l.qtdBaixar}
+                      </td>
+                      <td className="py-1.5 text-right tabular-nums">
+                        {l.motivo === "BAIXAR" ? l.saldoDisponivel : "—"}
+                      </td>
+                      <td className="py-1.5">
+                        {l.motivo === "BAIXAR" ? (
+                          l.faltante > 0 ? (
+                            <span className="font-medium text-red-600">
+                              Falta {l.faltante}
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700">A baixar</span>
+                          )
+                        ) : l.motivo === "COBERTO_ORIGEM" ? (
+                          <span className="text-slate-500">Já em A</span>
+                        ) : (
+                          <span className="text-slate-500">Origem (A)</span>
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+            )}
+            {preview.aBaixar.length === 0 && preview.linhas.length > 0 && (
+              <p className="mt-2 text-sm text-slate-600">
+                Nada a baixar do estoque — todos os componentes de B já estão em
+                A.
+              </p>
             )}
             {!preview.okSaldo && (
               <p className="mt-2 text-sm text-red-600">
