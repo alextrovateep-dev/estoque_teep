@@ -30,7 +30,7 @@ type Mov = {
   notaFiscalArquivo?: string | null;
   transferenciaNotaFiscalNumero?: string | null;
   produto: { codigo: string; descricao: string; unidade?: string };
-  tipo: { nome: string };
+  tipo: { codigo: string; nome: string };
   filial: { sigla: string };
   filialDestino?: { sigla: string } | null;
   cliente?: {
@@ -68,6 +68,7 @@ type Mov = {
 type Produto = { id: string; codigo: string; descricao: string };
 type Tipo = {
   id: string;
+  codigo: string;
   nome: string;
   operacao: string;
   sistema?: boolean;
@@ -250,7 +251,9 @@ export function MovimentacoesRelatorioTab() {
 
   const tipoLabel = useMemo(() => {
     if (!tipoId) return "";
-    return tipos.find((t) => t.id === tipoId)?.nome ?? "";
+    const t = tipos.find((x) => x.id === tipoId);
+    if (!t) return "";
+    return t.codigo ? `${t.codigo} — ${t.nome}` : t.nome;
   }, [tipos, tipoId]);
 
   const parceirosFiltrados = useMemo(() => {
@@ -758,7 +761,7 @@ export function MovimentacoesRelatorioTab() {
             {operacaoFiltro ? (
               tiposVisiveis.map((t) => (
                 <option key={t.id} value={t.id}>
-                  {t.nome}
+                  {t.codigo ? `${t.codigo} — ${t.nome}` : t.nome}
                 </option>
               ))
             ) : (
@@ -767,7 +770,7 @@ export function MovimentacoesRelatorioTab() {
                   <optgroup label="Entradas">
                     {tiposPorOperacao.ENTRADA.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.nome}
+                        {t.codigo ? `${t.codigo} — ${t.nome}` : t.nome}
                       </option>
                     ))}
                   </optgroup>
@@ -776,7 +779,7 @@ export function MovimentacoesRelatorioTab() {
                   <optgroup label="Saídas">
                     {tiposPorOperacao.SAIDA.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.nome}
+                        {t.codigo ? `${t.codigo} — ${t.nome}` : t.nome}
                       </option>
                     ))}
                   </optgroup>
@@ -785,7 +788,7 @@ export function MovimentacoesRelatorioTab() {
                   <optgroup label="Transferências">
                     {tiposPorOperacao.TRANSFERENCIA.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.nome}
+                        {t.codigo ? `${t.codigo} — ${t.nome}` : t.nome}
                       </option>
                     ))}
                   </optgroup>
@@ -1217,6 +1220,14 @@ export function MovimentacoesRelatorioTab() {
                         </td>
                         <td className="max-w-[18rem] px-3 py-2 align-middle">
                           <div className="truncate font-medium text-slate-900">
+                            {m.tipo.codigo ? (
+                              <>
+                                <span className="font-mono text-[11px] text-slate-500">
+                                  {m.tipo.codigo}
+                                </span>
+                                <span className="text-slate-400"> — </span>
+                              </>
+                            ) : null}
                             {m.tipo.nome}
                           </div>
                           <div className="truncate text-xs text-slate-600">

@@ -23,7 +23,7 @@ type Movimentacao = {
   notaFiscalNumero?: string | null;
   notaFiscalArquivo?: string | null;
   produto: { codigo: string; descricao: string; unidade?: string | null };
-  tipo: { nome: string };
+  tipo: { codigo: string; nome: string };
   filial: { sigla: string; nome: string };
   filialDestino?: { sigla: string; nome: string } | null;
   cliente?: { nome: string; tipo: string; documento?: string | null } | null;
@@ -145,7 +145,14 @@ export default function MovimentacaoDetalhePage() {
             </h2>
             <div className="grid gap-1 sm:grid-cols-2">
               <p>
-                <span className="text-slate-500">Tipo:</span> {data.tipo.nome}
+                <span className="text-slate-500">Tipo:</span>{" "}
+                {data.tipo.codigo ? (
+                  <>
+                    <span className="font-mono text-xs">{data.tipo.codigo}</span>
+                    {" — "}
+                  </>
+                ) : null}
+                {data.tipo.nome}
               </p>
               <p>
                 <span className="text-slate-500">Data:</span>{" "}

@@ -31,6 +31,7 @@ export type MovimentacaoExportRow = {
   dataMovimento: string;
   operacao: string;
   status: string;
+  tipoCodigo: string;
   tipoNome: string;
   produtoCodigo: string;
   produtoDescricao: string;
@@ -249,7 +250,7 @@ export async function carregarMovimentacoesExport(
     where,
     include: {
       produto: { select: { codigo: true, descricao: true } },
-      tipo: { select: { nome: true } },
+      tipo: { select: { codigo: true, nome: true } },
       filial: { select: { sigla: true } },
       filialDestino: { select: { sigla: true } },
       cliente: { select: { nome: true, tipo: true, documento: true } },
@@ -263,6 +264,7 @@ export async function carregarMovimentacoesExport(
     dataMovimento: m.dataMovimento.toISOString(),
     operacao: m.operacao,
     status: m.status,
+    tipoCodigo: m.tipo.codigo,
     tipoNome: m.tipo.nome,
     produtoCodigo: m.produto.codigo,
     produtoDescricao: m.produto.descricao,
@@ -309,7 +311,7 @@ function buildMovimentacoesHtml(
       return `<tr>
         <td>${escapeHtml(fmtDataIso(r.dataMovimento))}</td>
         <td><strong>${escapeHtml(r.operacao)}</strong><br/><span class="muted">${escapeHtml(r.status)}</span></td>
-        <td>${escapeHtml(r.tipoNome)}<br/><span class="muted">${escapeHtml(r.produtoCodigo)} ${escapeHtml(r.produtoDescricao)}</span></td>
+        <td>${escapeHtml(r.tipoCodigo)} — ${escapeHtml(r.tipoNome)}<br/><span class="muted">${escapeHtml(r.produtoCodigo)} ${escapeHtml(r.produtoDescricao)}</span></td>
         <td class="num">${escapeHtml(qtyBr(r.quantidade))}</td>
         <td>${escapeHtml(r.filial)}</td>
         <td>${parceiro}</td>
@@ -452,6 +454,7 @@ export async function exportarMovimentacoesExcel(
     { header: "Data", key: "data", width: 18 },
     { header: "Operação", key: "operacao", width: 12 },
     { header: "Status", key: "status", width: 12 },
+    { header: "Cód. tipo", key: "tipoCodigo", width: 14 },
     { header: "Tipo", key: "tipo", width: 22 },
     { header: "Código", key: "codigo", width: 14 },
     { header: "Produto", key: "produto", width: 32 },
@@ -475,6 +478,7 @@ export async function exportarMovimentacoesExcel(
       data: fmtDataIso(r.dataMovimento),
       operacao: r.operacao,
       status: r.status,
+      tipoCodigo: r.tipoCodigo,
       tipo: r.tipoNome,
       codigo: r.produtoCodigo,
       produto: r.produtoDescricao,
