@@ -9,6 +9,8 @@ import {
   listarNotificacoes,
   marcarLida,
   marcarTodasLidas,
+  excluirNotificacao,
+  excluirTodasNotificacoes,
 } from "../services/NotificationService";
 import {
   EMAIL_TYPES,
@@ -65,6 +67,27 @@ notificacoesRouter.post(
     }
   }
 );
+
+notificacoesRouter.post(
+  "/excluir-todas",
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await excluirTodasNotificacoes(req.user!.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+notificacoesRouter.delete("/:id", async (req: AuthedRequest, res, next) => {
+  try {
+    const r = await excluirNotificacao(req.user!.id, req.params.id);
+    if (!r) throw new AppError(404, "Notificação não encontrada");
+    res.json(r);
+  } catch (e) {
+    next(e);
+  }
+});
 
 /** Admin: catálogo + preview/teste/edição de e-mail (D39) */
 export const emailAdminRouter = Router();

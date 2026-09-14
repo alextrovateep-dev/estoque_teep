@@ -266,7 +266,7 @@ export async function processarAlertasRetornoVencidos(): Promise<{
           .filter(Boolean)
           .join("\n"),
         "Confira se o equipamento já voltou ou providencie o retorno.",
-        `Ver movimento: ${appUrl}${href}`,
+        `Abrir movimentação: ${appUrl}${href}`,
       ]
         .filter(Boolean)
         .join("\n\n");

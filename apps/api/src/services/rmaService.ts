@@ -2606,11 +2606,6 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
     throw new AppError(400, "Nenhum destinatário neste RMA");
   }
 
-  const appUrl =
-    process.env.FRONTEND_URL ||
-    process.env.CORS_ORIGIN ||
-    "http://localhost:3000";
-
   type LinhaResumo = { key: string; texto: string };
   const linhas: LinhaResumo[] = [];
 
@@ -2627,7 +2622,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
         key: `diag:${item.id}`,
         texto: `${prod} — diagnóstico: ${resumo}${
           diag.resumoProblema.trim().length > 160 ? "…" : ""
-        } (ver em ${appUrl}/rma/${id})`,
+        }`,
       });
       continue;
     }
@@ -2637,7 +2632,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
     if (recv) {
       linhas.push({
         key: `chk:${item.id}`,
-        texto: `${prod} — checklist de inspeção concluído (ver em ${appUrl}/rma/${id})`,
+        texto: `${prod} — checklist de inspeção concluído`,
       });
     }
   }
@@ -2664,7 +2659,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
       : "processo";
     linhas.push({
       key: `arq:${anexo.id}`,
-      texto: `${prod} — arquivo: ${anexo.label || "Laudo"} (ver em ${appUrl}/rma/${id})`,
+      texto: `${prod} — arquivo: ${anexo.label || "Laudo"}`,
     });
   }
 

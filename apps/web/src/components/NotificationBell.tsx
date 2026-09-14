@@ -153,6 +153,43 @@ export function NotificationBell() {
     }
   }
 
+  async function excluirUma(id: string) {
+    const alvo = items.find((n) => n.id === id);
+    try {
+      await api(`/notificacoes/${id}`, { method: "DELETE" });
+      setItems((prev) => prev.filter((n) => n.id !== id));
+      if (alvo && !alvo.lida) {
+        setNaoLidas((c) => Math.max(0, c - 1));
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function excluirTodas() {
+    if (items.length === 0) return;
+    if (
+      !window.confirm(
+        "Excluir todas as notificações? Esta ação não pode ser desfeita."
+      )
+    ) {
+      return;
+    }
+    setLoading(true);
+    try {
+      await api("/notificacoes/excluir-todas", {
+        method: "POST",
+        body: "{}",
+      });
+      setItems([]);
+      setNaoLidas(0);
+    } catch {
+      /* ignore */
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function abrirNotificacao(n: Notificacao) {
     const disp = formatNotificacaoDisplay(n);
     if (!n.lida) await marcarUma(n.id);
@@ -206,7 +243,7 @@ export function NotificationBell() {
 
         {open && (
           <div className="absolute right-0 z-50 mt-2 w-[min(100vw-1.5rem,24rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/80 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50/80 px-3 py-2.5">
               <div>
                 <span className="text-sm font-semibold text-slate-900">
                   Notificações
@@ -217,14 +254,24 @@ export function NotificationBell() {
                   </span>
                 )}
               </div>
-              <button
-                type="button"
-                disabled={loading || naoLidas === 0}
-                onClick={() => void marcarTodas()}
-                className="text-xs font-medium text-brand hover:underline disabled:opacity-40"
-              >
-                Marcar todas como lidas
-              </button>
+              <div className="flex shrink-0 flex-col items-end gap-0.5">
+                <button
+                  type="button"
+                  disabled={loading || naoLidas === 0}
+                  onClick={() => void marcarTodas()}
+                  className="text-xs font-medium text-brand hover:underline disabled:opacity-40"
+                >
+                  Marcar todas como lidas
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || items.length === 0}
+                  onClick={() => void excluirTodas()}
+                  className="text-xs font-medium text-slate-500 hover:text-red-600 hover:underline disabled:opacity-40"
+                >
+                  Excluir todas
+                </button>
+              </div>
             </div>
             <ul className="max-h-[28rem] overflow-y-auto">
               {items.length === 0 && (
@@ -314,6 +361,24 @@ export function NotificationBell() {
                               Lida
                             </span>
                           )}
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            className="text-[11px] text-slate-500 underline hover:text-red-600"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void excluirUma(n.id);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void excluirUma(n.id);
+                              }
+                            }}
+                          >
+                            Excluir
+                          </span>
                         </div>
                       </div>
                     </button>

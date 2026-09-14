@@ -281,3 +281,19 @@ export async function marcarTodasLidas(usuarioId: string) {
   });
   return { atualizadas: r.count };
 }
+
+export async function excluirNotificacao(usuarioId: string, id: string) {
+  const n = await prisma.notificacao.findFirst({
+    where: { id, usuarioId },
+  });
+  if (!n) return null;
+  await prisma.notificacao.delete({ where: { id } });
+  return { ok: true as const, id, eraNaoLida: !n.lida };
+}
+
+export async function excluirTodasNotificacoes(usuarioId: string) {
+  const r = await prisma.notificacao.deleteMany({
+    where: { usuarioId },
+  });
+  return { removidas: r.count };
+}

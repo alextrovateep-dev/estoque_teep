@@ -109,7 +109,7 @@ export function notificarLimiaresEstoque(opts: {
       ]
         .filter(Boolean)
         .join("\n"),
-      `Confira no sistema: ${link}`,
+      `Abrir dashboard: ${link}`,
     ].filter((b) => b && String(b).trim());
     emitirAlerta("ESTOQUE_MINIMO", {
       titulo: `Saldo baixo · ${opts.produtoCodigo}`,
@@ -136,7 +136,7 @@ export function notificarLimiaresEstoque(opts: {
       ]
         .filter(Boolean)
         .join("\n"),
-      `Confira no sistema: ${link}`,
+      `Abrir dashboard: ${link}`,
     ].filter((b) => b && String(b).trim());
     emitirAlerta("ESTOQUE_MAXIMO", {
       titulo: `Saldo alto · ${opts.produtoCodigo}`,
@@ -195,7 +195,7 @@ export function notificarPrecoAjustado(opts: {
       `O preço de ${opts.produtoCodigo} — ${opts.produtoDescricao} foi alterado.`,
       `De ${fmtMoneyBr(opts.precoAnterior)} para ${fmtMoneyBr(opts.precoNovo)}${variacao}.`,
       quem,
-      `Ver produto: ${link}`,
+      `Cadastro do produto: ${link}`,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -221,7 +221,7 @@ export function notificarDivergenciaTransferencia(opts: {
       `A conferência da transferência ${short} encontrou diferença entre o enviado e o recebido.`,
       `Rota: ${opts.origemNome} → ${opts.destinoNome}.`,
       opts.resumoItens.trim() || null,
-      `Revise em: ${appBaseUrl()}${href}`,
+      `Abrir transferência: ${appBaseUrl()}${href}`,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -251,7 +251,7 @@ export function notificarTransferenciaPendenteAprovacao(opts: {
       `Há uma transferência (${short}) esperando sua aprovação.`,
       `De ${opts.origemNome} para ${opts.destinoNome} · ${opts.qtdItens} item(ns).`,
       quem,
-      `Aprovar ou rejeitar: ${appBaseUrl()}${href}`,
+      `Aprovar transferência: ${appBaseUrl()}${href}`,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -288,13 +288,13 @@ export function notificarTransferenciaDecisao(opts: {
     ? [
         `A transferência ${short} foi aprovada${quem ? ` por ${quem}` : ""}.`,
         `Rota: ${opts.origemNome} → ${opts.destinoNome}.`,
-        `Acompanhe: ${appBaseUrl()}${href}`,
+        `Abrir transferência: ${appBaseUrl()}${href}`,
       ].join("\n\n")
     : [
         `A transferência ${short} foi rejeitada${quem ? ` por ${quem}` : ""}.`,
         `Rota: ${opts.origemNome} → ${opts.destinoNome}.`,
         opts.motivo?.trim() ? `Motivo: ${opts.motivo.trim()}` : null,
-        `Detalhes: ${appBaseUrl()}${href}`,
+        `Abrir transferência: ${appBaseUrl()}${href}`,
       ]
         .filter(Boolean)
         .join("\n\n");
@@ -352,7 +352,7 @@ export function notificarRmaAberto(opts: {
       .join(" · "),
     quem,
     itens ? `Itens: ${itens}` : null,
-    `Abrir o processo: ${appBaseUrl()}${href}`,
+    `Abrir RMA: ${appBaseUrl()}${href}`,
   ].filter(Boolean) as string[];
 
   notifyUsuarios(opts.destinatarioIds, {
@@ -398,7 +398,7 @@ export function notificarRmaFinanceiro(opts: {
     mensagem: [
       `Atualização financeira no RMA ${short} (${opts.clienteNome}).`,
       detalhe,
-      `Ver processo: ${appBaseUrl()}${href}`,
+      `Abrir RMA: ${appBaseUrl()}${href}`,
     ].join("\n\n"),
     meta: { processoId: opts.processoId, href },
     dedupeKey: `${opts.processoId}|FIN|${opts.cobrou}|${opts.valorCobrado ?? ""}|${opts.nfCobrancaNumero ?? ""}`,
@@ -424,7 +424,7 @@ export function notificarRmaEncerrado(opts: {
       fechado
         ? `O RMA ${short} de ${opts.clienteNome} foi fechado.`
         : `O RMA ${short} de ${opts.clienteNome} foi cancelado.`,
-      `Consultar: ${appBaseUrl()}${href}`,
+      `Abrir RMA: ${appBaseUrl()}${href}`,
     ].join("\n\n"),
     meta: {
       processoId: opts.processoId,
@@ -454,7 +454,7 @@ export function notificarRmaLaudos(opts: {
     mensagem: [
       `Há diagnóstico(s) / laudo(s) no RMA ${short} (${opts.clienteNome}).`,
       lista,
-      `Abrir o processo: ${appBaseUrl()}${href}`,
+      `Abrir RMA: ${appBaseUrl()}${href}`,
     ].join("\n\n"),
     meta: { processoId: opts.processoId, href },
     dedupeKey: `${opts.processoId}|LAUDO|${Date.now()}`,
@@ -487,7 +487,7 @@ export function notificarRmaOrcamentoPronto(opts: {
       lista,
       quem,
       "Gere o PDF na tela de orçamento e envie ao cliente (e-mail/WhatsApp).",
-      `Abrir orçamento: ${appBaseUrl()}${href}`,
+      `Abrir orçamento do RMA: ${appBaseUrl()}${href}`,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -531,7 +531,7 @@ export function notificarRmaOrcamentoDecisao(opts: {
       `• ${opts.itemResumo} — ${aprovado ? "Aprovado" : "Recusado"}${valor}`,
       quem,
       obs,
-      `Ver processo: ${appBaseUrl()}${href}`,
+      `Abrir RMA: ${appBaseUrl()}${href}`,
     ]
       .filter(Boolean)
       .join("\n\n"),
@@ -560,7 +560,7 @@ export function notificarPedidoSeparado(opts: {
       `O pedido ${opts.egestorCodigo} foi separado e o estoque já foi baixado.`,
       `Cliente: ${opts.clienteNome}`,
       `Estoque: ${opts.filialSigla}`,
-      `Ver pedido: ${appBaseUrl()}${href}`,
+      `Abrir pedido: ${appBaseUrl()}${href}`,
     ].join("\n\n"),
     meta: { pedidoId: opts.pedidoId, href },
     dedupeKey: `${opts.pedidoId}|SEPARADO`,
