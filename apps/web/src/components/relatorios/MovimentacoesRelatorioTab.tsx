@@ -1322,7 +1322,7 @@ export function MovimentacoesRelatorioTab() {
                             {m.tipo.nome}
                           </div>
                           <div className="truncate text-xs text-slate-600">
-                            <span className="font-mono text-[11px]">
+                            <span className="font-mono text-[11px] font-bold text-slate-900">
                               {m.produto.codigo}
                             </span>{" "}
                             {m.produto.descricao}
