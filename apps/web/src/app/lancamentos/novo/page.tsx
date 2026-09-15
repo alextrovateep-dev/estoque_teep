@@ -1768,61 +1768,103 @@ function NovoLancamentoForm() {
                     <span className="ml-1 font-normal text-rose-600">*</span>
                   )}
                 </span>
-                <input
-                  type="file"
-                  accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
-                  disabled={nfUploading}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-brand/10 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (!file) return;
-                    setError("");
-                    setNfUploading(true);
-                    try {
-                      const fd = new FormData();
-                      fd.append("file", file);
-                      fd.append("context", "nota-fiscal");
-                      const r = await apiUpload<{ url: string }>("/upload", fd);
-                      setNotaFiscalArquivo(r.url);
-                    } catch (err) {
-                      setError(
-                        err instanceof Error
-                          ? err.message
-                          : "Falha no upload da nota"
-                      );
-                    } finally {
-                      setNfUploading(false);
-                    }
-                  }}
-                />
-                <p className="mt-1 text-xs text-slate-400">
-                  {isRetorno
-                    ? "PDF ou imagem da NF — obrigatório para gravar o retorno."
-                    : "PDF ou imagem (opcional)."}
-                  {nfUploading ? " Enviando…" : ""}
-                  {notaFiscalArquivo ? " Anexo pronto." : ""}
-                </p>
-                {notaFiscalArquivo && (
-                  <p className="mt-1 text-xs text-emerald-700">
-                    Arquivo anexado.{" "}
-                    <a
-                      href={resolveAssetUrl(notaFiscalArquivo) || "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline"
-                    >
-                      Abrir
-                    </a>
-                    {" · "}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => setNotaFiscalArquivo(null)}
-                    >
-                      Remover
-                    </button>
-                  </p>
+                {notaFiscalArquivo ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
+                    <p className="text-sm font-medium text-emerald-900">
+                      Arquivo anexado
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      <a
+                        href={resolveAssetUrl(notaFiscalArquivo) || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-emerald-800 underline hover:text-emerald-950"
+                      >
+                        Abrir
+                      </a>
+                      <button
+                        type="button"
+                        className="font-medium text-slate-600 underline hover:text-slate-900"
+                        onClick={() => setNotaFiscalArquivo(null)}
+                      >
+                        Remover
+                      </button>
+                      <label className="cursor-pointer font-medium text-brand underline hover:text-brand/80">
+                        {nfUploading ? "Enviando…" : "Substituir"}
+                        <input
+                          type="file"
+                          accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                          disabled={nfUploading}
+                          className="sr-only"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (!file) return;
+                            setError("");
+                            setNfUploading(true);
+                            try {
+                              const fd = new FormData();
+                              fd.append("file", file);
+                              fd.append("context", "nota-fiscal");
+                              const r = await apiUpload<{ url: string }>(
+                                "/upload",
+                                fd
+                              );
+                              setNotaFiscalArquivo(r.url);
+                            } catch (err) {
+                              setError(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Falha no upload da nota"
+                              );
+                            } finally {
+                              setNfUploading(false);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                      disabled={nfUploading}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-brand/10 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (!file) return;
+                        setError("");
+                        setNfUploading(true);
+                        try {
+                          const fd = new FormData();
+                          fd.append("file", file);
+                          fd.append("context", "nota-fiscal");
+                          const r = await apiUpload<{ url: string }>(
+                            "/upload",
+                            fd
+                          );
+                          setNotaFiscalArquivo(r.url);
+                        } catch (err) {
+                          setError(
+                            err instanceof Error
+                              ? err.message
+                              : "Falha no upload da nota"
+                          );
+                        } finally {
+                          setNfUploading(false);
+                        }
+                      }}
+                    />
+                    <p className="mt-1 text-xs text-slate-400">
+                      {isRetorno
+                        ? "PDF ou imagem da NF — obrigatório para gravar o retorno."
+                        : "PDF ou imagem (opcional)."}
+                      {nfUploading ? " Enviando…" : ""}
+                    </p>
+                  </>
                 )}
               </div>
             </div>
@@ -1833,60 +1875,103 @@ function NovoLancamentoForm() {
                   Termo de recebimento (assinado){" "}
                   <span className="font-normal text-slate-400">(opcional agora)</span>
                 </span>
-                <input
-                  type="file"
-                  accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
-                  disabled={termoUploading}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-brand/10 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
-                    if (!file) return;
-                    setError("");
-                    setTermoUploading(true);
-                    try {
-                      const fd = new FormData();
-                      fd.append("file", file);
-                      fd.append("context", "documento");
-                      const r = await apiUpload<{ url: string }>("/upload", fd);
-                      setTermoArquivo(r.url);
-                    } catch (err) {
-                      setError(
-                        err instanceof Error
-                          ? err.message
-                          : "Falha no upload do termo"
-                      );
-                    } finally {
-                      setTermoUploading(false);
-                    }
-                  }}
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  O técnico leva o material e o termo volta assinado depois —
-                  você pode anexar aqui ou mais tarde em{" "}
-                  <span className="font-medium">Movimentações</span>.
-                  {termoUploading ? " Enviando…" : ""}
-                </p>
-                {termoArquivo && (
-                  <p className="mt-1 text-xs text-emerald-700">
-                    Termo anexado.{" "}
-                    <a
-                      href={resolveAssetUrl(termoArquivo) || "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="underline"
-                    >
-                      Abrir
-                    </a>
-                    {" · "}
-                    <button
-                      type="button"
-                      className="underline"
-                      onClick={() => setTermoArquivo(null)}
-                    >
-                      Remover
-                    </button>
-                  </p>
+                {termoArquivo ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
+                    <p className="text-sm font-medium text-emerald-900">
+                      Termo anexado
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      <a
+                        href={resolveAssetUrl(termoArquivo) || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-emerald-800 underline hover:text-emerald-950"
+                      >
+                        Abrir
+                      </a>
+                      <button
+                        type="button"
+                        className="font-medium text-slate-600 underline hover:text-slate-900"
+                        onClick={() => setTermoArquivo(null)}
+                      >
+                        Remover
+                      </button>
+                      <label className="cursor-pointer font-medium text-brand underline hover:text-brand/80">
+                        {termoUploading ? "Enviando…" : "Substituir"}
+                        <input
+                          type="file"
+                          accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                          disabled={termoUploading}
+                          className="sr-only"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (!file) return;
+                            setError("");
+                            setTermoUploading(true);
+                            try {
+                              const fd = new FormData();
+                              fd.append("file", file);
+                              fd.append("context", "documento");
+                              const r = await apiUpload<{ url: string }>(
+                                "/upload",
+                                fd
+                              );
+                              setTermoArquivo(r.url);
+                            } catch (err) {
+                              setError(
+                                err instanceof Error
+                                  ? err.message
+                                  : "Falha no upload do termo"
+                              );
+                            } finally {
+                              setTermoUploading(false);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="file"
+                      accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                      disabled={termoUploading}
+                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm file:mr-3 file:rounded file:border-0 file:bg-brand/10 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (!file) return;
+                        setError("");
+                        setTermoUploading(true);
+                        try {
+                          const fd = new FormData();
+                          fd.append("file", file);
+                          fd.append("context", "documento");
+                          const r = await apiUpload<{ url: string }>(
+                            "/upload",
+                            fd
+                          );
+                          setTermoArquivo(r.url);
+                        } catch (err) {
+                          setError(
+                            err instanceof Error
+                              ? err.message
+                              : "Falha no upload do termo"
+                          );
+                        } finally {
+                          setTermoUploading(false);
+                        }
+                      }}
+                    />
+                    <p className="mt-1 text-xs text-slate-500">
+                      O técnico leva o material e o termo volta assinado depois —
+                      você pode anexar aqui ou mais tarde em{" "}
+                      <span className="font-medium">Movimentações</span>.
+                      {termoUploading ? " Enviando…" : ""}
+                    </p>
+                  </>
                 )}
               </div>
             )}

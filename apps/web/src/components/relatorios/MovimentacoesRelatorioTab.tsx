@@ -175,6 +175,9 @@ export function MovimentacoesRelatorioTab() {
   const [painelAcao, setPainelAcao] = useState<
     "rejeitar" | "estornar" | "termo" | null
   >(null);
+  const [seriesExpandidas, setSeriesExpandidas] = useState<Set<string>>(
+    () => new Set()
+  );
   const [motivo, setMotivo] = useState("");
   const [acting, setActing] = useState(false);
   const actingRef = useRef(false);
@@ -1124,17 +1127,20 @@ export function MovimentacoesRelatorioTab() {
 
         {data.length > 0 && (
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-            <table className="w-full min-w-[52rem] border-collapse text-left text-sm">
+            <table className="w-full min-w-[56rem] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/80 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                   <th className="whitespace-nowrap px-3 py-2 font-semibold">
                     Data
                   </th>
                   <th className="whitespace-nowrap px-3 py-2 font-semibold">
-                    Operação
+                    Op.
                   </th>
-                  <th className="min-w-[14rem] px-3 py-2 font-semibold">
-                    Tipo / produto
+                  <th className="min-w-[8rem] px-3 py-2 font-semibold">
+                    Tipo
+                  </th>
+                  <th className="min-w-[12rem] px-3 py-2 font-semibold">
+                    Produto
                   </th>
                   <th className="whitespace-nowrap px-3 py-2 font-semibold">
                     Qtd
@@ -1228,11 +1234,37 @@ export function MovimentacoesRelatorioTab() {
                     for (const a of m.transferenciaAnexos || []) push(a);
                     return out;
                   })();
+                  const seriesNums = (m.series || []).map(
+                    (s) => s.unidadeSerie.numeroSerie
+                  );
+                  const filtroSerieNorm = serieFiltro.trim().toLowerCase();
+                  const seriesMatch = serieAtiva
+                    ? seriesNums.filter((n) =>
+                        n.toLowerCase().includes(filtroSerieNorm)
+                      )
+                    : [];
+                  const seriesOutras = serieAtiva
+                    ? seriesNums.filter(
+                        (n) => !n.toLowerCase().includes(filtroSerieNorm)
+                      )
+                    : seriesNums;
+                  const seriesExpandidasLinha = seriesExpandidas.has(m.id);
+                  const temDetalheSerieOuAnexo =
+                    seriesNums.length > 0 ||
+                    anexosVisiveis.length > 0 ||
+                    Boolean(
+                      nfNumero &&
+                        !anexosVisiveis.some((a) => a.tipo === "NOTA_FISCAL")
+                    );
 
                   return (
                     <Fragment key={m.id}>
                       <tr
-                        className={`border-b border-slate-100 border-l-4 ${accent} ${
+                        className={`border-l-4 ${accent} ${
+                          temDetalheSerieOuAnexo
+                            ? ""
+                            : "border-b border-slate-100"
+                        } ${
                           destaque
                             ? "bg-amber-50/40"
                             : "hover:bg-slate-50/70"
@@ -1307,11 +1339,11 @@ export function MovimentacoesRelatorioTab() {
                             )}
                           </div>
                         </td>
-                        <td className="max-w-[18rem] px-3 py-2 align-middle">
-                          <div className="truncate font-medium text-slate-900">
+                        <td className="max-w-[10rem] px-3 py-2 align-middle">
+                          <div className="truncate text-xs text-slate-800" title={m.tipo.nome}>
                             {m.tipo.codigo ? (
                               <>
-                                <span className="font-mono text-[11px] text-slate-500">
+                                <span className="font-mono text-[11px] font-semibold text-slate-700">
                                   {m.tipo.codigo}
                                 </span>
                                 {m.tipo.nome ? (
@@ -1319,48 +1351,16 @@ export function MovimentacoesRelatorioTab() {
                                 ) : null}
                               </>
                             ) : null}
-                            {m.tipo.nome}
+                            <span className="text-slate-600">{m.tipo.nome}</span>
                           </div>
+                        </td>
+                        <td className="max-w-[16rem] px-3 py-2 align-middle">
                           <div className="truncate text-xs text-slate-600">
-                            <span className="font-mono text-[11px] font-bold text-slate-900">
+                            <span className="font-mono text-[11px] font-bold text-slate-950">
                               {m.produto.codigo}
                             </span>{" "}
                             {m.produto.descricao}
                           </div>
-                          {m.series && m.series.length > 0 ? (
-                            <div className="mt-0.5 truncate font-mono text-[10px] text-slate-600">
-                              S/N:{" "}
-                              {m.series
-                                .map((s) => s.unidadeSerie.numeroSerie)
-                                .join(", ")}
-                            </div>
-                          ) : null}
-                          {nfNumero &&
-                          !anexosVisiveis.some((a) => a.tipo === "NOTA_FISCAL") ? (
-                            <div className="mt-0.5 text-[10px] text-slate-500">
-                              NF {nfNumero}
-                            </div>
-                          ) : null}
-                          {anexosVisiveis.length > 0 ? (
-                            <div className="mt-1 inline-flex max-w-full flex-wrap gap-x-2 gap-y-0.5 rounded bg-sky-50 px-1.5 py-0.5 ring-1 ring-sky-100">
-                              {anexosVisiveis.map((a) => {
-                                const href = resolveAssetUrl(a.arquivo);
-                                if (!href) return null;
-                                return (
-                                  <a
-                                    key={a.id}
-                                    href={href}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="truncate text-[11px] font-medium text-sky-800 underline hover:text-sky-950"
-                                    title={`Abrir anexo${a.label?.trim() ? `: ${a.label.trim()}` : ""}`}
-                                  >
-                                    📎 {a.label?.trim() || "Anexo"}
-                                  </a>
-                                );
-                              })}
-                            </div>
-                          ) : null}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-xs font-semibold tabular-nums align-middle">
                           {formatQtyUnidade(
@@ -1484,9 +1484,159 @@ export function MovimentacoesRelatorioTab() {
                           </div>
                         </td>
                       </tr>
+                      {temDetalheSerieOuAnexo ? (
+                        <tr
+                          className={`border-b border-slate-100 border-l-4 ${accent} ${
+                            destaque ? "bg-amber-50/20" : "bg-slate-50/40"
+                          }`}
+                        >
+                          <td colSpan={9} className="px-3 py-1.5">
+                            <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1.5">
+                              <div className="min-w-0 flex-1">
+                                {seriesNums.length > 0 ? (
+                                  serieAtiva && seriesMatch.length > 0 ? (
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                        S/N
+                                      </span>
+                                      {seriesMatch.map((n) => (
+                                        <span
+                                          key={n}
+                                          className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-amber-950 ring-1 ring-amber-200"
+                                        >
+                                          {n}
+                                        </span>
+                                      ))}
+                                      {seriesOutras.length > 0 ? (
+                                        seriesExpandidasLinha ? (
+                                          <>
+                                            {seriesOutras.map((n) => (
+                                              <span
+                                                key={n}
+                                                className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-slate-700 ring-1 ring-slate-200"
+                                              >
+                                                {n}
+                                              </span>
+                                            ))}
+                                            <button
+                                              type="button"
+                                              className="text-[11px] font-medium text-slate-500 hover:underline"
+                                              onClick={() =>
+                                                setSeriesExpandidas((prev) => {
+                                                  const next = new Set(prev);
+                                                  next.delete(m.id);
+                                                  return next;
+                                                })
+                                              }
+                                            >
+                                              Recolher
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            className="text-[11px] font-medium text-slate-600 hover:underline"
+                                            onClick={() =>
+                                              setSeriesExpandidas((prev) => {
+                                                const next = new Set(prev);
+                                                next.add(m.id);
+                                                return next;
+                                              })
+                                            }
+                                          >
+                                            +{seriesOutras.length}{" "}
+                                            {seriesOutras.length === 1
+                                              ? "outra"
+                                              : "outras"}
+                                          </button>
+                                        )
+                                      ) : null}
+                                    </div>
+                                  ) : seriesExpandidasLinha ? (
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                        S/N
+                                      </span>
+                                      {seriesNums.map((n) => (
+                                        <span
+                                          key={n}
+                                          className="rounded bg-white px-1.5 py-0.5 font-mono text-[11px] text-slate-700 ring-1 ring-slate-200"
+                                        >
+                                          {n}
+                                        </span>
+                                      ))}
+                                      <button
+                                        type="button"
+                                        className="text-[11px] font-medium text-slate-500 hover:underline"
+                                        onClick={() =>
+                                          setSeriesExpandidas((prev) => {
+                                            const next = new Set(prev);
+                                            next.delete(m.id);
+                                            return next;
+                                          })
+                                        }
+                                      >
+                                        Recolher
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="text-[11px] text-slate-600">
+                                        {seriesNums.length}{" "}
+                                        {seriesNums.length === 1
+                                          ? "série"
+                                          : "séries"}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        className="text-[11px] font-medium text-brand hover:underline"
+                                        onClick={() =>
+                                          setSeriesExpandidas((prev) => {
+                                            const next = new Set(prev);
+                                            next.add(m.id);
+                                            return next;
+                                          })
+                                        }
+                                      >
+                                        Ver séries
+                                      </button>
+                                    </div>
+                                  )
+                                ) : null}
+                              </div>
+                              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                                {nfNumero &&
+                                !anexosVisiveis.some(
+                                  (a) => a.tipo === "NOTA_FISCAL"
+                                ) ? (
+                                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">
+                                    NF {nfNumero}
+                                  </span>
+                                ) : null}
+                                {anexosVisiveis.map((a) => {
+                                  const href = resolveAssetUrl(a.arquivo);
+                                  if (!href) return null;
+                                  return (
+                                    <a
+                                      key={a.id}
+                                      href={href}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="rounded bg-sky-50 px-1.5 py-0.5 text-[11px] font-medium text-sky-800 ring-1 ring-sky-100 hover:bg-sky-100"
+                                      title={`Abrir anexo${a.label?.trim() ? `: ${a.label.trim()}` : ""}`}
+                                    >
+                                      {a.label?.trim() || "Anexo"}
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : null}
                       {painelAberto && (
                         <tr className="border-b border-slate-100 bg-slate-50/50">
-                          <td colSpan={8} className="px-3 py-3">
+                          <td colSpan={9} className="px-3 py-3">
                             {canManage && painelAcao === "rejeitar" && (
                               <ConfirmMotivoPanel
                                 title="Confirmar rejeição"
