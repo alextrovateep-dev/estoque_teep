@@ -90,26 +90,19 @@ type ResumoProduto = {
   dataFim: string | null;
   entradas: number;
   saidas: number;
+  transferencias: number;
   diferenca: number;
   estoqueAtual: number;
   unidade: string;
+  totalLinhas: number;
+  primeiraData: string | null;
+  ultimaData: string | null;
 };
 
 function formatQty(n: number): string {
   return n.toLocaleString("pt-BR", {
     maximumFractionDigits: 4,
   });
-}
-
-function formatPeriodo(inicio: string | null, fim: string | null): string {
-  const fmt = (iso: string) => {
-    const [y, m, d] = iso.split("-");
-    return `${d}/${m}/${y}`;
-  };
-  if (inicio && fim) return `${fmt(inicio)}–${fmt(fim)}`;
-  if (inicio) return `desde ${fmt(inicio)}`;
-  if (fim) return `até ${fmt(fim)}`;
-  return "todo o histórico";
 }
 
 function todayISO() {
@@ -340,11 +333,22 @@ export function MovimentacoesRelatorioTab() {
       return;
     }
     let cancelled = false;
+    setResumo(null);
     setResumoLoading(true);
     const params = new URLSearchParams({ produtoId });
     if (!serieAtiva) {
       if (dataInicio) params.set("dataInicio", dataInicio);
       if (dataFim) params.set("dataFim", dataFim);
+    }
+    if (tipoId) params.set("tipoId", tipoId);
+    if (operacaoFiltro) params.set("operacao", operacaoFiltro);
+    if (parceiroId) {
+      params.set("clienteId", parceiroId);
+    } else if (parceiroModo) {
+      params.set("parceiroTipo", parceiroModo);
+    }
+    if (serieAtiva) {
+      params.set("numeroSerie", serieFiltro.trim());
     }
     api<ResumoProduto>(`/movimentacoes/resumo?${params}`)
       .then((r) => {
@@ -362,7 +366,18 @@ export function MovimentacoesRelatorioTab() {
     return () => {
       cancelled = true;
     };
-  }, [produtoId, dataInicio, dataFim, serieAtiva, reloadKey]);
+  }, [
+    produtoId,
+    dataInicio,
+    dataFim,
+    tipoId,
+    operacaoFiltro,
+    parceiroId,
+    parceiroModo,
+    serieAtiva,
+    serieFiltro,
+    reloadKey,
+  ]);
 
   function abrirPainel(id: string, acao: "rejeitar" | "estornar" | "termo") {
     setPainelId(id);
@@ -812,7 +827,7 @@ export function MovimentacoesRelatorioTab() {
                   );
                 }}
                 className="w-[5.5rem] shrink-0 rounded-md border border-slate-200 px-1.5 py-1.5 text-sm"
-                title="Filtrar por cliente ou fornecedor"
+                title="Só movimentações com cliente/fornecedor. Transformação e transferência sem parceiro ficam de fora."
                 aria-label="Tipo de parceiro"
               >
                 <option value="">Todos</option>
@@ -960,61 +975,81 @@ export function MovimentacoesRelatorioTab() {
         )}
       </div>
 
-      {produtoId && (
+      {produtoId && (resumoLoading || (resumo && resumo.totalLinhas > 0)) && (
         <div className="mt-4 rounded-xl border border-brand/20 bg-white px-4 py-4">
           <div className="text-sm font-medium text-slate-900">
-            {produtoLabel || resumo?.produto
-              ? produtoLabel ||
-                `${resumo!.produto.codigo} — ${resumo!.produto.descricao}`
-              : "Produto selecionado"}
+            {produtoLabel ||
+              (resumo?.produto
+                ? `${resumo.produto.codigo} — ${resumo.produto.descricao}`
+                : "Produto selecionado")}
           </div>
-          {resumoLoading && !resumo ? (
+          {resumoLoading ? (
             <p className="mt-2 text-sm text-slate-500">Calculando resumo…</p>
-          ) : resumo ? (
+          ) : resumo && resumo.totalLinhas > 0 ? (
             <>
-              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-400">
-                    Entradas
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                {(operacaoFiltro === "" || operacaoFiltro === "ENTRADA") && (
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Entradas
+                    </div>
+                    <div className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
+                      {formatQty(resumo.entradas)}
+                      <span className="ml-1 text-xs font-normal text-slate-400">
+                        {resumo.unidade}
+                      </span>
+                    </div>
                   </div>
-                  <div className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
-                    {formatQty(resumo.entradas)}
-                    <span className="ml-1 text-xs font-normal text-slate-400">
-                      {resumo.unidade}
-                    </span>
+                )}
+                {(operacaoFiltro === "" || operacaoFiltro === "SAIDA") && (
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Saídas
+                    </div>
+                    <div className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
+                      {formatQty(resumo.saidas)}
+                      <span className="ml-1 text-xs font-normal text-slate-400">
+                        {resumo.unidade}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-400">
-                    Saídas
+                )}
+                {(operacaoFiltro === "" ||
+                  operacaoFiltro === "TRANSFERENCIA") && (
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Transferências
+                    </div>
+                    <div className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
+                      {formatQty(resumo.transferencias)}
+                      <span className="ml-1 text-xs font-normal text-slate-400">
+                        {resumo.unidade}
+                      </span>
+                    </div>
                   </div>
-                  <div className="mt-0.5 text-lg font-semibold tabular-nums text-slate-900">
-                    {formatQty(resumo.saidas)}
-                    <span className="ml-1 text-xs font-normal text-slate-400">
-                      {resumo.unidade}
-                    </span>
+                )}
+                {operacaoFiltro === "" && (
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-slate-400">
+                      Diferença
+                    </div>
+                    <div
+                      className={`mt-0.5 text-lg font-semibold tabular-nums ${
+                        resumo.diferenca > 0
+                          ? "text-emerald-700"
+                          : resumo.diferenca < 0
+                            ? "text-amber-800"
+                            : "text-slate-900"
+                      }`}
+                    >
+                      {resumo.diferenca > 0 ? "+" : ""}
+                      {formatQty(resumo.diferenca)}
+                      <span className="ml-1 text-xs font-normal text-slate-400">
+                        {resumo.unidade}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-slate-400">
-                    Diferença
-                  </div>
-                  <div
-                    className={`mt-0.5 text-lg font-semibold tabular-nums ${
-                      resumo.diferenca > 0
-                        ? "text-emerald-700"
-                        : resumo.diferenca < 0
-                          ? "text-amber-800"
-                          : "text-slate-900"
-                    }`}
-                  >
-                    {resumo.diferenca > 0 ? "+" : ""}
-                    {formatQty(resumo.diferenca)}
-                    <span className="ml-1 text-xs font-normal text-slate-400">
-                      {resumo.unidade}
-                    </span>
-                  </div>
-                </div>
+                )}
                 <div>
                   <div className="text-xs uppercase tracking-wide text-slate-400">
                     Estoque atual
@@ -1028,9 +1063,29 @@ export function MovimentacoesRelatorioTab() {
                 </div>
               </div>
               <p className="mt-3 text-xs text-slate-500">
-                Período {formatPeriodo(resumo.dataInicio, resumo.dataFim)} ·
-                resumo do produto (entradas e saídas concluídas). A lista abaixo
-                segue os filtros.
+                {resumo.totalLinhas} movimentação
+                {resumo.totalLinhas === 1 ? "" : "ões"} nos filtros
+                {resumo.primeiraData && resumo.ultimaData
+                  ? ` · de ${new Date(resumo.primeiraData).toLocaleString(
+                      "pt-BR",
+                      {
+                        day: "2-digit",
+                        month: "2-digit",
+                        year: "numeric",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        timeZone: "America/Sao_Paulo",
+                      }
+                    )} a ${new Date(resumo.ultimaData).toLocaleString("pt-BR", {
+                      day: "2-digit",
+                      month: "2-digit",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      timeZone: "America/Sao_Paulo",
+                    })}`
+                  : ""}
+                .
               </p>
             </>
           ) : null}
@@ -1043,9 +1098,47 @@ export function MovimentacoesRelatorioTab() {
 
       <div className="mt-3">
         {!loading && data.length === 0 && (
-          <p className="rounded-xl border bg-white px-4 py-8 text-center text-sm text-slate-500">
-            Nenhuma movimentação nos filtros selecionados.
-          </p>
+          <div className="rounded-xl border bg-white px-4 py-8 text-center">
+            <p className="text-sm font-medium text-slate-700">
+              Nenhuma movimentação com esses filtros
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              {[
+                operacaoFiltro === "ENTRADA"
+                  ? "Operação: entrada"
+                  : operacaoFiltro === "SAIDA"
+                    ? "Operação: saída"
+                    : operacaoFiltro === "TRANSFERENCIA"
+                      ? "Operação: transferência"
+                      : null,
+                parceiroId
+                  ? `Parceiro: ${parceiroLabel}`
+                  : parceiroModo === "CLIENTE"
+                    ? "Somente com cliente (exclui transformação/transferência sem parceiro)"
+                    : parceiroModo === "FORNECEDOR"
+                      ? "Somente com fornecedor"
+                      : null,
+                produtoId ? `Produto: ${produtoLabel || "selecionado"}` : null,
+                tipoId ? `Tipo: ${tipoLabel}` : null,
+                serieAtiva ? `Série: ${serieFiltro}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Ajuste o período ou limpe os filtros."}
+            </p>
+            {(operacaoFiltro ||
+              parceiroModo ||
+              parceiroId ||
+              tipoId ||
+              produtoId) && (
+              <button
+                type="button"
+                onClick={resetFiltros}
+                className="mt-3 text-xs font-medium text-brand hover:underline"
+              >
+                Limpar filtros
+              </button>
+            )}
+          </div>
         )}
 
         {data.length > 0 && (
@@ -1053,6 +1146,9 @@ export function MovimentacoesRelatorioTab() {
             <table className="w-full min-w-[52rem] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-slate-200 bg-slate-50/80 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="whitespace-nowrap px-3 py-2 font-semibold">
+                    Data
+                  </th>
                   <th className="whitespace-nowrap px-3 py-2 font-semibold">
                     Operação
                   </th>
@@ -1070,9 +1166,6 @@ export function MovimentacoesRelatorioTab() {
                   </th>
                   <th className="whitespace-nowrap px-3 py-2 font-semibold">
                     Usuário
-                  </th>
-                  <th className="whitespace-nowrap px-3 py-2 font-semibold">
-                    Data
                   </th>
                   <th className="whitespace-nowrap px-3 py-2 font-semibold">
                     Ações
@@ -1159,6 +1252,16 @@ export function MovimentacoesRelatorioTab() {
                             : "hover:bg-slate-50/70"
                         }`}
                       >
+                        <td className="whitespace-nowrap px-3 py-2 text-xs tabular-nums text-slate-700 align-middle">
+                          {new Date(m.dataMovimento).toLocaleString("pt-BR", {
+                            day: "2-digit",
+                            month: "2-digit",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            timeZone: "America/Sao_Paulo",
+                          })}
+                        </td>
                         <td className="px-3 py-2 align-middle">
                           <div className="flex flex-nowrap items-center gap-1">
                             <span
@@ -1283,6 +1386,13 @@ export function MovimentacoesRelatorioTab() {
                         <td className="max-w-[14rem] px-3 py-2 text-xs text-slate-700 align-middle">
                           {m.cliente ? (
                             <div className="truncate">
+                              <span className="mr-1 text-[10px] font-semibold uppercase text-slate-400">
+                                {m.cliente.tipo === "FORNECEDOR"
+                                  ? "Forn."
+                                  : m.cliente.tipo === "INTERNO"
+                                    ? "Int."
+                                    : "Cli."}
+                              </span>
                               <span className="font-medium text-slate-800">
                                 {m.cliente.nome}
                               </span>
@@ -1298,15 +1408,6 @@ export function MovimentacoesRelatorioTab() {
                         </td>
                         <td className="max-w-[10rem] truncate px-3 py-2 text-xs text-slate-600 align-middle">
                           {m.usuario.nome}
-                        </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-xs tabular-nums text-slate-600 align-middle">
-                          {new Date(m.dataMovimento).toLocaleString("pt-BR", {
-                            day: "2-digit",
-                            month: "2-digit",
-                            year: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 text-right align-middle">
                           <div className="flex flex-nowrap items-center justify-end gap-2">

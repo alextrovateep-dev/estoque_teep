@@ -40,7 +40,6 @@ import {
   exportarMovimentacoesExcel,
   exportarMovimentacoesPdf,
   parseMovimentacoesFiltroQuery,
-  parseDiaCivilSaoPaulo,
 } from "../services/movimentacoesExportService";
 import {
   assertOperadorPodeFilial,
@@ -660,86 +659,63 @@ estoqueRouter.get(
   }
 );
 
-/** Resumo do produto no período (independente do filtro de tipo da lista). */
+/** Resumo do produto nos mesmos filtros da lista (operação, tipo, parceiro, série…). */
 estoqueRouter.get(
   "/movimentacoes/resumo",
   requirePermissao("movimentacoes", "aprovacoes"),
   async (req: AuthedRequest, res, next) => {
     try {
-      const produtoId = String(req.query.produtoId || "").trim();
-      if (!produtoId) {
+      const q = parseMovimentacoesFiltroQuery(
+        req.query as Record<string, unknown>
+      );
+      if (!q.produtoId) {
         throw new AppError(400, "produtoId obrigatório");
       }
 
       const produto = await prisma.produto.findUnique({
-        where: { id: produtoId },
+        where: { id: q.produtoId },
         select: { id: true, codigo: true, descricao: true, unidade: true },
       });
       if (!produto) throw new AppError(404, "Produto não encontrado");
 
-      let filialIds: string[] | null = null;
-      const filialIdQ = String(req.query.filialId || "").trim();
-      if (req.user!.perfil === "OPERADOR") {
-        const ids = operadorFilialIds(req.user!);
-        if (filialIdQ) {
-          assertOperadorPodeFilial(req.user!, filialIdQ);
-          filialIds = [filialIdQ];
-        } else {
-          filialIds = ids;
-        }
-      } else if (filialIdQ) {
-        const ok = await prisma.filial.findFirst({
-          where: { id: filialIdQ, ativo: true },
-          select: { id: true },
-        });
-        if (!ok) throw new AppError(400, "Filial inválida ou inativa");
-        filialIds = [filialIdQ];
-      } else {
-        filialIds = null; // consolidado filiais ativas
-      }
+      const where = buildMovimentacoesWhere(req.user!, q);
 
-      const dataInicio = String(req.query.dataInicio || "").trim();
-      const dataFim = String(req.query.dataFim || "").trim();
-      const range: { gte?: Date; lte?: Date } = {};
-      if (dataInicio) {
-        const d = parseDiaCivilSaoPaulo(dataInicio, "inicio");
-        if (d) range.gte = d;
-      }
-      if (dataFim) {
-        const d = parseDiaCivilSaoPaulo(dataFim, "fim");
-        if (d) range.lte = d;
-      }
-
-      const movWhere: Record<string, unknown> = {
-        produtoId,
-        status: "CONCLUIDO",
-        operacao: { in: ["ENTRADA", "SAIDA"] },
-      };
-      if (filialIds) {
-        movWhere.filialId = { in: filialIds };
-      } else {
-        movWhere.filial = { ativo: true };
-      }
-      if (range.gte || range.lte) {
-        movWhere.dataMovimento = range;
-      }
-
-      const grouped = await prisma.movimentacao.groupBy({
-        by: ["operacao"],
-        where: movWhere,
-        _sum: { quantidade: true },
-      });
+      const [grouped, totalLinhas, datasAgg] = await Promise.all([
+        prisma.movimentacao.groupBy({
+          by: ["operacao"],
+          where,
+          _sum: { quantidade: true },
+        }),
+        prisma.movimentacao.count({ where }),
+        prisma.movimentacao.aggregate({
+          where,
+          _min: { dataMovimento: true },
+          _max: { dataMovimento: true },
+        }),
+      ]);
 
       let entradas = 0;
       let saidas = 0;
+      let transferencias = 0;
       for (const g of grouped) {
-        const q = Number(g._sum.quantidade ?? 0);
-        if (g.operacao === "ENTRADA") entradas = q;
-        if (g.operacao === "SAIDA") saidas = q;
+        const qty = Number(g._sum.quantidade ?? 0);
+        if (g.operacao === "ENTRADA") entradas = qty;
+        else if (g.operacao === "SAIDA") saidas = qty;
+        else if (g.operacao === "TRANSFERENCIA") transferencias = qty;
       }
       const diferenca = Math.round((entradas - saidas) * 10000) / 10000;
 
-      const estoqueWhere: Record<string, unknown> = { produtoId };
+      let filialIds: string[] | null = null;
+      if (req.user!.perfil === "OPERADOR") {
+        const ids = operadorFilialIds(req.user!);
+        filialIds = q.filialId ? [q.filialId] : ids;
+      } else if (q.filialId) {
+        filialIds = [q.filialId];
+      }
+
+      const estoqueWhere: Prisma.EstoqueWhereInput = {
+        produtoId: q.produtoId,
+      };
       if (filialIds) {
         estoqueWhere.filialId = { in: filialIds };
       } else {
@@ -756,14 +732,18 @@ estoqueRouter.get(
 
       res.json({
         produto,
-        dataInicio: dataInicio || null,
-        dataFim: dataFim || null,
+        dataInicio: q.dataInicio || null,
+        dataFim: q.dataFim || null,
         filialIds,
         entradas,
         saidas,
+        transferencias,
         diferenca,
         estoqueAtual,
         unidade: produto.unidade,
+        totalLinhas,
+        primeiraData: datasAgg._min.dataMovimento?.toISOString() ?? null,
+        ultimaData: datasAgg._max.dataMovimento?.toISOString() ?? null,
       });
     } catch (e) {
       next(e);
