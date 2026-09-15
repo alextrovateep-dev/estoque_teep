@@ -28,6 +28,7 @@ type RmaProdutoRow = {
   criadoEm: string;
   clienteNome: string;
   filialSigla: string;
+  filialNome?: string;
   codigo: string;
   descricao: string;
   numeroSerie: string | null;
@@ -617,7 +618,12 @@ export function RmaProdutosRelatorioTab() {
                   <td className="max-w-[12rem] truncate px-3 py-2" title={r.clienteNome}>
                     {r.clienteNome}
                   </td>
-                  <td className="px-3 py-2">{r.filialSigla}</td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium">{r.filialSigla}</div>
+                    {r.filialNome ? (
+                      <div className="text-xs text-slate-500">{r.filialNome}</div>
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs">{r.codigo}</td>
                   <td
                     className="max-w-[14rem] truncate px-3 py-2"

@@ -355,7 +355,7 @@ export async function carregarSaldosExport(
     ? "Todas (consolidado)"
     : filialFound
       ? `${filialFound.sigla} — ${filialFound.nome}`
-      : "Filial";
+      : "Estoque";
 
   return {
     rows,
@@ -403,7 +403,11 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
       const alert = r.abaixoMinimo || r.acimaMaximo;
       const trClass = alert ? ' class="alerta"' : "";
       return `<tr${trClass}>
-        <td>${escapeHtml(r.filialSigla)}</td>
+        <td><strong>${escapeHtml(r.filialSigla)}</strong>${
+          r.filialNome
+            ? `<br/><span class="muted">${escapeHtml(r.filialNome)}</span>`
+            : ""
+        }</td>
         <td class="mono">${escapeHtml(r.codigo)}</td>
         <td>${escapeHtml(r.descricao)}${r.produtoAtivo ? "" : ' <span class="muted">(inativo)</span>'}</td>
         <td>${escapeHtml(r.categoriaNome)}</td>
@@ -520,7 +524,7 @@ function buildSaldosHtml(rows: SaldoExportRow[], meta: SaldosExportMeta): string
   <table>
     <thead>
       <tr>
-        <th>Filial</th>
+        <th>Estoque</th>
         <th>Código</th>
         <th>Descrição</th>
         <th>Categoria</th>
@@ -645,8 +649,8 @@ export async function exportarSaldosExcel(
     views: [{ state: "frozen", ySplit: 1 }],
   });
   ws.columns = [
-    { header: "Filial", key: "filial", width: 10 },
-    { header: "Filial nome", key: "filialNome", width: 22 },
+    { header: "Estoque", key: "filial", width: 10 },
+    { header: "Nome do estoque", key: "filialNome", width: 22 },
     { header: "Código", key: "codigo", width: 16 },
     { header: "Descrição", key: "descricao", width: 36 },
     { header: "Categoria", key: "categoria", width: 18 },

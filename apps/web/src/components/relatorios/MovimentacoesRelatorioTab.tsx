@@ -31,8 +31,8 @@ type Mov = {
   transferenciaNotaFiscalNumero?: string | null;
   produto: { codigo: string; descricao: string; unidade?: string };
   tipo: { codigo: string; nome: string };
-  filial: { sigla: string };
-  filialDestino?: { sigla: string } | null;
+  filial: { sigla: string; nome?: string };
+  filialDestino?: { sigla: string; nome?: string } | null;
   cliente?: {
     id: string;
     nome: string;
@@ -1103,33 +1103,14 @@ export function MovimentacoesRelatorioTab() {
               Nenhuma movimentação com esses filtros
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              {[
-                operacaoFiltro === "ENTRADA"
-                  ? "Operação: entrada"
-                  : operacaoFiltro === "SAIDA"
-                    ? "Operação: saída"
-                    : operacaoFiltro === "TRANSFERENCIA"
-                      ? "Operação: transferência"
-                      : null,
-                parceiroId
-                  ? `Parceiro: ${parceiroLabel}`
-                  : parceiroModo === "CLIENTE"
-                    ? "Somente com cliente (exclui transformação/transferência sem parceiro)"
-                    : parceiroModo === "FORNECEDOR"
-                      ? "Somente com fornecedor"
-                      : null,
-                produtoId ? `Produto: ${produtoLabel || "selecionado"}` : null,
-                tipoId ? `Tipo: ${tipoLabel}` : null,
-                serieAtiva ? `Série: ${serieFiltro}` : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || "Ajuste o período ou limpe os filtros."}
+              Ajuste o período ou limpe os filtros para ver resultados.
             </p>
             {(operacaoFiltro ||
               parceiroModo ||
               parceiroId ||
               tipoId ||
-              produtoId) && (
+              produtoId ||
+              serieAtiva) && (
               <button
                 type="button"
                 onClick={resetFiltros}
@@ -1159,7 +1140,7 @@ export function MovimentacoesRelatorioTab() {
                     Qtd
                   </th>
                   <th className="whitespace-nowrap px-3 py-2 font-semibold">
-                    Filial
+                    Estoque
                   </th>
                   <th className="min-w-[9rem] px-3 py-2 font-semibold">
                     Parceiro
@@ -1177,6 +1158,11 @@ export function MovimentacoesRelatorioTab() {
                   const filialLabel = m.filialDestino
                     ? `${m.filial.sigla} → ${m.filialDestino.sigla}`
                     : m.filial.sigla;
+                  const filialNomeLabel = m.filialDestino
+                    ? [m.filial.nome, m.filialDestino.nome]
+                        .filter(Boolean)
+                        .join(" → ")
+                    : m.filial.nome || "";
                   const canConfirmarRecebimento = Boolean(
                     m.aguardandoRecebimento &&
                       canTransferencias &&
@@ -1328,7 +1314,9 @@ export function MovimentacoesRelatorioTab() {
                                 <span className="font-mono text-[11px] text-slate-500">
                                   {m.tipo.codigo}
                                 </span>
-                                <span className="text-slate-400"> — </span>
+                                {m.tipo.nome ? (
+                                  <span className="text-slate-400"> — </span>
+                                ) : null}
                               </>
                             ) : null}
                             {m.tipo.nome}
@@ -1365,9 +1353,9 @@ export function MovimentacoesRelatorioTab() {
                                     target="_blank"
                                     rel="noreferrer"
                                     className="truncate text-[11px] font-medium text-sky-800 underline hover:text-sky-950"
-                                    title={`Abrir anexo: ${a.label || a.tipo}`}
+                                    title={`Abrir anexo${a.label?.trim() ? `: ${a.label.trim()}` : ""}`}
                                   >
-                                    📎 {a.label || a.tipo}
+                                    📎 {a.label?.trim() || "Anexo"}
                                   </a>
                                 );
                               })}
@@ -1380,8 +1368,15 @@ export function MovimentacoesRelatorioTab() {
                             m.produto.unidade || "UN"
                           )}
                         </td>
-                        <td className="whitespace-nowrap px-3 py-2 text-xs text-slate-700 align-middle">
-                          {filialLabel}
+                        <td className="max-w-[12rem] px-3 py-2 text-xs text-slate-700 align-middle">
+                          <div className="font-medium text-slate-800">
+                            {filialLabel}
+                          </div>
+                          {filialNomeLabel ? (
+                            <div className="truncate text-[11px] text-slate-500">
+                              {filialNomeLabel}
+                            </div>
+                          ) : null}
                         </td>
                         <td className="max-w-[14rem] px-3 py-2 text-xs text-slate-700 align-middle">
                           {m.cliente ? (

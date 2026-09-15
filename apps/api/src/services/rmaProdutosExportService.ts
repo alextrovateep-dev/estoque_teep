@@ -414,7 +414,11 @@ function buildHtml(
         <td class="mono">${escapeHtml(r.processoCurto)}</td>
         <td>${escapeHtml(r.criadoEm)}</td>
         <td>${escapeHtml(r.clienteNome)}</td>
-        <td>${escapeHtml(r.filialSigla)}</td>
+        <td><strong>${escapeHtml(r.filialSigla)}</strong>${
+          r.filialNome
+            ? `<br/><span class="muted">${escapeHtml(r.filialNome)}</span>`
+            : ""
+        }</td>
         <td class="mono">${escapeHtml(r.codigo)}</td>
         <td>${escapeHtml(r.descricao)}</td>
         <td class="mono">${escapeHtml(r.numeroSerie || "—")}</td>
@@ -580,6 +584,7 @@ export async function exportarRmaProdutosExcel(
     { header: "Cliente", key: "cliente", width: 32 },
     { header: "Documento", key: "documento", width: 18 },
     { header: "Estoque", key: "filial", width: 10 },
+    { header: "Nome do estoque", key: "filialNome", width: 22 },
     { header: "Código", key: "codigo", width: 16 },
     { header: "Descrição", key: "descricao", width: 36 },
     { header: "Série", key: "serie", width: 18 },
@@ -608,6 +613,7 @@ export async function exportarRmaProdutosExcel(
       cliente: r.clienteNome,
       documento: r.clienteDocumento || "",
       filial: r.filialSigla,
+      filialNome: r.filialNome || "",
       codigo: r.codigo,
       descricao: r.descricao,
       serie: r.numeroSerie || "",

@@ -36,6 +36,7 @@ type ProdutoRow = {
 type SaldoRow = {
   id: string;
   filialSigla: string;
+  filialNome: string;
   codigo: string;
   descricao: string;
   categoriaNome: string;
@@ -974,7 +975,7 @@ function RelatoriosInner() {
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-3 py-2">Filial</th>
+                <th className="px-3 py-2">Estoque</th>
                 <th className="px-3 py-2">Código</th>
                 <th className="px-3 py-2">Descrição</th>
                 <th className="px-3 py-2">Categoria</th>
@@ -1006,7 +1007,14 @@ function RelatoriosInner() {
                       : "hover:bg-slate-50/80"
                   }
                 >
-                  <td className="px-3 py-2 font-medium">{r.filialSigla}</td>
+                  <td className="px-3 py-2">
+                    <div className="font-medium text-slate-900">
+                      {r.filialSigla}
+                    </div>
+                    {r.filialNome ? (
+                      <div className="text-xs text-slate-500">{r.filialNome}</div>
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs">{r.codigo}</td>
                   <td className="px-3 py-2">
                     {r.descricao}

@@ -251,8 +251,8 @@ export async function carregarMovimentacoesExport(
     include: {
       produto: { select: { codigo: true, descricao: true } },
       tipo: { select: { codigo: true, nome: true } },
-      filial: { select: { sigla: true } },
-      filialDestino: { select: { sigla: true } },
+      filial: { select: { sigla: true, nome: true } },
+      filialDestino: { select: { sigla: true, nome: true } },
       cliente: { select: { nome: true, tipo: true, documento: true } },
       usuario: { select: { nome: true } },
     },
@@ -270,8 +270,8 @@ export async function carregarMovimentacoesExport(
     produtoDescricao: m.produto.descricao,
     quantidade: Number(m.quantidade),
     filial: m.filialDestino
-      ? `${m.filial.sigla} → ${m.filialDestino.sigla}`
-      : m.filial.sigla,
+      ? `${m.filial.sigla} (${m.filial.nome}) → ${m.filialDestino.sigla} (${m.filialDestino.nome})`
+      : `${m.filial.sigla} (${m.filial.nome})`,
     parceiroTipo: m.cliente?.tipo || "",
     parceiroNome: m.cliente?.nome || "",
     parceiroDocumento: m.cliente?.documento || "",
@@ -308,10 +308,14 @@ function buildMovimentacoesHtml(
               : ""
           }`
         : "—";
+      const tipoLabel =
+        r.tipoCodigo && r.tipoNome
+          ? `${escapeHtml(r.tipoCodigo)} — ${escapeHtml(r.tipoNome)}`
+          : escapeHtml(r.tipoCodigo || r.tipoNome || "");
       return `<tr>
         <td>${escapeHtml(fmtDataIso(r.dataMovimento))}</td>
         <td><strong>${escapeHtml(r.operacao)}</strong><br/><span class="muted">${escapeHtml(r.status)}</span></td>
-        <td>${escapeHtml(r.tipoCodigo)} — ${escapeHtml(r.tipoNome)}<br/><span class="muted">${escapeHtml(r.produtoCodigo)} ${escapeHtml(r.produtoDescricao)}</span></td>
+        <td>${tipoLabel}<br/><span class="muted">${escapeHtml(r.produtoCodigo)} ${escapeHtml(r.produtoDescricao)}</span></td>
         <td class="num">${escapeHtml(qtyBr(r.quantidade))}</td>
         <td>${escapeHtml(r.filial)}</td>
         <td>${parceiro}</td>
@@ -362,7 +366,7 @@ function buildMovimentacoesHtml(
         <th>Operação</th>
         <th>Tipo / produto</th>
         <th>Qtd</th>
-        <th>Filial</th>
+        <th>Estoque</th>
         <th>Parceiro</th>
         <th>Usuário</th>
       </tr>
@@ -459,7 +463,7 @@ export async function exportarMovimentacoesExcel(
     { header: "Código", key: "codigo", width: 14 },
     { header: "Produto", key: "produto", width: 32 },
     { header: "Qtd", key: "qtd", width: 10 },
-    { header: "Filial", key: "filial", width: 12 },
+    { header: "Estoque", key: "filial", width: 12 },
     { header: "Parceiro tipo", key: "parceiroTipo", width: 12 },
     { header: "Parceiro", key: "parceiro", width: 24 },
     { header: "Documento", key: "documento", width: 18 },
