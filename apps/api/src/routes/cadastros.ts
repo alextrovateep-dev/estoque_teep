@@ -29,6 +29,10 @@ import {
   excluirProdutoSeLivre,
 } from "../services/produtoExclusaoService";
 import {
+  avaliarExclusaoCliente,
+  excluirClienteSeLivre,
+} from "../services/clienteExclusaoService";
+import {
   exportarProdutosExcel,
   exportarProdutosPdf,
 } from "../services/produtosExportService";
@@ -1596,6 +1600,33 @@ cadastrosRouter.get("/clientes/:id/relacionamentos", async (req, res, next) => {
     next(e);
   }
 });
+
+/** Indica se o cliente/fornecedor pode ser excluído e por quê. */
+cadastrosRouter.get(
+  "/clientes/:id/exclusao",
+  requirePerfil("ADMIN"),
+  async (req, res, next) => {
+    try {
+      res.json(await avaliarExclusaoCliente(req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+/** Exclui cliente/fornecedor sem vínculos. Somente ADMIN. */
+cadastrosRouter.delete(
+  "/clientes/:id",
+  requirePerfil("ADMIN"),
+  async (req, res, next) => {
+    try {
+      const removed = await excluirClienteSeLivre(req.params.id);
+      res.json(removed);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
 
 cadastrosRouter.post(
   "/clientes",

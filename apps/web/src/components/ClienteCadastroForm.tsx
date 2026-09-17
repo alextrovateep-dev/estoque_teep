@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "@/lib/api";
+import { api, getStoredUser } from "@/lib/api";
 import {
   formatCepInput,
   formatCnpj,
@@ -99,6 +99,12 @@ export function ClienteCadastroForm({
   const [loadFailed, setLoadFailed] = useState(false);
   const lastCnpjLookup = useRef("");
   const lastCepLookup = useRef("");
+  const isAdmin = getStoredUser()?.perfil === "ADMIN";
+  const [exclusao, setExclusao] = useState<{
+    podeExcluir: boolean;
+    bloqueios: Array<{ motivo: string; quantidade: number }>;
+  } | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
 
   useEffect(() => {
     api<UsuarioOpt[]>("/usuarios")
@@ -124,8 +130,9 @@ export function ClienteCadastroForm({
     setLoading(true);
     setLoadFailed(false);
     setError("");
+    setExclusao(null);
     api<Cliente>(`/clientes/${editId}`)
-      .then((c) => {
+      .then(async (c) => {
         if (cancelled) return;
         setForm({
           nome: c.nome,
@@ -146,6 +153,18 @@ export function ClienteCadastroForm({
         });
         lastCnpjLookup.current = onlyDigits(c.documento || "");
         lastCepLookup.current = onlyDigits(c.cep || "");
+
+        if (getStoredUser()?.perfil === "ADMIN") {
+          try {
+            const ex = await api<{
+              podeExcluir: boolean;
+              bloqueios: Array<{ motivo: string; quantidade: number }>;
+            }>(`/clientes/${editId}/exclusao`);
+            if (!cancelled) setExclusao(ex);
+          } catch {
+            if (!cancelled) setExclusao(null);
+          }
+        }
       })
       .catch((e) => {
         if (cancelled) return;
@@ -159,6 +178,45 @@ export function ClienteCadastroForm({
       cancelled = true;
     };
   }, [editId]);
+
+  async function onExcluirCliente() {
+    if (!editId || !isAdmin) return;
+    if (exclusao && !exclusao.podeExcluir) {
+      setError(
+        `Não é possível excluir: ${exclusao.bloqueios
+          .map((b) => `${b.motivo} (${b.quantidade})`)
+          .join("; ")}`
+      );
+      return;
+    }
+    if (
+      !confirm(
+        `Excluir permanentemente «${form.nome}»?\n\nSó é permitido se não houver movimentação, RMA ou outros vínculos.`
+      )
+    ) {
+      return;
+    }
+    setExcluindo(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/clientes/${editId}`, { method: "DELETE" });
+      router.replace("/cadastros/clientes?ok=excluido");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir");
+      try {
+        const ex = await api<{
+          podeExcluir: boolean;
+          bloqueios: Array<{ motivo: string; quantidade: number }>;
+        }>(`/clientes/${editId}/exclusao`);
+        setExclusao(ex);
+      } catch {
+        /* ignore */
+      }
+    } finally {
+      setExcluindo(false);
+    }
+  }
 
   async function buscarCnpj(opts?: { silent?: boolean; documento?: string }) {
     const digits = onlyDigits(opts?.documento ?? form.documento);
@@ -612,7 +670,33 @@ export function ClienteCadastroForm({
           >
             {readOnly ? "Voltar" : "Cancelar"}
           </Link>
+          {editId && isAdmin && (
+            <button
+              type="button"
+              disabled={
+                excluindo || (exclusao !== null && !exclusao.podeExcluir)
+              }
+              onClick={() => void onExcluirCliente()}
+              className="ml-auto rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm font-medium text-red-800 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title={
+                exclusao && !exclusao.podeExcluir
+                  ? exclusao.bloqueios.map((b) => b.motivo).join("; ")
+                  : "Excluir cadastro sem vínculos"
+              }
+            >
+              {excluindo ? "Excluindo…" : "Excluir cadastro"}
+            </button>
+          )}
         </div>
+        {editId && isAdmin && exclusao && !exclusao.podeExcluir ? (
+          <p className="text-xs text-amber-800">
+            Exclusão bloqueada:{" "}
+            {exclusao.bloqueios
+              .map((b) => `${b.motivo} (${b.quantidade})`)
+              .join("; ")}
+            . Use Desativar na lista se não quiser mais usá-lo.
+          </p>
+        ) : null}
       </form>
     </>
   );

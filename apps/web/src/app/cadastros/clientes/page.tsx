@@ -83,6 +83,7 @@ function ClientesPageInner() {
     const u = getStoredUser();
     return u ? userCanEditCadastro(u, "clientes") : false;
   })();
+  const isAdmin = getStoredUser()?.perfil === "ADMIN";
   const [lista, setLista] = useState<Cliente[]>([]);
   const [resumo, setResumo] = useState<Record<string, ResumoItem>>({});
   const [busca, setBusca] = useState("");
@@ -92,6 +93,7 @@ function ClientesPageInner() {
   const [expandidoId, setExpandidoId] = useState<string | null>(null);
   const [relCache, setRelCache] = useState<Record<string, Relacionamentos>>({});
   const [loadingRel, setLoadingRel] = useState<string | null>(null);
+  const [excluindoId, setExcluindoId] = useState<string | null>(null);
 
   async function load() {
     const [clientes, resumos] = await Promise.all([
@@ -114,6 +116,7 @@ function ClientesPageInner() {
     const ok = searchParams.get("ok");
     if (ok === "criado") setMsg("Cadastro criado");
     else if (ok === "atualizado") setMsg("Cadastro atualizado");
+    else if (ok === "excluido") setMsg("Cadastro excluído");
   }, [searchParams]);
 
   const filtrados = useMemo(() => {
@@ -143,6 +146,29 @@ function ClientesPageInner() {
       setMsg(updated.ativo ? "Cadastro ativado" : "Cadastro desativado");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
+    }
+  }
+
+  async function excluirCliente(c: Cliente) {
+    if (!isAdmin) return;
+    if (
+      !confirm(
+        `Excluir permanentemente «${c.nome}»?\n\nSó funciona se não houver movimentação, RMA ou outros vínculos.`
+      )
+    ) {
+      return;
+    }
+    setExcluindoId(c.id);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/clientes/${c.id}`, { method: "DELETE" });
+      setMsg(`Cadastro «${c.nome}» excluído`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir");
+    } finally {
+      setExcluindoId(null);
     }
   }
 
@@ -339,6 +365,16 @@ function ClientesPageInner() {
                       className="text-brand hover:underline"
                     >
                       {c.ativo ? "Desativar" : "Ativar"}
+                    </button>
+                  )}
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      disabled={excluindoId === c.id}
+                      onClick={() => void excluirCliente(c)}
+                      className="text-red-700 hover:underline disabled:opacity-50"
+                    >
+                      {excluindoId === c.id ? "Excluindo…" : "Excluir"}
                     </button>
                   )}
                 </div>
