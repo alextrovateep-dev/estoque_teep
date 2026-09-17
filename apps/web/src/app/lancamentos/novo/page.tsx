@@ -2227,6 +2227,7 @@ function NovoLancamentoForm() {
               (isBaixaArvore && isTransf)) &&
             Number(quantidade) > 0 ? (
               <SerieCamposPrefixo
+                key={produto.id}
                 codigoProduto={produto.codigo}
                 produtoId={produto.id}
                 config={produto.configuracaoSerie}

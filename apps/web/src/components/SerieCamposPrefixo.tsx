@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import {
   anoDoisDigitos,
@@ -41,6 +41,10 @@ type Props = {
   validarNascimento?: boolean;
 };
 
+function formatAno2(n: number): string {
+  return String(clampAno2(n)).padStart(2, "0");
+}
+
 export function SerieCamposPrefixo({
   codigoProduto,
   produtoId,
@@ -72,9 +76,23 @@ export function SerieCamposPrefixo({
   };
 
   const [anos, setAnos] = useState<number[]>([]);
+  /** Rascunho do ano enquanto o campo está em foco (evita maxLength+pad bloquear o 2º dígito). */
+  const [anoDraft, setAnoDraft] = useState<Record<number, string>>({});
   const [localStatus, setLocalStatus] = useState<Status[]>([]);
   const [localMsgs, setLocalMsgs] = useState<string[]>([]);
   const timers = useRef<Record<number, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    setAnos([]);
+    setAnoDraft({});
+  }, [
+    codigoProduto,
+    produtoId,
+    config?.formato,
+    config?.tamanhoSequencial,
+    config?.prefixoFixo,
+    config?.sufixoFixo,
+  ]);
 
   function anoDaLinha(idx: number, sn: string): number {
     if (anos[idx] != null) return clampAno2(anos[idx]!);
@@ -92,6 +110,38 @@ export function SerieCamposPrefixo({
       const next = [...prev];
       while (next.length < idx + 1) next.push(anoPadrao);
       next[idx] = clampAno2(ano2);
+      return next;
+    });
+  }
+
+  /**
+   * Só grava o ano quando os 2 dígitos estão completos: dígito solto não vira
+   * 0X (origem do ano "02"/"00" travado) — mantém o ano anterior.
+   */
+  function comitarAno(
+    idx: number,
+    digitos: string,
+    anoAtual: number,
+    sequencia: string
+  ) {
+    const d = digitos.replace(/\D/g, "");
+    if (d.length < 2) return;
+    const ano = clampAno2(Number(d));
+    if (ano === anoAtual) return;
+    setAnoLinha(idx, ano);
+    const prefixo = prefixoSerieProduto({ ...optsSerie, ano2: ano });
+    const full = serieCompletaDeSequencia(prefixo, sequencia, tamanho, sufixo, {
+      finalizar: false,
+    });
+    onChangeSerie(idx, full);
+    setStatus(idx, "idle", "");
+  }
+
+  function limparAnoDraft(idx: number) {
+    setAnoDraft((prev) => {
+      if (prev[idx] == null) return prev;
+      const next = { ...prev };
+      delete next[idx];
       return next;
     });
   }
@@ -208,14 +258,20 @@ export function SerieCamposPrefixo({
           ) : null}
         </span>
       </p>
+      {!partes.temAno ? (
+        <p className="text-[11px] text-amber-800">
+          O formato deste produto não inclui {"{ano2}"}. Ajuste em Cadastros →
+          Produtos para o padrão {"{codigo}{ano2}{seq4}"}.
+        </p>
+      ) : null}
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {series.map((sn, i) => {
           const st = serieStatus?.[i] || "idle";
           const border =
             st === "ok"
-              ? "border-emerald-400 focus:ring-emerald-200"
+              ? "border-emerald-400 focus-within:ring-emerald-200"
               : st === "err"
-                ? "border-rose-400 focus:ring-rose-200"
+                ? "border-rose-400 focus-within:ring-rose-200"
                 : st === "checking"
                   ? "border-amber-300"
                   : "border-slate-200";
@@ -225,10 +281,12 @@ export function SerieCamposPrefixo({
             finalizar: false,
           });
           const ano2 = parsed.ano2;
+          const anoEmFoco = anoDraft[i] != null;
+          const anoExibido = anoEmFoco ? anoDraft[i]! : formatAno2(ano2);
           return (
-            <div key={i}>
+            <div key={`${codigoProduto}-${i}`}>
               <div
-                className={`flex overflow-hidden rounded-lg border bg-white ${border}`}
+                className={`flex overflow-hidden rounded-lg border bg-white focus-within:ring-2 ${border}`}
               >
                 {partes.antesAno ? (
                   <span className="flex max-w-[40%] shrink-0 items-center truncate border-r border-slate-200 bg-slate-50 px-2 font-mono text-xs text-slate-600">
@@ -237,33 +295,36 @@ export function SerieCamposPrefixo({
                 ) : null}
                 {partes.temAno ? (
                   <input
-                    value={String(ano2).padStart(2, "0")}
+                    value={anoExibido}
                     inputMode="numeric"
                     autoComplete="off"
-                    maxLength={2}
-                    title="Ano (2 dígitos). Preenchido automaticamente; edite se precisar."
+                    title="Ano (2 dígitos). Preenchido com o ano atual; edite se precisar."
                     aria-label="Ano da série (2 dígitos)"
-                    onFocus={(e) => e.target.select()}
-                    onChange={(e) => {
-                      const d = e.target.value.replace(/\D/g, "").slice(-2);
-                      if (!d) return;
-                      const novoAno = clampAno2(Number(d.padStart(2, "0")));
-                      setAnoLinha(i, novoAno);
-                      const prefixo = prefixoSerieProduto({
-                        ...optsSerie,
-                        ano2: novoAno,
-                      });
-                      const full = serieCompletaDeSequencia(
-                        prefixo,
-                        parsed.sequencia,
-                        tamanho,
-                        sufixo,
-                        { finalizar: false }
-                      );
-                      onChangeSerie(i, full);
-                      setStatus(i, "idle", "");
+                    onFocus={(e) => {
+                      setAnoDraft((prev) => ({
+                        ...prev,
+                        [i]: formatAno2(ano2),
+                      }));
+                      e.target.select();
                     }}
-                    className="w-10 shrink-0 border-r border-slate-200 bg-slate-50 px-1 py-2 text-center font-mono text-sm outline-none"
+                    onChange={(e) => {
+                      // slice(-2): o dígito novo entra mesmo com o campo cheio.
+                      const d = e.target.value.replace(/\D/g, "").slice(-2);
+                      setAnoDraft((prev) => ({ ...prev, [i]: d }));
+                      comitarAno(i, d, ano2, parsed.sequencia);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      comitarAno(i, anoDraft[i] ?? "", ano2, parsed.sequencia);
+                      limparAnoDraft(i);
+                      e.currentTarget.blur();
+                    }}
+                    onBlur={() => {
+                      comitarAno(i, anoDraft[i] ?? "", ano2, parsed.sequencia);
+                      limparAnoDraft(i);
+                    }}
+                    className="w-11 shrink-0 border-r border-slate-200 bg-white px-1 py-2 text-center font-mono text-sm font-semibold text-slate-900 outline-none"
                   />
                 ) : null}
                 {partes.depoisAno ? (

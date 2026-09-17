@@ -210,6 +210,7 @@ export function InventarioSerieAjuste({
                 <p className="text-xs text-rose-700">{erroLocal}</p>
               ) : null}
               <SerieCamposPrefixo
+                key={produtoId || codigo}
                 codigoProduto={codigo}
                 produtoId={produtoId}
                 config={serieConfig ?? null}

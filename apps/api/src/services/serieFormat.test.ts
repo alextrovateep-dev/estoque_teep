@@ -133,4 +133,15 @@ describe("serieFormat", () => {
     assert.equal(r.sequencia, "0007");
     assert.equal(r.completa, "TMP1122W260007");
   });
+
+  it("interpretarEntradaSerie reconhece ano antigo colado na série completa", () => {
+    const r = interpretarEntradaSerie("TTP1001WE020015", {
+      codigoProduto: "TTP-1001-WE",
+      tamanhoSequencial: 4,
+      ano2Atual: 26,
+    });
+    assert.equal(r.ano2, 2);
+    assert.equal(r.sequencia, "0015");
+    assert.equal(r.completa, "TTP1001WE020015");
+  });
 });

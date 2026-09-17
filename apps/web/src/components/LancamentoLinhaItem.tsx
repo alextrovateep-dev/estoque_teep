@@ -483,6 +483,7 @@ export function LancamentoLinhaItem({
 
       {usaCamposSeriePrefixo && qtdInt > 0 && linha.produto ? (
         <SerieCamposPrefixo
+          key={linha.produto.id}
           codigoProduto={linha.produto.codigo}
           produtoId={linha.produto.id}
           config={linha.produto.configuracaoSerie}

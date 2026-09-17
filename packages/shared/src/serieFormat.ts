@@ -212,7 +212,8 @@ export type InterpretacaoSerie = {
 function anosCandidatos(atual: number): number[] {
   const a = clampAno2(atual);
   const out = [a];
-  for (let i = 1; i <= 20; i++) out.push(clampAno2(a - i));
+  // Cobre ~30 anos para trás + 1 à frente (séries antigas / virada de ano).
+  for (let i = 1; i <= 30; i++) out.push(clampAno2(a - i));
   out.push(clampAno2(a + 1));
   return out;
 }
