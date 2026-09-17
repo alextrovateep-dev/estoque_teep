@@ -338,6 +338,58 @@ export function serieCompletaDeSequencia(
   return `${pref}${seq}${suf}`;
 }
 
+export type ConferenciaSerie =
+  | { ok: true; numeroSerie: string; ano2: number; sequencia: string }
+  | { ok: false; numeroSerie: string; motivo: string };
+
+/**
+ * Confere uma série digitada/colada contra o padrão do produto.
+ * O ano sai da própria série (é editável no lançamento), não do ano corrente.
+ */
+export function conferirSerieProduto(
+  numero: string,
+  opts: {
+    codigoProduto: string;
+    formato?: string | null;
+    tamanhoSequencial?: number | null;
+    prefixoFixo?: string | null;
+    sufixoFixo?: string | null;
+  }
+): ConferenciaSerie {
+  const tamanho = clampTamanhoSequencial(opts.tamanhoSequencial);
+  const informado = String(numero ?? "").trim();
+  const sufixo = opts.sufixoFixo ?? null;
+  const { ano2 } = interpretarEntradaSerie(informado, {
+    ...opts,
+    tamanhoSequencial: tamanho,
+  });
+  const prefixo = prefixoSerieProduto({
+    ...opts,
+    ano2,
+    tamanhoSequencial: tamanho,
+  });
+  const sequencia = sequenciaDeSerieCompleta(informado, prefixo, sufixo);
+  const tam = validarSequenciaSerieTamanho(sequencia, tamanho);
+  if (!tam.ok) {
+    return { ok: false, numeroSerie: informado, motivo: tam.motivo };
+  }
+  const normalizado = serieCompletaDeSequencia(
+    prefixo,
+    sequencia,
+    tamanho,
+    sufixo,
+    { finalizar: true }
+  );
+  if (normalizado.toUpperCase() !== informado.toUpperCase()) {
+    return {
+      ok: false,
+      numeroSerie: informado,
+      motivo: `Não confere com o padrão do produto (esperado ${normalizado})`,
+    };
+  }
+  return { ok: true, numeroSerie: normalizado, ano2, sequencia };
+}
+
 /** Extrai só a parte sequencial de uma série completa (para exibir no input). */
 export function sequenciaDeSerieCompleta(
   serieCompleta: string,

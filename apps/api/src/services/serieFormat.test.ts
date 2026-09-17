@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  conferirSerieProduto,
   formatarNumeroSerie,
   gerarSequenciaSeries,
   anoDoisDigitos,
@@ -143,5 +144,41 @@ describe("serieFormat", () => {
     assert.equal(r.ano2, 2);
     assert.equal(r.sequencia, "0015");
     assert.equal(r.completa, "TTP1001WE020015");
+  });
+
+  describe("conferirSerieProduto", () => {
+    const produto = {
+      codigoProduto: "TTP-1001-WE",
+      tamanhoSequencial: 4,
+    };
+
+    it("aceita série com ano editado (não só o ano corrente)", () => {
+      const r = conferirSerieProduto("TTP1001WE240041", produto);
+      assert.equal(r.ok, true);
+      assert.equal(r.ok && r.numeroSerie, "TTP1001WE240041");
+      assert.equal(r.ok && r.ano2, 24);
+      assert.equal(r.ok && r.sequencia, "0041");
+    });
+
+    it("normaliza caixa baixa", () => {
+      const r = conferirSerieProduto("ttp1001we240041", produto);
+      assert.equal(r.ok, true);
+      assert.equal(r.ok && r.numeroSerie, "TTP1001WE240041");
+    });
+
+    it("recusa sequência com dígitos além do tamanho", () => {
+      const r = conferirSerieProduto("TTP1001WE24000041", produto);
+      assert.equal(r.ok, false);
+      assert.match(
+        !r.ok ? r.motivo : "",
+        /exatamente 4 d/
+      );
+    });
+
+    it("recusa série de outro produto", () => {
+      const r = conferirSerieProduto("ABC260007", produto);
+      assert.equal(r.ok, false);
+      assert.match(!r.ok ? r.motivo : "", /só dígitos/);
+    });
   });
 });

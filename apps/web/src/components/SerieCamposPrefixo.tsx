@@ -85,6 +85,8 @@ export function SerieCamposPrefixo({
   useEffect(() => {
     setAnos([]);
     setAnoDraft({});
+    setLocalStatus([]);
+    setLocalMsgs([]);
   }, [
     codigoProduto,
     produtoId,
@@ -93,6 +95,13 @@ export function SerieCamposPrefixo({
     config?.prefixoFixo,
     config?.sufixoFixo,
   ]);
+
+  useEffect(() => {
+    const pendentes = timers.current;
+    return () => {
+      for (const t of Object.values(pendentes)) clearTimeout(t);
+    };
+  }, []);
 
   function anoDaLinha(idx: number, sn: string): number {
     if (anos[idx] != null) return clampAno2(anos[idx]!);
@@ -135,6 +144,8 @@ export function SerieCamposPrefixo({
     });
     onChangeSerie(idx, full);
     setStatus(idx, "idle", "");
+    // Série já completa: revalida com o ano novo.
+    agendarValidacao(idx, full, sequencia.replace(/\D/g, "").length);
   }
 
   function limparAnoDraft(idx: number) {
@@ -284,7 +295,7 @@ export function SerieCamposPrefixo({
           const anoEmFoco = anoDraft[i] != null;
           const anoExibido = anoEmFoco ? anoDraft[i]! : formatAno2(ano2);
           return (
-            <div key={`${codigoProduto}-${i}`}>
+            <div key={i}>
               <div
                 className={`flex overflow-hidden rounded-lg border bg-white focus-within:ring-2 ${border}`}
               >

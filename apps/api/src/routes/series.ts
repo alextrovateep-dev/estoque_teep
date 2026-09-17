@@ -1,12 +1,8 @@
 import { Router } from "express";
 import {
   alocarSeriesSchema,
-  clampTamanhoSequencial,
+  conferirSerieProduto,
   desfazerAlocacaoSerieSchema,
-  prefixoSerieProduto,
-  sequenciaDeSerieCompleta,
-  serieCompletaDeSequencia,
-  validarSequenciaSerieTamanho,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import {
@@ -238,34 +234,21 @@ seriesRouter.post(
       }
 
       const cfg = produto.configuracaoSerie;
-      const tamanho = clampTamanhoSequencial(cfg?.tamanhoSequencial);
-      const prefixo = prefixoSerieProduto({
+      const conferencia = conferirSerieProduto(numero, {
         codigoProduto: produto.codigo,
         formato: cfg?.formato,
-        tamanhoSequencial: tamanho,
+        tamanhoSequencial: cfg?.tamanhoSequencial,
         prefixoFixo: cfg?.prefixoFixo,
         sufixoFixo: cfg?.sufixoFixo,
       });
-      const seq = sequenciaDeSerieCompleta(
-        numero,
-        prefixo,
-        cfg?.sufixoFixo
-      );
-      const tam = validarSequenciaSerieTamanho(seq, tamanho);
-      if (!tam.ok) {
+      if (!conferencia.ok) {
         return res.json({
           ok: false,
           numeroSerie: numero,
-          motivo: tam.motivo,
+          motivo: conferencia.motivo,
         });
       }
-      const normalizado = serieCompletaDeSequencia(
-        prefixo,
-        seq,
-        tamanho,
-        cfg?.sufixoFixo,
-        { finalizar: true }
-      );
+      const normalizado = conferencia.numeroSerie;
 
       const existente = await prisma.unidadeSerie.findFirst({
         where: {

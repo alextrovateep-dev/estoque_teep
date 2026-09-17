@@ -1,11 +1,5 @@
 import { Prisma } from "@prisma/client";
-import {
-  clampTamanhoSequencial,
-  prefixoSerieProduto,
-  sequenciaDeSerieCompleta,
-  serieCompletaDeSequencia,
-  validarSequenciaSerieTamanho,
-} from "@teep/shared";
+import { conferirSerieProduto } from "@teep/shared";
 import { AppError } from "../middleware/error";
 import {
   confirmarAlocacoesPorIds,
@@ -74,34 +68,17 @@ export async function assertFormatoSeriesNascimento(
   if (!produto?.controlaSerie) return;
 
   const cfg = produto.configuracaoSerie;
-  const tamanho = clampTamanhoSequencial(cfg?.tamanhoSequencial);
-  const prefixo = prefixoSerieProduto({
-    codigoProduto: produto.codigo,
-    formato: cfg?.formato,
-    tamanhoSequencial: tamanho,
-    prefixoFixo: cfg?.prefixoFixo,
-    sufixoFixo: cfg?.sufixoFixo,
-  });
-  const sufixo = cfg?.sufixoFixo ?? null;
 
   for (const sn of series) {
-    const seq = sequenciaDeSerieCompleta(sn, prefixo, sufixo);
-    const check = validarSequenciaSerieTamanho(seq, tamanho);
+    const check = conferirSerieProduto(sn, {
+      codigoProduto: produto.codigo,
+      formato: cfg?.formato,
+      tamanhoSequencial: cfg?.tamanhoSequencial,
+      prefixoFixo: cfg?.prefixoFixo,
+      sufixoFixo: cfg?.sufixoFixo,
+    });
     if (!check.ok) {
       throw new AppError(400, `Série ${sn}: ${check.motivo}`);
-    }
-    const esperado = serieCompletaDeSequencia(
-      prefixo,
-      seq,
-      tamanho,
-      sufixo,
-      { finalizar: true }
-    );
-    if (esperado.toUpperCase() !== sn.toUpperCase()) {
-      throw new AppError(
-        400,
-        `Série ${sn} não confere com o padrão do produto (esperado ${esperado})`
-      );
     }
   }
 }
