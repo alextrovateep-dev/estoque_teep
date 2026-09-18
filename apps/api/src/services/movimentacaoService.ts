@@ -942,6 +942,7 @@ export async function criarMovimentacao(
       saldoAtual: result.saldoAtual,
       estoqueMinimo: result.movimentacao.produto.estoqueMinimo,
       estoqueMaximo: result.movimentacao.produto.estoqueMaximo,
+      responsavelNome: user.nome,
     });
   }
 
@@ -1115,6 +1116,7 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
       saldoAtual: result.saldoAtual,
       estoqueMinimo: result.movimentacao.produto.estoqueMinimo,
       estoqueMaximo: result.movimentacao.produto.estoqueMaximo,
+      responsavelNome: user.nome,
     });
   }
 
@@ -1375,6 +1377,7 @@ export async function estornarMovimentacao(
       saldoAtual: result.saldoAtual,
       estoqueMinimo: result.movimentacao.produto.estoqueMinimo,
       estoqueMaximo: result.movimentacao.produto.estoqueMaximo,
+      responsavelNome: user.nome,
     });
   }
 
@@ -1621,6 +1624,7 @@ export async function inicializarEstoque(
       saldoAtual: a.saldoAtual,
       estoqueMinimo: a.estoqueMinimo,
       estoqueMaximo: a.estoqueMaximo,
+      responsavelNome: user.nome,
     });
     alertas.push(
       ...alertasUiDeLimiares({

@@ -581,6 +581,15 @@ export const ALERTA_EVENTO_LABELS: Record<AlertaEvento, string> = {
   PEDIDO_SEPARADO: "Pedido separado",
 };
 
+/**
+ * Linha de autoria usada em todo alerta/e-mail disparado por ação de usuário.
+ * Sem nome (rotina automática do sistema), some da mensagem.
+ */
+export function linhaResponsavel(nome?: string | null): string | null {
+  const n = nome?.trim();
+  return n ? `Usuário responsável por esse evento: ${n}` : null;
+}
+
 export const MOVIMENTACAO_ANEXO_TIPOS = [
   "NOTA_FISCAL",
   "TERMO_COMODATO",

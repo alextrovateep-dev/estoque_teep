@@ -474,7 +474,7 @@ cadastrosRouter.post(
   "/usuarios",
   requirePerfil("ADMIN"),
   validateBody(createUsuarioSchema),
-  async (req, res, next) => {
+  async (req: AuthedRequest, res, next) => {
     try {
       const { senha, perfil, filialId, filialIds, permissoes, ...rest } =
         req.body;
@@ -515,6 +515,7 @@ cadastrosRouter.post(
         email: data.email,
         senhaProvisoria,
         motivo: "cadastro",
+        responsavelNome: req.user?.nome,
       });
 
       res.status(201).json({
@@ -571,6 +572,7 @@ cadastrosRouter.post(
         email: usuario.email,
         senhaProvisoria,
         motivo: "reset",
+        responsavelNome: req.user?.nome,
       });
 
       res.json({
@@ -1278,7 +1280,7 @@ cadastrosRouter.patch(
           produtoDescricao: updated.descricao,
           precoAnterior,
           precoNovo,
-          alteradoPorNome: req.user?.nome,
+          responsavelNome: req.user?.nome,
         });
       }
 

@@ -173,12 +173,14 @@ type AlertaLimiarRaw = {
 };
 
 function emitirAlertasLimiaresTransferencia(
-  alertasRaw: AlertaLimiarRaw[]
+  alertasRaw: AlertaLimiarRaw[],
+  responsavelNome?: string | null
 ): AlertaUi[] {
   const alertasUi: AlertaUi[] = [];
   for (const a of alertasRaw) {
     if (!a.abaixoMinimo && !a.acimaMaximo) continue;
     notificarLimiaresEstoque({
+      responsavelNome,
       abaixoMinimo: a.abaixoMinimo,
       acimaMaximo: a.acimaMaximo,
       produtoCodigo: a.produtoCodigo,
@@ -597,7 +599,7 @@ async function criarTransferenciaInterna(
     };
   });
 
-  const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw);
+  const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw, user.nome);
 
   if (result.pendenteAprovacao) {
     const t = result.transferencia;
@@ -605,7 +607,7 @@ async function criarTransferenciaInterna(
       transferenciaId: t.id,
       origemNome: t.origemFilial.nome,
       destinoNome: t.destinoFilial.nome,
-      criadoPorNome: t.criadoPor?.nome,
+      responsavelNome: t.criadoPor?.nome,
       qtdItens: t.itens.length,
     });
   }
@@ -908,7 +910,7 @@ export async function aprovarTransferencia(user: AuthUser, id: string) {
     return { transferencia: updated, alertasRaw: alertas, creditoDestino: credito };
   });
 
-  const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw);
+  const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw, user.nome);
 
   const t = result.transferencia;
   notificarTransferenciaDecisao({
@@ -916,7 +918,7 @@ export async function aprovarTransferencia(user: AuthUser, id: string) {
     origemNome: t.origemFilial.nome,
     destinoNome: t.destinoFilial.nome,
     aprovado: true,
-    decididoPorNome: user.nome,
+    responsavelNome: user.nome,
     criadoPorId: t.criadoPor?.id,
   });
 
@@ -980,7 +982,7 @@ export async function rejeitarTransferencia(
     destinoNome: t.destinoFilial.nome,
     aprovado: false,
     motivo: result.motivo,
-    decididoPorNome: user.nome,
+    responsavelNome: user.nome,
     criadoPorId: t.criadoPor?.id,
   });
 
@@ -1299,7 +1301,7 @@ export async function conferirTransferencia(
     };
   });
 
-  const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw);
+  const alertasUi = emitirAlertasLimiaresTransferencia(result.alertasRaw, user.nome);
 
   if (result.temDivergencia) {
     notificarDivergenciaTransferencia({
@@ -1307,6 +1309,7 @@ export async function conferirTransferencia(
       origemNome: result.transferencia.origemFilial.nome,
       destinoNome: result.transferencia.destinoFilial.nome,
       resumoItens: result.divergencias.join("; "),
+      responsavelNome: user.nome,
     });
     alertasUi.push({
       evento: "DIVERGENCIA_TRANSFERENCIA",
@@ -1546,7 +1549,8 @@ export async function cancelarTransferencia(user: AuthUser, id: string) {
     result.alertasRaw.map((a) => ({
       ...a,
       filialNome: result.transferencia.origemFilial.nome,
-    }))
+    })),
+    user.nome
   );
 
   return {

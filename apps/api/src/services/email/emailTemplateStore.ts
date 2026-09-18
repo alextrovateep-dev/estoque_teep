@@ -1,4 +1,4 @@
-import { ALERTA_EVENTO_LABELS } from "@teep/shared";
+import { ALERTA_EVENTO_LABELS, linhaResponsavel } from "@teep/shared";
 import { prisma } from "../../lib/prisma";
 import {
   ALERTA_EMAIL_TYPES,
@@ -36,6 +36,10 @@ const ACESSO_PLACEHOLDERS = [
   { key: "email", descricao: "E-mail de login" },
   { key: "senha", descricao: "Senha provisória" },
   { key: "appUrl", descricao: "URL do sistema" },
+  {
+    key: "responsavel",
+    descricao: "Linha com o usuário que executou a ação (vazio se não houver)",
+  },
 ];
 
 /** Defaults de fábrica (quando não há override no banco). */
@@ -56,6 +60,8 @@ export function defaultEmailTemplate(type: EmailType): EmailTemplateDef {
         "Senha provisória: {{senha}}",
         "",
         "Entrar no sistema: {{appUrl}}",
+        "",
+        "{{responsavel}}",
         "",
         "Por segurança, no primeiro acesso pedimos que você troque esta senha. Não encaminhe este e-mail — ele contém sua senha temporária.",
         "",
@@ -99,7 +105,8 @@ export function renderEmailFromTemplate(
   vars: Record<string, string>
 ): PreparedTransactionalEmail {
   const subject = applyVars(def.subject, vars, false).trim();
-  const text = applyVars(def.bodyText, vars, false);
+  // Var opcional vazia (ex.: responsável) não deve deixar bloco em branco.
+  const text = applyVars(def.bodyText, vars, false).replace(/\n{3,}/g, "\n\n");
   const titulo =
     vars.titulo?.trim() ||
     (ALERTA_EMAIL_TYPES.includes(def.type as (typeof ALERTA_EMAIL_TYPES)[number])
@@ -181,6 +188,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
     process.env.FRONTEND_URL ||
     process.env.CORS_ORIGIN ||
     "http://localhost:3000";
+  const quem = linhaResponsavel("Carlos Admin")!;
   if (type === "ACESSO_SENHA_PROVISORIA") {
     return {
       nome: "Maria Silva",
@@ -190,6 +198,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       email: "maria.silva@teep.com.br",
       senha: "Tmp9xample",
       appUrl,
+      responsavel: quem,
     };
   }
   if (type === "ESTOQUE_MINIMO") {
@@ -199,6 +208,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "O saldo de DEMO-01 — Sensor TEEP em PLN (Paulínia) está baixo.",
         "Saldo atual: 2\nMínimo cadastrado: 5",
+        quem,
         `Abrir dashboard: ${appUrl}/dashboard`,
       ].join("\n\n"),
     };
@@ -210,6 +220,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "O saldo de DEMO-01 — Sensor TEEP em PLN (Paulínia) ultrapassou o máximo.",
         "Saldo atual: 120\nMáximo cadastrado: 100",
+        quem,
         `Abrir dashboard: ${appUrl}/dashboard`,
       ].join("\n\n"),
     };
@@ -221,7 +232,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "O preço de DEMO-01 — Sensor TEEP foi alterado.",
         "De R$ 150,00 para R$ 165,00 (+10%).",
-        "Alteração feita por Carlos Admin.",
+        quem,
         `Cadastro do produto: ${appUrl}/cadastros/produtos/00000000-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -233,7 +244,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "Há uma transferência (a1b2c3d4) esperando sua aprovação.",
         "De Paulínia para Taubaté · 2 item(ns).",
-        "Solicitada por Carlos Admin.",
+        quem,
         `Aprovar transferência: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -243,8 +254,9 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       nome: "Ana Operações",
       titulo: "Transferência aprovada · a1b2c3d4",
       mensagem: [
-        "A transferência a1b2c3d4 foi aprovada por Maria Aprovadora.",
+        "A transferência a1b2c3d4 foi aprovada.",
         "Rota: Paulínia → Taubaté.",
+        linhaResponsavel("Maria Aprovadora")!,
         `Abrir transferência: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -254,9 +266,10 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       nome: "Ana Operações",
       titulo: "Transferência rejeitada · a1b2c3d4",
       mensagem: [
-        "A transferência a1b2c3d4 foi rejeitada por Maria Aprovadora.",
+        "A transferência a1b2c3d4 foi rejeitada.",
         "Rota: Paulínia → Taubaté.",
         "Motivo: Quantidade divergente do pedido.",
+        linhaResponsavel("Maria Aprovadora")!,
         `Abrir transferência: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -269,6 +282,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
         "A conferência da transferência a1b2c3d4 encontrou diferença entre o enviado e o recebido.",
         "Rota: Paulínia → Taubaté.",
         "DEMO-01: enviado 10, recebido 8.",
+        quem,
         `Abrir transferência: ${appUrl}/transferencias/a1b2c3d4-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -282,6 +296,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
         "Produto: DEMO-01 — Sensor TEEP",
         "Qtd saída: 2\nAinda em aberto: 2\nCliente: Cliente Demo\nEstoque: PLN (Paulínia)\nMovimento a1b2c3d4 em 01/07/2026",
         "Confira se o equipamento já voltou ou providencie o retorno.",
+        quem,
         `Abrir movimentação: ${appUrl}/movimentacoes/a1b2c3d4-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -293,7 +308,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "Um novo RMA (b2c3d4e5) foi aberto para Cliente Demo LTDA.",
         "2 item(ns) · NF de entrada: 12345",
-        "Aberto por Carlos Admin.",
+        quem,
         "Itens: DEMO-01 × 1; DEMO-02 × 1",
         `Abrir RMA: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
       ].join("\n\n"),
@@ -306,6 +321,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "Atualização financeira no RMA b2c3d4e5 (Cliente Demo LTDA).",
         "Há cobrança registrada neste RMA.\nValor: R$ 350,00 · NF de cobrança: 99887",
+        quem,
         `Abrir RMA: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -316,6 +332,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       titulo: "RMA fechado · b2c3d4e5",
       mensagem: [
         "O RMA b2c3d4e5 de Cliente Demo LTDA foi fechado.",
+        quem,
         `Abrir RMA: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -327,6 +344,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "Há diagnóstico(s) / laudo(s) no RMA b2c3d4e5 (Cliente Demo LTDA).",
         "• DEMO-01 — defeito confirmado\n• DEMO-02 — em análise",
+        quem,
         `Abrir RMA: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -338,6 +356,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "O orçamento do RMA b2c3d4e5 (Cliente Demo LTDA) foi fechado e está pronto para negociar com o cliente.",
         "• DEMO-01 · N/S ABC123 — R$ 350,00",
+        quem,
         "Gere o PDF na tela de orçamento e envie ao cliente.",
         `Abrir orçamento do RMA: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001/orcamento`,
       ].join("\n\n"),
@@ -350,7 +369,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       mensagem: [
         "Decisão no orçamento do RMA b2c3d4e5 (Cliente Demo LTDA).",
         "• DEMO-01 · N/S ABC123 — Aprovado · R$ 350,00",
-        "Registrado por Carlos Comercial.",
+        linhaResponsavel("Carlos Comercial")!,
         `Abrir RMA: ${appUrl}/rma/b2c3d4e5-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };
@@ -363,6 +382,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
         "O pedido 1042 foi separado e o estoque já foi baixado.",
         "Cliente: Cliente Demo LTDA",
         "Estoque: PLN",
+        quem,
         `Abrir pedido: ${appUrl}/pedidos/c3d4e5f6-0000-4000-8000-000000000001`,
       ].join("\n\n"),
     };

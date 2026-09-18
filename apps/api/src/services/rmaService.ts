@@ -678,7 +678,10 @@ export async function exigirNfRetornoParaLiberacao(opts: {
   if (msg) throw new AppError(400, msg);
 }
 
-async function fecharProcessoAgora(processoId: string) {
+async function fecharProcessoAgora(
+  processoId: string,
+  responsavelNome?: string | null
+) {
   const before = await prisma.rmaProcesso.findUnique({
     where: { id: processoId },
     select: {
@@ -706,11 +709,15 @@ async function fecharProcessoAgora(processoId: string) {
     clienteNome: before.cliente.nome,
     status: "FECHADO",
     destinatarioIds: destinatarioIdsDoProcesso(before),
+    responsavelNome,
   });
 }
 
 /** Fecha só após retorno ao cliente (devolução/troca) com NF de saída, quando não resta item em atendimento. */
-async function maybeFecharAposRetornoAoCliente(processoId: string) {
+async function maybeFecharAposRetornoAoCliente(
+  processoId: string,
+  responsavelNome?: string | null
+) {
   const proc = await prisma.rmaProcesso.findUnique({
     where: { id: processoId },
     select: {
@@ -729,7 +736,7 @@ async function maybeFecharAposRetornoAoCliente(processoId: string) {
     (i) => i.status === "DEVOLVIDO" || Boolean(i.movSaidaId)
   );
   if (!retornouAoCliente) return;
-  await fecharProcessoAgora(processoId);
+  await fecharProcessoAgora(processoId, responsavelNome);
 }
 
 export async function listarRma(
@@ -1064,7 +1071,7 @@ export async function criarRmaProcesso(
     processoId: processo.id,
     clienteNome: cliente.nome,
     qtdItens: linhas.length,
-    criadoPorNome: user.nome,
+    responsavelNome: user.nome,
     destinatarioIds: destIds,
     nfEntradaNumero: input.nfEntradaNumero,
     itensResumo,
@@ -1389,6 +1396,7 @@ export async function atualizarRmaItemFinanceiro(
       itemAtual?.valorCobrado != null ? Number(itemAtual.valorCobrado) : null,
     nfCobrancaNumero: itemAtual?.nfCobrancaNumero ?? null,
     destinatarioIds: destinatarioIdsDoProcesso(atualizado),
+    responsavelNome: user.nome,
   });
   return atualizado;
 }
@@ -2072,7 +2080,7 @@ export async function devolverRmaItens(
     throw e;
   }
 
-  await maybeFecharAposRetornoAoCliente(id);
+  await maybeFecharAposRetornoAoCliente(id, user.nome);
   return obterRma(user, id);
 }
 
@@ -2448,7 +2456,7 @@ export async function trocarRmaItem(
     throw e;
   }
 
-  await maybeFecharAposRetornoAoCliente(processoId);
+  await maybeFecharAposRetornoAoCliente(processoId, user.nome);
   return obterRma(user, processoId);
 }
 
@@ -2550,6 +2558,7 @@ export async function cancelarRma(
         clienteNome: proc.cliente.nome,
         status: "CANCELADO",
         destinatarioIds: destinatarioIdsDoProcesso(proc),
+        responsavelNome: user.nome,
       });
     }
     const orig = e instanceof Error ? e.message : "Falha ao cancelar RMA";
@@ -2571,11 +2580,12 @@ export async function cancelarRma(
     data: { status: "CANCELADO", observacao: observacaoProcesso },
   });
   notificarRmaEncerrado({
-        processoId: id,
-        clienteNome: proc.cliente.nome,
-        status: "CANCELADO",
-        destinatarioIds: destinatarioIdsDoProcesso(proc),
-      });
+    processoId: id,
+    clienteNome: proc.cliente.nome,
+    status: "CANCELADO",
+    destinatarioIds: destinatarioIdsDoProcesso(proc),
+    responsavelNome: user.nome,
+  });
   return obterRma(user, id);
 }
 
@@ -2675,6 +2685,7 @@ export async function notificarLaudosRma(user: AuthUser, id: string) {
     clienteNome: proc.cliente.nome,
     destinatarioIds: destIds,
     laudosResumo: linhas.map((l) => l.texto),
+    responsavelNome: user.nome,
   });
 
   // Etapas avançam pelo checklist/diagnóstico/orçamento — notificar só alerta.

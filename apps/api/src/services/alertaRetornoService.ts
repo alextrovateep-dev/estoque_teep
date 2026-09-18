@@ -1,5 +1,6 @@
 import {
   DIAS_ALERTA_RETORNO_DEFAULT,
+  linhaResponsavel,
 } from "@teep/shared";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
@@ -238,6 +239,7 @@ export async function processarAlertasRetornoVencidos(): Promise<{
               cliente: { select: { nome: true } },
               filial: { select: { sigla: true, nome: true } },
               tipo: { select: { nome: true } },
+              usuario: { select: { nome: true } },
             },
           },
         },
@@ -266,6 +268,7 @@ export async function processarAlertasRetornoVencidos(): Promise<{
           .filter(Boolean)
           .join("\n"),
         "Confira se o equipamento já voltou ou providencie o retorno.",
+        linhaResponsavel(m.usuario?.nome),
         `Abrir movimentação: ${appUrl}${href}`,
       ]
         .filter(Boolean)

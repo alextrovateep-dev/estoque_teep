@@ -42,6 +42,7 @@ const MASK_LABEL: Record<string, string> = {
   email: "E-mail de login",
   senha: "Senha provisória",
   appUrl: "Link do sistema",
+  responsavel: "Usuário responsável",
 };
 
 function maskLabel(p: Placeholder): string {

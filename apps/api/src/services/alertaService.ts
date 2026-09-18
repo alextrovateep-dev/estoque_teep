@@ -1,5 +1,6 @@
 import {
   ALERTA_EVENTO_LABELS,
+  linhaResponsavel,
   type AlertaEvento,
 } from "@teep/shared";
 import {
@@ -84,6 +85,8 @@ export function notificarLimiaresEstoque(opts: {
   saldoAtual?: number;
   estoqueMinimo?: number;
   estoqueMaximo?: number;
+  /** Quem fez o movimento que levou o saldo ao limite. */
+  responsavelNome?: string | null;
 }): void {
   const desc = opts.produtoDescricao?.trim();
   const produto = desc
@@ -97,6 +100,7 @@ export function notificarLimiaresEstoque(opts: {
     opts.saldoAtual !== undefined ? fmtQty(opts.saldoAtual) : null;
   const dedupeBase = `${opts.produtoCodigo}|${opts.filialSigla || opts.filialNome || ""}`;
   const link = `${appBaseUrl()}/dashboard`;
+  const quem = linhaResponsavel(opts.responsavelNome);
 
   if (opts.abaixoMinimo) {
     const linhas = [
@@ -109,6 +113,7 @@ export function notificarLimiaresEstoque(opts: {
       ]
         .filter(Boolean)
         .join("\n"),
+      quem,
       `Abrir dashboard: ${link}`,
     ].filter((b) => b && String(b).trim());
     emitirAlerta("ESTOQUE_MINIMO", {
@@ -136,6 +141,7 @@ export function notificarLimiaresEstoque(opts: {
       ]
         .filter(Boolean)
         .join("\n"),
+      quem,
       `Abrir dashboard: ${link}`,
     ].filter((b) => b && String(b).trim());
     emitirAlerta("ESTOQUE_MAXIMO", {
@@ -167,7 +173,7 @@ export function notificarPrecoAjustado(opts: {
   produtoDescricao: string;
   precoAnterior: number;
   precoNovo: number;
-  alteradoPorNome?: string;
+  responsavelNome?: string | null;
 }): void {
   const delta = opts.precoNovo - opts.precoAnterior;
   const pct =
@@ -181,9 +187,7 @@ export function notificarPrecoAjustado(opts: {
           minimumFractionDigits: 0,
         })}%)`
       : "";
-  const quem = opts.alteradoPorNome?.trim()
-    ? `Alteração feita por ${opts.alteradoPorNome.trim()}.`
-    : null;
+  const quem = linhaResponsavel(opts.responsavelNome);
   const href = opts.produtoId
     ? `/cadastros/produtos/${opts.produtoId}`
     : "/cadastros/produtos";
@@ -212,6 +216,7 @@ export function notificarDivergenciaTransferencia(opts: {
   origemNome: string;
   destinoNome: string;
   resumoItens: string;
+  responsavelNome?: string | null;
 }): void {
   const short = opts.transferenciaId.slice(0, 8);
   const href = `/transferencias/${opts.transferenciaId}`;
@@ -221,6 +226,7 @@ export function notificarDivergenciaTransferencia(opts: {
       `A conferência da transferência ${short} encontrou diferença entre o enviado e o recebido.`,
       `Rota: ${opts.origemNome} → ${opts.destinoNome}.`,
       opts.resumoItens.trim() || null,
+      linhaResponsavel(opts.responsavelNome),
       `Abrir transferência: ${appBaseUrl()}${href}`,
     ]
       .filter(Boolean)
@@ -237,14 +243,12 @@ export function notificarTransferenciaPendenteAprovacao(opts: {
   transferenciaId: string;
   origemNome: string;
   destinoNome: string;
-  criadoPorNome?: string;
+  responsavelNome?: string | null;
   qtdItens: number;
 }): void {
   const short = opts.transferenciaId.slice(0, 8);
   const href = `/transferencias/${opts.transferenciaId}`;
-  const quem = opts.criadoPorNome?.trim()
-    ? `Solicitada por ${opts.criadoPorNome.trim()}.`
-    : null;
+  const quem = linhaResponsavel(opts.responsavelNome);
   emitirAlerta("TRANSFERENCIA_PENDENTE_APROVACAO", {
     titulo: `Transferência aguardando aprovação · ${short}`,
     mensagem: [
@@ -269,7 +273,7 @@ export function notificarTransferenciaDecisao(opts: {
   destinoNome: string;
   aprovado: boolean;
   motivo?: string | null;
-  decididoPorNome?: string;
+  responsavelNome?: string | null;
   /** Avisa também o criador no sino (mesmo sem tick). */
   criadoPorId?: string | null;
 }): void {
@@ -278,26 +282,23 @@ export function notificarTransferenciaDecisao(opts: {
     ? "TRANSFERENCIA_APROVADA"
     : "TRANSFERENCIA_REJEITADA";
   const href = `/transferencias/${opts.transferenciaId}`;
-  const quem = opts.decididoPorNome?.trim()
-    ? opts.decididoPorNome.trim()
-    : null;
+  const quem = linhaResponsavel(opts.responsavelNome);
   const titulo = opts.aprovado
     ? `Transferência aprovada · ${short}`
     : `Transferência rejeitada · ${short}`;
-  const mensagem = opts.aprovado
-    ? [
-        `A transferência ${short} foi aprovada${quem ? ` por ${quem}` : ""}.`,
-        `Rota: ${opts.origemNome} → ${opts.destinoNome}.`,
-        `Abrir transferência: ${appBaseUrl()}${href}`,
-      ].join("\n\n")
-    : [
-        `A transferência ${short} foi rejeitada${quem ? ` por ${quem}` : ""}.`,
-        `Rota: ${opts.origemNome} → ${opts.destinoNome}.`,
-        opts.motivo?.trim() ? `Motivo: ${opts.motivo.trim()}` : null,
-        `Abrir transferência: ${appBaseUrl()}${href}`,
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+  const mensagem = [
+    opts.aprovado
+      ? `A transferência ${short} foi aprovada.`
+      : `A transferência ${short} foi rejeitada.`,
+    `Rota: ${opts.origemNome} → ${opts.destinoNome}.`,
+    !opts.aprovado && opts.motivo?.trim()
+      ? `Motivo: ${opts.motivo.trim()}`
+      : null,
+    quem,
+    `Abrir transferência: ${appBaseUrl()}${href}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const meta = {
     transferenciaId: opts.transferenciaId,
     href,
@@ -323,16 +324,14 @@ export function notificarRmaAberto(opts: {
   processoId: string;
   clienteNome: string;
   qtdItens: number;
-  criadoPorNome?: string;
+  responsavelNome?: string | null;
   destinatarioIds: string[];
   nfEntradaNumero?: string | null;
   itensResumo?: string[];
 }): void {
   const short = opts.processoId.slice(0, 8);
   const href = `/rma/${opts.processoId}`;
-  const quem = opts.criadoPorNome?.trim()
-    ? `Aberto por ${opts.criadoPorNome.trim()}.`
-    : null;
+  const quem = linhaResponsavel(opts.responsavelNome);
   const itens =
     opts.itensResumo && opts.itensResumo.length > 0
       ? opts.itensResumo.slice(0, 3).join("; ") +
@@ -372,6 +371,7 @@ export function notificarRmaFinanceiro(opts: {
   valorCobrado?: number | null;
   nfCobrancaNumero?: string | null;
   destinatarioIds: string[];
+  responsavelNome?: string | null;
 }): void {
   const short = opts.processoId.slice(0, 8);
   const href = `/rma/${opts.processoId}`;
@@ -398,8 +398,11 @@ export function notificarRmaFinanceiro(opts: {
     mensagem: [
       `Atualização financeira no RMA ${short} (${opts.clienteNome}).`,
       detalhe,
+      linhaResponsavel(opts.responsavelNome),
       `Abrir RMA: ${appBaseUrl()}${href}`,
-    ].join("\n\n"),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     meta: { processoId: opts.processoId, href },
     dedupeKey: `${opts.processoId}|FIN|${opts.cobrou}|${opts.valorCobrado ?? ""}|${opts.nfCobrancaNumero ?? ""}`,
     forceEmail: true,
@@ -411,6 +414,7 @@ export function notificarRmaEncerrado(opts: {
   clienteNome: string;
   status: "FECHADO" | "CANCELADO";
   destinatarioIds: string[];
+  responsavelNome?: string | null;
 }): void {
   const short = opts.processoId.slice(0, 8);
   const href = `/rma/${opts.processoId}`;
@@ -424,8 +428,11 @@ export function notificarRmaEncerrado(opts: {
       fechado
         ? `O RMA ${short} de ${opts.clienteNome} foi fechado.`
         : `O RMA ${short} de ${opts.clienteNome} foi cancelado.`,
+      linhaResponsavel(opts.responsavelNome),
       `Abrir RMA: ${appBaseUrl()}${href}`,
-    ].join("\n\n"),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     meta: {
       processoId: opts.processoId,
       status: opts.status,
@@ -441,6 +448,7 @@ export function notificarRmaLaudos(opts: {
   clienteNome: string;
   destinatarioIds: string[];
   laudosResumo: string[];
+  responsavelNome?: string | null;
 }): void {
   const short = opts.processoId.slice(0, 8);
   const href = `/rma/${opts.processoId}`;
@@ -454,8 +462,11 @@ export function notificarRmaLaudos(opts: {
     mensagem: [
       `Há diagnóstico(s) / laudo(s) no RMA ${short} (${opts.clienteNome}).`,
       lista,
+      linhaResponsavel(opts.responsavelNome),
       `Abrir RMA: ${appBaseUrl()}${href}`,
-    ].join("\n\n"),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     meta: { processoId: opts.processoId, href },
     dedupeKey: `${opts.processoId}|LAUDO|${Date.now()}`,
     forceEmail: true,
@@ -468,7 +479,7 @@ export function notificarRmaOrcamentoPronto(opts: {
   clienteNome: string;
   destinatarioIds: string[];
   itensResumo: string[];
-  fechadoPorNome?: string;
+  responsavelNome?: string | null;
 }): void {
   const short = opts.processoId.slice(0, 8);
   const href = `/rma/${opts.processoId}/orcamento`;
@@ -476,9 +487,7 @@ export function notificarRmaOrcamentoPronto(opts: {
     opts.itensResumo.length > 0
       ? opts.itensResumo.map((l) => `• ${l}`).join("\n")
       : "• (itens do orçamento)";
-  const quem = opts.fechadoPorNome?.trim()
-    ? `Fechado por ${opts.fechadoPorNome.trim()}.`
-    : null;
+  const quem = linhaResponsavel(opts.responsavelNome);
   notifyUsuarios(opts.destinatarioIds, {
     tipo: "RMA_ORCAMENTO",
     titulo: `Orçamento pronto · ${short}`,
@@ -505,7 +514,7 @@ export function notificarRmaOrcamentoDecisao(opts: {
   decisao: "APROVADO" | "RECUSADO";
   itemResumo: string;
   total?: number | null;
-  decididoPorNome?: string;
+  responsavelNome?: string | null;
   observacao?: string | null;
 }): void {
   const short = opts.processoId.slice(0, 8);
@@ -515,9 +524,7 @@ export function notificarRmaOrcamentoDecisao(opts: {
     aprovado && opts.total != null && opts.total > 0
       ? ` · ${fmtMoneyBr(opts.total)}`
       : "";
-  const quem = opts.decididoPorNome?.trim()
-    ? `Registrado por ${opts.decididoPorNome.trim()}.`
-    : null;
+  const quem = linhaResponsavel(opts.responsavelNome);
   const obs = opts.observacao?.trim()
     ? `Obs.: ${opts.observacao.trim()}`
     : null;
@@ -551,6 +558,7 @@ export function notificarPedidoSeparado(opts: {
   clienteNome: string;
   filialSigla: string;
   destinatarioIds: string[];
+  responsavelNome?: string | null;
 }): void {
   const href = `/pedidos/${opts.pedidoId}`;
   notifyUsuarios(opts.destinatarioIds, {
@@ -560,8 +568,11 @@ export function notificarPedidoSeparado(opts: {
       `O pedido ${opts.egestorCodigo} foi separado e o estoque já foi baixado.`,
       `Cliente: ${opts.clienteNome}`,
       `Estoque: ${opts.filialSigla}`,
+      linhaResponsavel(opts.responsavelNome),
       `Abrir pedido: ${appBaseUrl()}${href}`,
-    ].join("\n\n"),
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
     meta: { pedidoId: opts.pedidoId, href },
     dedupeKey: `${opts.pedidoId}|SEPARADO`,
     forceEmail: true,

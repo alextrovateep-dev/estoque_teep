@@ -186,7 +186,11 @@ export async function syncPedidoAposGrupoLancamento(grupoId: string) {
 
   const movs = await prisma.movimentacao.findMany({
     where: { grupoLancamentoId: grupoId },
-    select: { status: true, produtoId: true },
+    select: {
+      status: true,
+      produtoId: true,
+      usuario: { select: { nome: true } },
+    },
   });
   if (movs.length === 0) return;
 
@@ -235,6 +239,7 @@ export async function syncPedidoAposGrupoLancamento(grupoId: string) {
         clienteNome: pedido.cliente?.nome || pedido.nomeContato,
         filialSigla: pedido.filialAcabado?.sigla || "—",
         destinatarioIds: destIds,
+        responsavelNome: movs.find((m) => m.usuario?.nome)?.usuario?.nome,
       });
     }
   }

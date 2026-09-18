@@ -16,6 +16,8 @@ export function enqueueSenhaProvisoriaEmail(opts: {
   email: string;
   senhaProvisoria: string;
   motivo: "cadastro" | "reset";
+  /** Admin que cadastrou a conta ou gerou a nova senha. */
+  responsavelNome?: string | null;
 }): void {
   void buildAcessoSenhaProvisoriaEmail({
     destinatarioNome: opts.nome,
@@ -23,6 +25,7 @@ export function enqueueSenhaProvisoriaEmail(opts: {
     senhaProvisoria: opts.senhaProvisoria,
     appUrl: appUrl(),
     motivo: opts.motivo,
+    responsavelNome: opts.responsavelNome,
   })
     .then((prepared) => sendPreparedMailAsync(opts.email, prepared))
     .catch((e) => {

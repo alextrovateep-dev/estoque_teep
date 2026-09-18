@@ -1,3 +1,4 @@
+import { linhaResponsavel } from "@teep/shared";
 import type { PreparedTransactionalEmail } from "../preparedMail";
 import {
   renderEmailFromTemplate,
@@ -10,6 +11,7 @@ export async function buildAcessoSenhaProvisoriaEmail(opts: {
   senhaProvisoria: string;
   appUrl: string;
   motivo: "cadastro" | "reset";
+  responsavelNome?: string | null;
 }): Promise<PreparedTransactionalEmail> {
   const titulo =
     opts.motivo === "cadastro"
@@ -28,5 +30,6 @@ export async function buildAcessoSenhaProvisoriaEmail(opts: {
     email: opts.emailLogin,
     senha: opts.senhaProvisoria,
     appUrl: opts.appUrl,
+    responsavel: linhaResponsavel(opts.responsavelNome) ?? "",
   });
 }

@@ -1152,7 +1152,7 @@ export async function decidirOrcamentoRmaItem(
       decisao,
       itemResumo: `${itemAtual.produto.codigo}${sn}`,
       total: decisao === "APROVADO" ? total : null,
-      decididoPorNome: user.nome,
+      responsavelNome: user.nome,
       observacao: observacao?.trim() || null,
     });
   }
@@ -1502,7 +1502,7 @@ function avisarOrcamentoFechado(
         clienteNome: proc.cliente.nome,
         destinatarioIds: destIds,
         itensResumo,
-        fechadoPorNome: user.nome,
+        responsavelNome: user.nome,
       });
     })
     .catch(() => {
