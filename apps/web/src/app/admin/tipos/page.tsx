@@ -20,6 +20,7 @@ type Tipo = {
   diasAlerta?: number[] | null;
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
+  controleSerie?: string | null;
   baixaPorArvore?: boolean;
   rmaEntradaEstoque?: boolean;
   rmaSaidaCliente?: boolean;
@@ -231,6 +232,12 @@ function TiposPageInner() {
                         {t.baixaPorArvore && (
                           <FlagChip tone="amber">Consome componentes</FlagChip>
                         )}
+                        {t.controleSerie === "OBRIGATORIO" && (
+                          <FlagChip tone="brand">Sempre exige série</FlagChip>
+                        )}
+                        {t.controleSerie === "NAO_USA" && (
+                          <FlagChip>Não usa série</FlagChip>
+                        )}
                         {t.rmaEntradaEstoque && (
                           <FlagChip tone="brand">RMA — entrada</FlagChip>
                         )}
@@ -252,7 +259,9 @@ function TiposPageInner() {
                           !t.rmaEntradaEstoque &&
                           !t.rmaSaidaCliente &&
                           !origemNome &&
-                          !t.requerCliente && (
+                          !t.requerCliente &&
+                          (!t.controleSerie ||
+                            t.controleSerie === "PRODUTO") && (
                             <span className="text-xs text-slate-400">—</span>
                           )}
                       </div>

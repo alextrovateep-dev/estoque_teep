@@ -5,6 +5,42 @@ export type Perfil = (typeof PERFIS)[number];
 export const OPERACOES = ["ENTRADA", "SAIDA", "TRANSFERENCIA"] as const;
 export type Operacao = (typeof OPERACOES)[number];
 
+/**
+ * Como o tipo de operação trata número de série no lançamento:
+ * PRODUTO = segue `produto.controlaSerie`; OBRIGATORIO = sempre pede série
+ * (ex. Demonstração / Comodato); NAO_USA = nunca pede série.
+ */
+export const CONTROLES_SERIE = ["PRODUTO", "OBRIGATORIO", "NAO_USA"] as const;
+export type ControleSerie = (typeof CONTROLES_SERIE)[number];
+export const CONTROLE_SERIE_PADRAO: ControleSerie = "PRODUTO";
+
+export function labelControleSerie(valor?: string | null): string {
+  if (valor === "OBRIGATORIO") return "Sempre exige série";
+  if (valor === "NAO_USA") return "Não usa série";
+  return "Segue o produto";
+}
+
+type RegraSerieOpts = {
+  produtoControlaSerie?: boolean | null;
+  /** `TipoMovimentacao.controleSerie` (undefined/null = PRODUTO) */
+  tipoControleSerie?: string | null;
+};
+
+/** true quando o lançamento exige 1 número de série por unidade. */
+export function exigeSerieNoLancamento(opts: RegraSerieOpts): boolean {
+  if (opts.tipoControleSerie === "NAO_USA") return false;
+  if (opts.tipoControleSerie === "OBRIGATORIO") return true;
+  return opts.produtoControlaSerie === true;
+}
+
+/**
+ * Série exigida pelo tipo em produto que não controla série: número livre —
+ * sem formato do cadastro e sem unidade previamente registrada no estoque.
+ */
+export function usaSerieLivre(opts: RegraSerieOpts): boolean {
+  return exigeSerieNoLancamento(opts) && opts.produtoControlaSerie !== true;
+}
+
 export const MOVIMENTACAO_STATUS = [
   "PENDENTE",
   "CONCLUIDO",

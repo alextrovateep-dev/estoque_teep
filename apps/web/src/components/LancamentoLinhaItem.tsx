@@ -1,5 +1,6 @@
 "use client";
 
+import { SerieCamposLivres } from "@/components/SerieCamposLivres";
 import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import { api } from "@/lib/api";
 import {
@@ -46,6 +47,16 @@ type Props = {
   canRemove: boolean;
   locked?: boolean;
   filialId: string;
+  /**
+   * Regra do tipo + produto (`exigeSerieNoLancamento`). Se omitido, usa só
+   * `produto.controlaSerie`.
+   */
+  exigeSerie?: (produto: LancamentoProduto) => boolean;
+  /**
+   * Série exigida pelo tipo em produto sem controle de série: número livre,
+   * sem formato do cadastro e sem validação no estoque.
+   */
+  serieLivre?: (produto: LancamentoProduto) => boolean;
   /** SAÍDA / TRANSFERÊNCIA — valida série no estoque origem/afetado */
   validarSerieEstoque: boolean;
   /**
@@ -95,6 +106,8 @@ export function LancamentoLinhaItem({
   canRemove,
   locked,
   filialId,
+  exigeSerie,
+  serieLivre,
   validarSerieEstoque,
   modoSerieNascimento = false,
   onPatch,
@@ -110,7 +123,16 @@ export function LancamentoLinhaItem({
   const linhaRef = useRef(linha);
   linhaRef.current = linha;
 
-  const controlaSerie = Boolean(linha.produto?.controlaSerie);
+  const pedeSerie = linha.produto
+    ? exigeSerie
+      ? exigeSerie(linha.produto)
+      : Boolean(linha.produto.controlaSerie)
+    : false;
+  /** Número livre: sem formato do produto e sem validação no estoque */
+  const usaSerieLivre = Boolean(
+    linha.produto && serieLivre?.(linha.produto)
+  );
+  const validarNoEstoque = validarSerieEstoque && !usaSerieLivre;
   const qtdNum = Number(linha.quantidade);
   const qtdInt =
     Number.isFinite(qtdNum) && qtdNum > 0 ? Math.floor(qtdNum) : 0;
@@ -136,8 +158,8 @@ export function LancamentoLinhaItem({
 
   /** Ajusta array de séries ao mudar quantidade (modo campos N). */
   useEffect(() => {
-    if (!controlaSerie) return;
-    if (!validarSerieEstoque && !modoSerieNascimento) return;
+    if (!pedeSerie) return;
+    if (!validarSerieEstoque && !modoSerieNascimento && !usaSerieLivre) return;
     if (!Number.isFinite(qtdNum) || qtdNum <= 0) return;
     const n = Math.min(Math.floor(qtdNum), 200);
     const cur = linhaRef.current;
@@ -153,7 +175,7 @@ export function LancamentoLinhaItem({
     );
     onPatch({ series, serieStatus, serieMsgs, quantidade: String(n) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlaSerie, validarSerieEstoque, modoSerieNascimento, qtdInt]);
+  }, [pedeSerie, validarSerieEstoque, modoSerieNascimento, usaSerieLivre, qtdInt]);
 
   useEffect(() => {
     return () => {
@@ -259,7 +281,7 @@ export function LancamentoLinhaItem({
     const cur = linhaRef.current;
     const numero = valor.trim();
     if (
-      !validarSerieEstoque ||
+      !validarNoEstoque ||
       !cur.produto?.id ||
       !filialId ||
       !numero ||
@@ -344,10 +366,14 @@ export function LancamentoLinhaItem({
     const serieMsgs = [...cur.serieMsgs];
     while (serieStatus.length < series.length) serieStatus.push("idle");
     while (serieMsgs.length < series.length) serieMsgs.push("");
-    serieStatus[idx] = "idle";
-    serieMsgs[idx] = "";
+    const numero = valor.trim().toUpperCase();
+    const duplicada =
+      Boolean(numero) &&
+      series.some((s, i) => i !== idx && s.trim().toUpperCase() === numero);
+    serieStatus[idx] = duplicada ? "err" : "idle";
+    serieMsgs[idx] = duplicada ? "Série duplicada nesta linha" : "";
     onPatch({ series, serieStatus, serieMsgs });
-    if (!validarSerieEstoque) return;
+    if (!validarNoEstoque || duplicada) return;
     if (validTimers.current[idx]) clearTimeout(validTimers.current[idx]);
     if (!cur.produto || !sequenciaPronta(valor, cur.produto)) return;
     validTimers.current[idx] = setTimeout(() => {
@@ -355,13 +381,15 @@ export function LancamentoLinhaItem({
     }, 400);
   }
 
-  const usaCamposSeriePrefixo =
-    controlaSerie && (validarSerieEstoque || modoSerieNascimento);
+  const mostrarCamposSerie =
+    pedeSerie &&
+    (validarSerieEstoque || modoSerieNascimento || usaSerieLivre);
+  const usaCamposSeriePrefixo = mostrarCamposSerie && !usaSerieLivre;
 
   return (
     <div
       className={
-        controlaSerie
+        pedeSerie
           ? "rounded-lg border border-emerald-200 bg-emerald-50 p-3"
           : "rounded-lg border border-slate-200 bg-slate-50/40 p-3"
       }
@@ -369,9 +397,9 @@ export function LancamentoLinhaItem({
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-sm font-medium text-slate-700">
           Item {index + 1}
-          {controlaSerie ? (
+          {pedeSerie ? (
             <span className="ml-2 text-xs font-normal text-emerald-800/80">
-              · com série
+              {usaSerieLivre ? "· série (tipo)" : "· com série"}
             </span>
           ) : null}
         </span>
@@ -452,10 +480,10 @@ export function LancamentoLinhaItem({
           </span>
           <input
             type="number"
-            min={controlaSerie ? 1 : 0.0001}
-            step={controlaSerie ? 1 : "any"}
+            min={pedeSerie ? 1 : 0.0001}
+            step={pedeSerie ? 1 : "any"}
             required
-            disabled={locked && !controlaSerie}
+            disabled={locked && !pedeSerie}
             value={linha.quantidade}
             onChange={(e) => onPatch({ quantidade: e.target.value })}
             className="w-full rounded-lg border bg-white px-3 py-2.5 text-sm disabled:bg-slate-50"
@@ -481,7 +509,14 @@ export function LancamentoLinhaItem({
         </div>
       )}
 
-      {usaCamposSeriePrefixo && qtdInt > 0 && linha.produto ? (
+      {usaSerieLivre && mostrarCamposSerie && qtdInt > 0 && linha.produto ? (
+        <SerieCamposLivres
+          series={linha.series}
+          serieStatus={linha.serieStatus}
+          serieMsgs={linha.serieMsgs}
+          onChangeSerie={(i, valor) => onSerieChange(i, valor)}
+        />
+      ) : usaCamposSeriePrefixo && qtdInt > 0 && linha.produto ? (
         <SerieCamposPrefixo
           key={linha.produto.id}
           codigoProduto={linha.produto.codigo}
@@ -490,11 +525,11 @@ export function LancamentoLinhaItem({
           series={linha.series}
           serieStatus={linha.serieStatus}
           serieMsgs={linha.serieMsgs}
-          validarEstoque={validarSerieEstoque}
+          validarEstoque={validarNoEstoque}
           validarNascimento={modoSerieNascimento}
           onChangeSerie={(i, full) => onSerieChange(i, full)}
           onBlurSerie={(i, full) => {
-            if (validarSerieEstoque) void validarSerieCampo(i, full);
+            if (validarNoEstoque) void validarSerieCampo(i, full);
           }}
           onStatusSerie={(i, status, msg) => {
             const cur = linhaRef.current;

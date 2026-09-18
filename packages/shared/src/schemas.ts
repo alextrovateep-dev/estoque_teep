@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   ALERTA_EVENTOS,
   CLIENTE_TIPOS,
+  CONTROLES_SERIE,
   OPERACOES,
   PERFIS,
   PERMISSAO_KEYS,
@@ -386,6 +387,8 @@ export const tipoMovimentacaoObjectSchema = z.object({
     .nullable(),
   ehRetornoDeId: z.string().uuid().optional().nullable(),
   requerTermoComodato: z.boolean().optional(),
+  /** PRODUTO = segue o produto; OBRIGATORIO = sempre pede série; NAO_USA = nunca pede */
+  controleSerie: z.enum(CONTROLES_SERIE).optional(),
   /** SAIDA/TRANSFERENCIA: na saída, baixa componentes não-fantasma da árvore */
   baixaPorArvore: z.boolean().optional(),
   /** ENTRADA: usada pelo RMA ao abrir/incluir item (entrada automática no estoque RMA) */
@@ -492,6 +495,14 @@ export function refineTipoMovimentacao(
       message:
         "Tipo com baixa pela árvore não pode exigir aprovação (a baixa conclui na hora)",
       path: ["requerAprovacao"],
+    });
+  }
+  if (arvore && data.controleSerie === "OBRIGATORIO") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Baixa pela árvore não pede número de série do produto pai — use «segue o produto» ou «não usa série»",
+      path: ["controleSerie"],
     });
   }
 

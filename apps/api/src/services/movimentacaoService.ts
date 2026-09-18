@@ -4,8 +4,10 @@ import {
   TIPO_ESTORNO,
   TIPO_INVENTARIO,
   Perfil,
+  exigeSerieNoLancamento,
   isAbaixoMinimo,
   isAcimaMaximo,
+  usaSerieLivre,
 } from "@teep/shared";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "crypto";
@@ -48,10 +50,12 @@ import {
   aplicarSeriesInventario,
   aplicarSeriesRetorno,
   aplicarSeriesSaida,
+  aplicarSeriesSaidaLivre,
   normalizarSeries,
   validarSeriesEntradaNovas,
   validarSeriesRetorno,
   validarSeriesSaidaDisponiveis,
+  validarSeriesSaidaLivre,
 } from "./serieService";
 import {
   aplicarConsumoMontagem,
@@ -318,6 +322,7 @@ export async function criarMovimentacao(
       ),
       itens,
       baixaPorArvore: tipo.baixaPorArvore === true,
+      controleSerieTipo: tipo.controleSerie,
     };
 
     const precisaAprovacao =
@@ -415,7 +420,13 @@ export async function criarMovimentacao(
             `Produto ${prod.codigo}: quantidade inválida`
           );
         }
-        if (prod.controlaSerie) {
+        const regraSerie = {
+          produtoControlaSerie: prod.controlaSerie,
+          tipoControleSerie: tipo.controleSerie,
+        };
+        const exigeSerie = exigeSerieNoLancamento(regraSerie);
+        const serieLivre = usaSerieLivre(regraSerie);
+        if (exigeSerie) {
           const seriesNorm = normalizarSeries(item.series);
           if (seriesNorm.length === 0) {
             throw new AppError(
@@ -430,7 +441,10 @@ export async function criarMovimentacao(
             );
           }
           if (tipo.operacao === "SAIDA") {
-            await validarSeriesSaidaDisponiveis(tx, {
+            const validar = serieLivre
+              ? validarSeriesSaidaLivre
+              : validarSeriesSaidaDisponiveis;
+            await validar(tx, {
               produtoId: item.produtoId,
               filialId: filialIdGrupo,
               series: seriesNorm,
@@ -441,10 +455,13 @@ export async function criarMovimentacao(
               produtoId: item.produtoId,
               series: seriesNorm,
               quantidade: seriesNorm.length,
-              permitirReativarSaido: input.permitirReativarSaido === true,
+              permitirReativarSaido:
+                input.permitirReativarSaido === true || serieLivre,
             });
           }
-        } else if (tipo.operacao === "SAIDA") {
+        }
+        // Série livre não tem unidade em estoque: o saldo ainda precisa cobrir a saída.
+        if (tipo.operacao === "SAIDA" && (!exigeSerie || serieLivre)) {
           const estoque = await tx.estoque.findUnique({
             where: {
               uniq_produto_filial: {
@@ -675,13 +692,20 @@ export async function criarMovimentacao(
   const status = pendente ? "PENDENTE" : "CONCLUIDO";
   const operacao = tipo.operacao as "ENTRADA" | "SAIDA";
 
+  const regraSerie = {
+    produtoControlaSerie: produto.controlaSerie,
+    tipoControleSerie: tipo.controleSerie,
+  };
+  const exigeSerie = exigeSerieNoLancamento(regraSerie);
+  const serieLivre = usaSerieLivre(regraSerie);
+
   let quantidade = Number(input.quantidade!);
   let seriesNorm = normalizarSeries(input.series);
-  if (produto.controlaSerie) {
+  if (exigeSerie) {
     if (seriesNorm.length === 0) {
       throw new AppError(
         400,
-        "Produto exige número(s) de série — informe series[]"
+        "Este lançamento exige número(s) de série — informe series[]"
       );
     }
     quantidade = seriesNorm.length;
@@ -704,7 +728,7 @@ export async function criarMovimentacao(
         "Tipo com baixa pela árvore não pode ser retorno vinculado"
       );
     }
-    if (produto.controlaSerie) {
+    if (exigeSerie) {
       throw new AppError(
         400,
         "Produto com série ainda não pode usar baixa pela árvore — use um produto sem série"
@@ -770,9 +794,12 @@ export async function criarMovimentacao(
       }
     }
 
-    if (produto.controlaSerie && status === "PENDENTE") {
+    if (exigeSerie && status === "PENDENTE") {
       if (operacao === "SAIDA") {
-        await validarSeriesSaidaDisponiveis(tx, {
+        const validar = serieLivre
+          ? validarSeriesSaidaLivre
+          : validarSeriesSaidaDisponiveis;
+        await validar(tx, {
           produtoId: input.produtoId!,
           filialId,
           series: seriesNorm,
@@ -791,7 +818,7 @@ export async function criarMovimentacao(
           produtoId: input.produtoId!,
           series: seriesNorm,
           quantidade,
-          permitirReativarSaido: false,
+          permitirReativarSaido: serieLivre,
         });
       }
     }
@@ -826,7 +853,7 @@ export async function criarMovimentacao(
         notaFiscalArquivo,
         alertaEmails: alertaEmails as Prisma.InputJsonValue,
         seriesInformadas:
-          produto.controlaSerie && status === "PENDENTE"
+          exigeSerie && status === "PENDENTE"
             ? (seriesNorm as Prisma.InputJsonValue)
             : ([] as Prisma.InputJsonValue),
         movimentacaoOrigemId,
@@ -846,7 +873,7 @@ export async function criarMovimentacao(
       include: movInclude,
     });
 
-    if (produto.controlaSerie && status === "CONCLUIDO") {
+    if (exigeSerie && status === "CONCLUIDO") {
       if (movimentacaoOrigemId) {
         await aplicarSeriesRetorno(tx, {
           movimentacaoId: mov.id,
@@ -864,7 +891,17 @@ export async function criarMovimentacao(
           filialId,
           series: seriesNorm,
           quantidade,
-          permitirReativarSaido: input.permitirReativarSaido === true,
+          permitirReativarSaido:
+            input.permitirReativarSaido === true || serieLivre,
+        });
+      } else if (serieLivre) {
+        await aplicarSeriesSaidaLivre(tx, {
+          movimentacaoId: mov.id,
+          produtoId: input.produtoId!,
+          filialId,
+          series: seriesNorm,
+          quantidade,
+          clienteId: input.clienteId,
         });
       } else {
         await aplicarSeriesSaida(tx, {
@@ -1027,7 +1064,15 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
       ? (mov.seriesInformadas as string[])
       : [];
 
-    if (mov.produto.controlaSerie && !saidaArvore) {
+    const regraSerieAprov = {
+      produtoControlaSerie: mov.produto.controlaSerie,
+      tipoControleSerie: mov.tipo.controleSerie,
+    };
+    // Séries informadas no PENDENTE valem mesmo se o tipo mudou depois.
+    const exigeSerieAprov =
+      exigeSerieNoLancamento(regraSerieAprov) || seriesPend.length > 0;
+
+    if (exigeSerieAprov && !saidaArvore) {
       const qtd = Number(mov.quantidade);
       if (mov.movimentacaoOrigemId) {
         await aplicarSeriesRetorno(tx, {
@@ -1046,10 +1091,13 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
           filialId: mov.filialId,
           series: seriesPend,
           quantidade: qtd,
-          permitirReativarSaido: false,
+          permitirReativarSaido: usaSerieLivre(regraSerieAprov),
         });
       } else if (mov.operacao === "SAIDA") {
-        await aplicarSeriesSaida(tx, {
+        const aplicar = usaSerieLivre(regraSerieAprov)
+          ? aplicarSeriesSaidaLivre
+          : aplicarSeriesSaida;
+        await aplicar(tx, {
           movimentacaoId: mov.id,
           produtoId: mov.produtoId,
           filialId: mov.filialId,
@@ -1326,9 +1374,14 @@ export async function estornarMovimentacao(
       include: movInclude,
     });
 
+    // Séries vinculadas ao movimento (inclui série livre exigida pelo tipo)
+    const seriesVinculadas = await tx.movimentacaoSerie.count({
+      where: { movimentacaoId: mov.id },
+    });
+
     if (
       !saidaSoArvore &&
-      mov.produto.controlaSerie &&
+      seriesVinculadas > 0 &&
       (mov.operacao === "ENTRADA" || mov.operacao === "SAIDA")
     ) {
       await aplicarSeriesEstorno(tx, {

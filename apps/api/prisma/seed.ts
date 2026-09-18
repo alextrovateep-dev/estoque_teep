@@ -274,6 +274,7 @@ async function main() {
         filialSigla: "PLN",
         descricao:
           "Equipamento enviado para demonstração — alertas de retorno 15/30/45/60 dias",
+        controleSerie: "OBRIGATORIO",
       },
       {
         codigo: "ENT-DEMO",
@@ -287,6 +288,7 @@ async function main() {
         filialSigla: "PLN",
         descricao:
           "Retorno de equipamento de demonstração (vincular à saída aberta)",
+        controleSerie: "OBRIGATORIO",
       },
       {
         codigo: "SAI-COMODATO",
@@ -300,6 +302,7 @@ async function main() {
         filialSigla: "PLN",
         descricao:
           "Equipamento em comodato — alertas de retorno; anexe o termo assinado",
+        controleSerie: "OBRIGATORIO",
       },
       {
         codigo: "ENT-COMODATO",
@@ -313,6 +316,7 @@ async function main() {
         filialSigla: "PLN",
         descricao:
           "Retorno de equipamento em comodato (vincular à saída aberta)",
+        controleSerie: "OBRIGATORIO",
       },
       {
         codigo: "TR-PLN-TBO",
@@ -436,6 +440,7 @@ async function main() {
           diasAlerta: [15, 30, 45, 60],
           ehRetornoDeId: null,
           requerCliente: true,
+          controleSerie: "OBRIGATORIO",
         },
       });
     }
@@ -446,6 +451,7 @@ async function main() {
           geraAlertaRetorno: false,
           ehRetornoDeId: saidaDemo.id,
           requerCliente: true,
+          controleSerie: "OBRIGATORIO",
         },
       });
     }
@@ -458,6 +464,7 @@ async function main() {
           ehRetornoDeId: null,
           requerTermoComodato: true,
           requerCliente: true,
+          controleSerie: "OBRIGATORIO",
         },
       });
     }
@@ -468,6 +475,7 @@ async function main() {
           geraAlertaRetorno: false,
           ehRetornoDeId: saidaComodato.id,
           requerCliente: true,
+          controleSerie: "OBRIGATORIO",
         },
       });
     }

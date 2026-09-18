@@ -8,11 +8,17 @@ import {
   type LancamentoLinha,
   type LancamentoProduto,
 } from "@/components/LancamentoLinhaItem";
+import { SerieCamposLivres } from "@/components/SerieCamposLivres";
 import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
-import { formatQtyUnidade, normalizarUnidade } from "@teep/shared";
+import {
+  exigeSerieNoLancamento,
+  formatQtyUnidade,
+  normalizarUnidade,
+  usaSerieLivre,
+} from "@teep/shared";
 
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_ALERTA_EMAILS = 10;
@@ -28,6 +34,7 @@ type Tipo = {
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
   baixaPorArvore?: boolean;
+  controleSerie?: string | null;
   filialId?: string | null;
   filialDestinoId?: string | null;
   filial?: { id: string; nome: string; sigla: string } | null;
@@ -88,6 +95,26 @@ function badgeLabel(op: string) {
 
 function formatQty(n: number) {
   return n.toLocaleString("pt-BR", { maximumFractionDigits: 4 });
+}
+
+function pedeSerieDe(
+  produto: { controlaSerie?: boolean } | null | undefined,
+  tipoControle?: string | null
+) {
+  return exigeSerieNoLancamento({
+    produtoControlaSerie: Boolean(produto?.controlaSerie),
+    tipoControleSerie: tipoControle,
+  });
+}
+
+function serieLivreDe(
+  produto: { controlaSerie?: boolean } | null | undefined,
+  tipoControle?: string | null
+) {
+  return usaSerieLivre({
+    produtoControlaSerie: Boolean(produto?.controlaSerie),
+    tipoControleSerie: tipoControle,
+  });
 }
 
 async function fetchSaldoProduto(
@@ -553,7 +580,7 @@ function NovoLancamentoForm() {
 
   /** Qty primeiro → N caixas (entrada, retorno, transferência com árvore). */
   useEffect(() => {
-    if (!produto?.controlaSerie) return;
+    if (!pedeSerieDe(produto, tipo?.controleSerie)) return;
     const nascimento =
       isRetorno ||
       tipo?.operacao === "ENTRADA" ||
@@ -568,6 +595,7 @@ function NovoLancamentoForm() {
     });
   }, [
     produto?.controlaSerie,
+    tipo?.controleSerie,
     isRetorno,
     tipo?.operacao,
     isBaixaArvore,
@@ -825,12 +853,12 @@ function NovoLancamentoForm() {
             );
           }
 
-          const controlaSerie = Boolean(prod.controlaSerie);
+          const pedeSerie = pedeSerieDe(prod, tipo?.controleSerie);
           const needsSerieEstoque =
-            controlaSerie &&
+            pedeSerie &&
             (tipo?.operacao === "SAIDA" || (isTransf && !isBaixaArvore));
           const needsSerieNascimento =
-            controlaSerie &&
+            pedeSerie &&
             (tipo?.operacao === "ENTRADA" || (isTransf && isBaixaArvore));
 
           let qtdNum: number;
@@ -904,7 +932,7 @@ function NovoLancamentoForm() {
               return;
             }
             seriesPayload = filled;
-          } else if (controlaSerie) {
+          } else if (pedeSerie) {
             // Fallback: séries informadas via lista
             const filled = linha.series.map((s) => s.trim()).filter(Boolean);
             if (filled.length === 0) {
@@ -930,7 +958,7 @@ function NovoLancamentoForm() {
             codigo: prod.codigo,
             quantidade: qtdNum,
             series: seriesPayload,
-            controlaSerie,
+            controlaSerie: pedeSerie,
           });
         }
 
@@ -978,20 +1006,22 @@ function NovoLancamentoForm() {
           }
         }
 
+        const pedeSerie = pedeSerieDe(prod, tipo?.controleSerie);
+
         const usaNascimentoSerie =
-          Boolean(prod.controlaSerie) &&
+          pedeSerie &&
           (isRetorno ||
             tipo?.operacao === "ENTRADA" ||
             (isBaixaArvore && tipo?.operacao === "TRANSFERENCIA"));
 
         const qtdNum = usaNascimentoSerie
           ? Number(quantidade)
-          : prod.controlaSerie
+          : pedeSerie
             ? series.length
             : Number(quantidade);
         if (!Number.isFinite(qtdNum) || qtdNum <= 0) {
           setError(
-            usaNascimentoSerie || !prod.controlaSerie
+            usaNascimentoSerie || !pedeSerie
               ? "Informe uma quantidade válida"
               : "Informe ao menos um número de série"
           );
@@ -1019,7 +1049,7 @@ function NovoLancamentoForm() {
             return;
           }
           body.series = filled;
-        } else if (prod.controlaSerie) {
+        } else if (pedeSerie) {
           if (series.length === 0) {
             setError("Informe os números de série deste produto");
             return;
@@ -1227,18 +1257,18 @@ function NovoLancamentoForm() {
   const qtdDigitada = Number(quantidade);
   const avisoSaldoInsuficiente =
     Boolean(produto) &&
-    !produto?.controlaSerie &&
+    !pedeSerieDe(produto, tipo?.controleSerie) &&
     (tipo?.operacao === "SAIDA" || isTransf) &&
     saldoOrigem != null &&
     Number.isFinite(qtdDigitada) &&
     qtdDigitada > saldoOrigem + 1e-9;
   const avisoSeriesSaldo =
-    Boolean(produto?.controlaSerie) &&
+    pedeSerieDe(produto, tipo?.controleSerie) &&
     (tipo?.operacao === "SAIDA" || (isTransf && !isBaixaArvore)) &&
     saldoOrigem != null &&
     series.length > saldoOrigem + 1e-9;
   const avisoSeriesRetorno =
-    Boolean(produto?.controlaSerie) &&
+    pedeSerieDe(produto, tipo?.controleSerie) &&
     isRetorno &&
     maxRetornoAberto != null &&
     series.length > maxRetornoAberto + 1e-9;
@@ -1389,7 +1419,7 @@ function NovoLancamentoForm() {
             Dados da saída preenchidos. Informe a{" "}
             <strong className="font-semibold">NF de retorno</strong> (número +
             anexo)
-            {produto?.controlaSerie
+            {pedeSerieDe(produto, tipo?.controleSerie)
               ? " e os números de série que estão voltando"
               : " — a quantidade pode ser parcial"}
             , depois confirme para gravar a entrada no estoque.
@@ -1997,6 +2027,8 @@ function NovoLancamentoForm() {
                   canRemove={linhas.length > 1}
                   locked={false}
                   filialId={filialId}
+                  exigeSerie={(p) => pedeSerieDe(p, tipo?.controleSerie)}
+                  serieLivre={(p) => serieLivreDe(p, tipo?.controleSerie)}
                   validarSerieEstoque={
                     tipo?.operacao === "SAIDA" ||
                     (isTransf && !isBaixaArvore)
@@ -2193,19 +2225,21 @@ function NovoLancamentoForm() {
               </span>
               <input
                 type="number"
-                min={produto?.controlaSerie ? 1 : 0.0001}
-                step={produto?.controlaSerie ? 1 : "any"}
+                min={pedeSerieDe(produto, tipo?.controleSerie) ? 1 : 0.0001}
+                step={pedeSerieDe(produto, tipo?.controleSerie) ? 1 : "any"}
                 required
                 value={quantidade}
                 onChange={(e) => setQuantidade(e.target.value)}
                 className="w-full rounded-lg border px-3 py-3"
               />
-              {produto?.controlaSerie && isRetorno ? (
+              {pedeSerieDe(produto, tipo?.controleSerie) && isRetorno ? (
                 <span className="mt-1 block text-xs text-slate-500">
-                  Informe a quantidade — depois só o sequencial de cada série
-                  (código sem traço + ano já aparecem).
+                  {serieLivreDe(produto, tipo?.controleSerie)
+                    ? "Informe a quantidade — depois o número de série de cada unidade."
+                    : "Informe a quantidade — depois só o sequencial de cada série (código sem traço + ano já aparecem)."}
                 </span>
-              ) : produto?.controlaSerie &&
+              ) : produto &&
+                pedeSerieDe(produto, tipo?.controleSerie) &&
                 !isRetorno &&
                 (tipo?.operacao === "ENTRADA" ||
                   (isBaixaArvore && isTransf)) ? (
@@ -2221,11 +2255,25 @@ function NovoLancamentoForm() {
               ) : null}
             </label>
 
-            {produto?.controlaSerie &&
+            {produto &&
+            pedeSerieDe(produto, tipo?.controleSerie) &&
             (isRetorno ||
               tipo?.operacao === "ENTRADA" ||
               (isBaixaArvore && isTransf)) &&
             Number(quantidade) > 0 ? (
+              serieLivreDe(produto, tipo?.controleSerie) ? (
+                <SerieCamposLivres
+                  series={series}
+                  onChangeSerie={(i, valor) => {
+                    setSeries((prev) => {
+                      const next = [...prev];
+                      while (next.length < i + 1) next.push("");
+                      next[i] = valor;
+                      return next;
+                    });
+                  }}
+                />
+              ) : (
               <SerieCamposPrefixo
                 key={produto.id}
                 codigoProduto={produto.codigo}
@@ -2242,6 +2290,7 @@ function NovoLancamentoForm() {
                   });
                 }}
               />
+              )
             ) : null}
 
             {avisoSaldoInsuficiente && (

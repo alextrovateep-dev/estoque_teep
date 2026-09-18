@@ -78,6 +78,29 @@ describe("tipoMovimentacaoSchema — estoque fixo", () => {
     });
     assert.equal(r.success, true);
   });
+
+  it("aceita controleSerie OBRIGATORIO em SAIDA", () => {
+    const r = tipoMovimentacaoSchema.safeParse({
+      codigo: "SAI-DEMO",
+      nome: "Saída Demonstração",
+      operacao: "SAIDA",
+      filialId: FILIAL_A,
+      controleSerie: "OBRIGATORIO",
+    });
+    assert.equal(r.success, true);
+  });
+
+  it("rejeita baixaPorArvore com controleSerie OBRIGATORIO", () => {
+    const r = tipoMovimentacaoSchema.safeParse({
+      codigo: "SAI-ARV",
+      nome: "Saída com árvore",
+      operacao: "SAIDA",
+      filialId: FILIAL_A,
+      baixaPorArvore: true,
+      controleSerie: "OBRIGATORIO",
+    });
+    assert.equal(r.success, false);
+  });
 });
 
 describe("validateTipoMovimentacaoMerged — PATCH", () => {

@@ -204,6 +204,8 @@ model TipoMovimentacao {
   ehRetornoDeId      String?             @map("eh_retorno_de_id") @db.Uuid
   /// Exige anexo TERMO_COMODATO no lançamento (ex. Saída Comodato)
   requerTermoComodato Boolean            @default(false) @map("requer_termo_comodato")
+  /// Número de série no lançamento: PRODUTO (segue produto.controlaSerie) | OBRIGATORIO | NAO_USA
+  controleSerie      String              @default("PRODUTO") @map("controle_serie") @db.VarChar(20)
   /// SAIDA/TRANSFERENCIA: na saída baixa componentes não-fantasma da BOM
   baixaPorArvore     Boolean             @default(false) @map("baixa_por_arvore")
   /// ENTRADA usada pelo RMA ao abrir processo / incluir item (gera estoque automático)

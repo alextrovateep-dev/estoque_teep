@@ -1,6 +1,7 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import {
+  CONTROLE_SERIE_PADRAO,
   createUsuarioSchema,
   updateUsuarioSchema,
   adminAccessSchema,
@@ -1892,6 +1893,7 @@ cadastrosRouter.post(
             diasAlerta: req.body.diasAlerta ?? [15, 30, 45, 60],
             ehRetornoDeId: req.body.ehRetornoDeId ?? null,
             requerTermoComodato: req.body.requerTermoComodato ?? false,
+            controleSerie: req.body.controleSerie ?? CONTROLE_SERIE_PADRAO,
             baixaPorArvore:
               (req.body.operacao === "SAIDA" ||
                 req.body.operacao === "TRANSFERENCIA") &&
@@ -2088,6 +2090,9 @@ cadastrosRouter.patch(
                 : existing.diasAlerta,
             ehRetornoDeId: ehRetorno,
             requerTermoComodato: termo,
+            controleSerie:
+              (data.controleSerie as string | undefined) ??
+              existing.controleSerie,
             baixaPorArvore: baixaArvore,
             rmaEntradaEstoque: rmaEntrada,
             rmaSaidaCliente: rmaSaida,

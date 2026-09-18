@@ -12,6 +12,7 @@ import {
 } from "../lib/pedidoClienteMatch";
 import { criarMovimentacao } from "./movimentacaoService";
 import { notificarPedidoSeparado } from "./alertaService";
+import { CONTROLE_SERIE_PADRAO, exigeSerieNoLancamento } from "@teep/shared";
 
 const pedidoInclude = {
   filialAcabado: { select: { id: true, nome: true, sigla: true } },
@@ -82,7 +83,14 @@ export async function obterPedido(id: string) {
     aguardandoAprovacao = movs.some((m) => m.status === "PENDENTE");
   }
 
-  return { ...fresh, aguardandoAprovacao };
+  // Regra de série do tipo de saída usado na separação (a tela não escolhe o tipo)
+  const tipoSaida = await tipoSaidaPedidoAtivo();
+
+  return {
+    ...fresh,
+    aguardandoAprovacao,
+    controleSerieSaida: tipoSaida?.controleSerie ?? CONTROLE_SERIE_PADRAO,
+  };
 }
 
 export async function listarEstoquesAcabados(user: AuthUser) {
@@ -361,7 +369,12 @@ export async function separarPedido(
         `Quantidade do item ${item.codigoProprio} deve ser ${Number(item.quantidade)}`
       );
     }
-    if (item.produto.controlaSerie) {
+    if (
+      exigeSerieNoLancamento({
+        produtoControlaSerie: item.produto.controlaSerie,
+        tipoControleSerie: tipo.controleSerie,
+      })
+    ) {
       const n = Math.round(line.quantidade);
       if (!Number.isInteger(line.quantidade) && n !== line.quantidade) {
         throw new AppError(

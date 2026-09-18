@@ -492,6 +492,149 @@ export async function aplicarSeriesSaida(
   }
 }
 
+/**
+ * Série livre (tipo com controleSerie = OBRIGATORIO em produto que não controla
+ * série): a unidade normalmente não existe no estoque — registra o número
+ * informado. Se já existir, precisa estar EM_ESTOQUE nesta filial.
+ */
+async function resolverSerieSaidaLivre(
+  tx: Tx,
+  opts: { produtoId: string; filialId: string; numeroSerie: string }
+) {
+  const existente = await tx.unidadeSerie.findFirst({
+    where: {
+      produtoId: opts.produtoId,
+      numeroSerie: { equals: opts.numeroSerie, mode: "insensitive" },
+    },
+    include: { filial: { select: { sigla: true } } },
+  });
+  if (!existente) return null;
+  if (existente.status === SERIE_STATUS.SAIDO) {
+    throw new AppError(
+      400,
+      `Série ${existente.numeroSerie} já consta como saída — registre o retorno antes de sair de novo`
+    );
+  }
+  if (existente.status !== SERIE_STATUS.EM_ESTOQUE) {
+    throw new AppError(
+      400,
+      `Série ${existente.numeroSerie} está com status ${existente.status} e não pode sair`
+    );
+  }
+  if (existente.filialId !== opts.filialId) {
+    throw new AppError(
+      400,
+      `Série ${existente.numeroSerie} está em outro estoque${
+        existente.filial?.sigla ? ` (${existente.filial.sigla})` : ""
+      }`
+    );
+  }
+  return existente;
+}
+
+async function checarSeriesSaidaLivre(
+  tx: Tx,
+  opts: {
+    produtoId: string;
+    filialId: string;
+    series: string[];
+    quantidade: number;
+    excludeMovimentacaoId?: string | null;
+  }
+) {
+  const series = normalizarSeries(opts.series);
+  assertQuantidadeInteiraSerie(opts.quantidade, series.length);
+
+  const reservadas = await seriesReservadasPendentes(
+    tx,
+    opts.produtoId,
+    opts.excludeMovimentacaoId
+  );
+  const emPendTransf = await seriesEmTransferenciaPendente(tx, opts.produtoId);
+  for (const numeroSerie of series) {
+    const key = numeroSerie.toUpperCase();
+    if (reservadas.has(key) || emPendTransf.has(key)) {
+      throw new AppError(
+        400,
+        `Série ${numeroSerie} está reservada em outro lançamento pendente`
+      );
+    }
+  }
+  return series;
+}
+
+/** Série livre: valida sem aplicar (PENDENTE). */
+export async function validarSeriesSaidaLivre(
+  tx: Tx,
+  opts: {
+    produtoId: string;
+    filialId: string;
+    series: string[];
+    quantidade: number;
+    excludeMovimentacaoId?: string | null;
+  }
+) {
+  const series = await checarSeriesSaidaLivre(tx, opts);
+  for (const numeroSerie of series) {
+    await resolverSerieSaidaLivre(tx, {
+      produtoId: opts.produtoId,
+      filialId: opts.filialId,
+      numeroSerie,
+    });
+  }
+  return series;
+}
+
+/** Série livre: cria (ou consome) a unidade e marca SAIDO. */
+export async function aplicarSeriesSaidaLivre(
+  tx: Tx,
+  opts: {
+    movimentacaoId: string;
+    produtoId: string;
+    filialId: string;
+    series: string[];
+    quantidade: number;
+    clienteId?: string | null;
+    excludeMovimentacaoId?: string | null;
+  }
+) {
+  const series = await checarSeriesSaidaLivre(tx, opts);
+
+  for (const numeroSerie of series) {
+    const existente = await resolverSerieSaidaLivre(tx, {
+      produtoId: opts.produtoId,
+      filialId: opts.filialId,
+      numeroSerie,
+    });
+
+    const unidade = existente
+      ? await tx.unidadeSerie.update({
+          where: { id: existente.id },
+          data: {
+            status: SERIE_STATUS.SAIDO,
+            filialId: null,
+            clienteId: opts.clienteId || null,
+          },
+        })
+      : await tx.unidadeSerie.create({
+          data: {
+            produtoId: opts.produtoId,
+            numeroSerie,
+            filialId: null,
+            status: SERIE_STATUS.SAIDO,
+            clienteId: opts.clienteId || null,
+          },
+        });
+
+    await tx.movimentacaoSerie.create({
+      data: {
+        movimentacaoId: opts.movimentacaoId,
+        unidadeSerieId: unidade.id,
+      },
+    });
+  }
+}
+
 /** Valida séries de saída sem aplicar (PENDENTE). */
 export async function validarSeriesSaidaDisponiveis(
   tx: Tx,

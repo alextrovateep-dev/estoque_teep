@@ -3,6 +3,8 @@ import {
   TIPO_TRANSF_ENVIADA,
   TIPO_TRANSF_RECEBIDA,
   TRANSFERENCIA_STATUS,
+  exigeSerieNoLancamento,
+  usaSerieLivre,
   type TransferenciaStatus,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
@@ -337,6 +339,8 @@ export async function criarTransferencia(
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     /** Tipo com baixaPorArvore: baixa BOM na origem e entra só o pai no destino */
     baixaPorArvore?: boolean;
+    /** `TipoMovimentacao.controleSerie` do tipo escolhido no lançamento */
+    controleSerieTipo?: string | null;
   }
 ) {
   return criarTransferenciaInterna(user, input, "AGUARDAR_RECEBIMENTO", false);
@@ -358,6 +362,7 @@ export async function criarTransferenciaImediata(
     }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     baixaPorArvore?: boolean;
+    controleSerieTipo?: string | null;
   },
   opts?: { bypassFilialOperador?: boolean }
 ) {
@@ -383,6 +388,7 @@ export async function criarTransferenciaPendenteAprovacao(
     }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     baixaPorArvore?: boolean;
+    controleSerieTipo?: string | null;
   },
   creditoDestino: "IMEDIATO" | "AGUARDAR_RECEBIMENTO"
 ) {
@@ -404,6 +410,7 @@ async function criarTransferenciaInterna(
     }>;
     itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
     baixaPorArvore?: boolean;
+    controleSerieTipo?: string | null;
   },
   creditoDestino: "IMEDIATO" | "AGUARDAR_RECEBIMENTO",
   pendenteAprovacao: boolean,
@@ -504,11 +511,21 @@ async function criarTransferenciaInterna(
 
     for (const item of itensOrdenados) {
       const produto = produtoMap.get(item.produtoId)!;
+      const regraSerie = {
+        produtoControlaSerie: produto.controlaSerie,
+        tipoControleSerie: input.controleSerieTipo,
+      };
+      const exigeSerie = exigeSerieNoLancamento(regraSerie);
+      if (usaSerieLivre(regraSerie)) {
+        // Transferência move unidades que já existem na origem — série livre não se aplica.
+        throw new AppError(
+          400,
+          `Produto ${produto.codigo}: transferência com série exige controle de série no cadastro do produto`
+        );
+      }
       let quantidade = item.quantidade;
-      let series = produto.controlaSerie
-        ? normalizarSeries(item.series)
-        : [];
-      if (produto.controlaSerie) {
+      const series = exigeSerie ? normalizarSeries(item.series) : [];
+      if (exigeSerie) {
         if (series.length === 0) {
           throw new AppError(
             400,
@@ -554,7 +571,7 @@ async function criarTransferenciaInterna(
       });
 
       if (pendenteAprovacao) {
-        if (produto.controlaSerie) {
+        if (exigeSerie) {
           await reservarSeriesTransferenciaPendente(tx, {
             transferenciaItemId: itemRow.id,
             produtoId: item.produtoId,
@@ -573,6 +590,7 @@ async function criarTransferenciaInterna(
         produto,
         quantidade,
         series,
+        exigeSerie,
         origemFilialId,
         destinoFilialId: input.destinoFilialId,
         origemNome: origem.nome,
@@ -641,6 +659,8 @@ async function aplicarEfeitosItemTransferencia(
     produto: ProdutoMini;
     quantidade: number;
     series?: string[];
+    /** Regra do tipo + produto; default = produto.controlaSerie */
+    exigeSerie?: boolean;
     origemFilialId: string;
     destinoFilialId: string;
     origemNome: string;
@@ -768,7 +788,9 @@ async function aplicarEfeitosItemTransferencia(
     movRecebidaId = movRecebida.id;
   }
 
-  if (opts.produto.controlaSerie) {
+  const exigeSerie = opts.exigeSerie ?? opts.produto.controlaSerie;
+
+  if (exigeSerie) {
     if (opts.seriesJaReservadas) {
       await efetivarSeriesTransferenciaAposAprovacao(tx, {
         transferenciaItemId: opts.itemId,
@@ -837,7 +859,7 @@ export async function aprovarTransferencia(user: AuthUser, id: string) {
     const transf = await tx.transferencia.findUnique({
       where: { id },
       include: {
-        itens: { include: { produto: true } },
+        itens: { include: { produto: true, series: true } },
         origemFilial: true,
         destinoFilial: true,
       },
@@ -889,7 +911,9 @@ export async function aprovarTransferencia(user: AuthUser, id: string) {
         imediato,
         enviadaId: enviada.id,
         recebidaId: recebida.id,
-        seriesJaReservadas: item.produto.controlaSerie,
+        // Séries reservadas na criação valem mesmo se o tipo mudou depois
+        exigeSerie: item.series.length > 0,
+        seriesJaReservadas: item.series.length > 0,
       });
       alertas.push(...efeitos);
 
@@ -1067,11 +1091,13 @@ export async function conferirTransferencia(
 
       const enviadaQtd = Number(item.qtdEnviada);
       let rec = Number(conf.qtdRecebida);
-      let seriesRecebidas = item.produto.controlaSerie
+      // A carga define a regra: só confere série o item que saiu com série.
+      const itemComSerie = item.series.length > 0;
+      const seriesRecebidas = itemComSerie
         ? normalizarSeries(conf.seriesRecebidas)
         : [];
 
-      if (item.produto.controlaSerie) {
+      if (itemComSerie) {
         if (conf.seriesRecebidas === undefined) {
           throw new AppError(
             400,
@@ -1089,7 +1115,7 @@ export async function conferirTransferencia(
       );
       const nascerMontagem = Boolean(enviadaMovPre?.filialComponentesId);
 
-      if (nascerMontagem && item.produto.controlaSerie) {
+      if (nascerMontagem && itemComSerie) {
         if (rec !== enviadaQtd) {
           throw new AppError(
             400,
@@ -1163,7 +1189,7 @@ export async function conferirTransferencia(
         movRecebidaId = movRec.id;
       }
 
-      if (item.produto.controlaSerie) {
+      if (itemComSerie) {
         const { qtdNaoRecebida } = await aplicarSeriesConferencia(tx, {
           transferenciaItemId: item.id,
           movimentacaoRecebidaId: movRecebidaId,

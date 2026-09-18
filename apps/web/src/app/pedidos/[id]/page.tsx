@@ -6,7 +6,7 @@ import {
   newLancamentoLinha,
   type LancamentoLinha,
 } from "@/components/LancamentoLinhaItem";
-import { formatCnpj } from "@teep/shared";
+import { exigeSerieNoLancamento, formatCnpj, usaSerieLivre } from "@teep/shared";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -49,6 +49,7 @@ type Pedido = {
   status: string;
   grupoLancamentoId: string | null;
   aguardandoAprovacao?: boolean;
+  controleSerieSaida?: string | null;
   filialAcabado?: { id: string; sigla: string; nome: string } | null;
   itens: Item[];
   destinatarios?: Array<{ usuario: Dest }>;
@@ -89,9 +90,11 @@ export default function PedidoDetalhePage() {
         setLinhas(
           p.itens.map((it) => {
             const qtd = n(it.quantidade);
-            const seriesLen = it.produto?.controlaSerie
-              ? Math.max(1, Math.round(qtd))
-              : 0;
+            const pedeSerie = exigeSerieNoLancamento({
+              produtoControlaSerie: it.produto?.controlaSerie,
+              tipoControleSerie: p.controleSerieSaida,
+            });
+            const seriesLen = pedeSerie ? Math.max(1, Math.round(qtd)) : 0;
             return newLancamentoLinha({
               key: it.id,
               codigo: it.codigoProprio,
@@ -157,7 +160,11 @@ export default function PedidoDetalhePage() {
             return {
               id: it.id,
               quantidade: n(it.quantidade),
-              series: linha?.produto?.controlaSerie
+              series: linha?.produto &&
+              exigeSerieNoLancamento({
+                produtoControlaSerie: linha.produto.controlaSerie,
+                tipoControleSerie: row.controleSerieSaida,
+              })
                 ? (linha.series || []).map((s) => s.trim()).filter(Boolean)
                 : undefined,
             };
@@ -279,7 +286,22 @@ export default function PedidoDetalhePage() {
                 canRemove={false}
                 locked
                 filialId={filialId}
-                validarSerieEstoque={Boolean(it.produto?.controlaSerie)}
+                exigeSerie={(prod) =>
+                  exigeSerieNoLancamento({
+                    produtoControlaSerie: prod.controlaSerie,
+                    tipoControleSerie: row.controleSerieSaida,
+                  })
+                }
+                serieLivre={(prod) =>
+                  usaSerieLivre({
+                    produtoControlaSerie: prod.controlaSerie,
+                    tipoControleSerie: row.controleSerieSaida,
+                  })
+                }
+                validarSerieEstoque={exigeSerieNoLancamento({
+                  produtoControlaSerie: it.produto?.controlaSerie,
+                  tipoControleSerie: row.controleSerieSaida,
+                })}
                 podeGerarAutomatico={false}
                 onPatch={(partial) => patchLinha(it.id, partial)}
                 onRemove={() => undefined}

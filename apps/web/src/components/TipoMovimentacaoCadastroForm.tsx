@@ -1,6 +1,7 @@
 "use client";
 
 import { api } from "@/lib/api";
+import { CONTROLE_SERIE_PADRAO, type ControleSerie } from "@teep/shared";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, ReactNode, useEffect, useState } from "react";
@@ -20,6 +21,7 @@ type Tipo = {
   diasAlerta?: number[] | null;
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
+  controleSerie?: ControleSerie;
   baixaPorArvore?: boolean;
   rmaEntradaEstoque?: boolean;
   rmaSaidaCliente?: boolean;
@@ -52,6 +54,7 @@ function createEmptyForm() {
     diasAlerta: [...DIAS_ALERTA_PADRAO] as number[],
     ehRetornoDeId: "" as string,
     requerTermoComodato: false,
+    controleSerie: CONTROLE_SERIE_PADRAO as ControleSerie,
     baixaPorArvore: false,
     rmaEntradaEstoque: false,
     rmaSaidaCliente: false,
@@ -257,6 +260,7 @@ export function TipoMovimentacaoCadastroForm({
           diasAlerta: normalizeDiasAlerta(t.diasAlerta),
           ehRetornoDeId: t.ehRetornoDeId || "",
           requerTermoComodato: Boolean(t.requerTermoComodato),
+          controleSerie: t.controleSerie || CONTROLE_SERIE_PADRAO,
           baixaPorArvore: Boolean(t.baixaPorArvore),
           rmaEntradaEstoque: Boolean(t.rmaEntradaEstoque),
           rmaSaidaCliente: Boolean(t.rmaSaidaCliente),
@@ -350,6 +354,7 @@ export function TipoMovimentacaoCadastroForm({
             geraAlertaRetorno: form.geraAlertaRetorno,
             ehRetornoDeId: form.ehRetornoDeId || null,
             requerTermoComodato: form.requerTermoComodato,
+            controleSerie: form.controleSerie,
             baixaPorArvore:
               form.operacao === "SAIDA" || form.operacao === "TRANSFERENCIA"
                 ? form.baixaPorArvore
@@ -677,6 +682,53 @@ export function TipoMovimentacaoCadastroForm({
               }
             />
           </div>
+
+          <label className="mt-2 block">
+            <span className="mb-1 block text-sm font-medium">
+              Número de série
+            </span>
+            <select
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 disabled:bg-slate-50"
+              disabled={soRmaFlags}
+              value={form.controleSerie}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  controleSerie: e.target.value as ControleSerie,
+                })
+              }
+            >
+              <option value="PRODUTO">
+                Segue o produto (só pede se o produto controlar série)
+              </option>
+              <option value="OBRIGATORIO" disabled={form.baixaPorArvore}>
+                Sempre exige série (ex. Demonstração / Comodato)
+              </option>
+              <option value="NAO_USA">Não usa série (nunca pede)</option>
+            </select>
+            <span className="mt-1 block text-[11px] text-slate-500">
+              {form.controleSerie === "OBRIGATORIO"
+                ? "Todo lançamento deste tipo pede uma série por unidade, mesmo em produto sem controle de série no cadastro."
+                : form.controleSerie === "NAO_USA"
+                  ? "Nenhum lançamento deste tipo pede série."
+                  : "Comportamento padrão: quem manda é o campo «controla série» do produto."}
+            </span>
+            {form.controleSerie === "OBRIGATORIO" && isTransf ? (
+              <p className="mt-2 rounded-md border border-amber-100 bg-amber-50/80 px-2.5 py-2 text-xs text-amber-950">
+                Em transferência a série sai de uma unidade que já existe no
+                estoque de origem — produtos sem{" "}
+                <strong>controla série</strong> no cadastro serão recusados no
+                lançamento.
+              </p>
+            ) : null}
+            {form.controleSerie === "NAO_USA" ? (
+              <p className="mt-2 rounded-md border border-amber-100 bg-amber-50/80 px-2.5 py-2 text-xs text-amber-950">
+                Atenção: em produto que <strong>controla série</strong>, o saldo
+                se move sem registrar qual unidade saiu ou entrou — o histórico
+                de séries desse produto fica incompleto.
+              </p>
+            ) : null}
+          </label>
         </SectionCard>
 
         <SectionCard
@@ -831,6 +883,11 @@ export function TipoMovimentacaoCadastroForm({
                   ...form,
                   baixaPorArvore: v,
                   requerAprovacao: v ? false : form.requerAprovacao,
+                  // Árvore não pede série do produto pai
+                  controleSerie:
+                    v && form.controleSerie === "OBRIGATORIO"
+                      ? CONTROLE_SERIE_PADRAO
+                      : form.controleSerie,
                 })
               }
               title="Baixa pela árvore de produto"
