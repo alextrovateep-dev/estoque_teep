@@ -1,6 +1,7 @@
 "use client";
 
 import { mensagemErroValidacao, MSG_VALIDACAO_GENERICA } from "@teep/shared";
+import { withLoading } from "@/lib/loadingBus";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
 
@@ -117,8 +118,23 @@ async function parseJsonResponse(res: Response): Promise<unknown> {
 
 const fetchCreds: RequestCredentials = "include";
 
+/** Polling / auth em background: não dispara o overlay global. */
+export type ApiRequestInit = RequestInit & { silent?: boolean };
+
+function withoutSilent(options: ApiRequestInit): RequestInit {
+  const { silent: _silent, ...rest } = options;
+  return rest;
+}
+
 /** Login direto (sem api() / refresh). */
 export async function loginRequest(
+  email: string,
+  senha: string
+): Promise<{ accessToken: string; user: User }> {
+  return withLoading(() => loginRequestInner(email, senha));
+}
+
+async function loginRequestInner(
   email: string,
   senha: string
 ): Promise<{ accessToken: string; user: User }> {
@@ -155,6 +171,42 @@ export async function loginRequest(
     throw new Error(formatApiError(body, res.status));
   }
   return body as { accessToken: string; user: User };
+}
+
+export async function esqueciSenhaRequest(email: string): Promise<string> {
+  return withLoading(async () => {
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/auth/esqueci-senha`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: fetchCreds,
+        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+      });
+    } catch {
+      throw new Error(
+        `Não foi possível contactar a API (${API_URL}). Verifique DNS, HTTPS e CORS_ORIGIN.`
+      );
+    }
+    const body = await parseJsonResponse(res);
+    if (!res.ok) {
+      if (res.status === 429) {
+        throw new Error(
+          extractApiErrorMessage(body) ||
+            "Muitos pedidos de senha. Aguarde alguns minutos."
+        );
+      }
+      throw new Error(formatApiError(body, res.status));
+    }
+    const msg =
+      body &&
+      typeof body === "object" &&
+      "message" in body &&
+      typeof (body as { message: unknown }).message === "string"
+        ? (body as { message: string }).message
+        : "Se o e-mail estiver cadastrado, enviamos uma senha provisória.";
+    return msg;
+  });
 }
 
 export function getStoredUser(): User | null {
@@ -269,10 +321,19 @@ export async function logoutSession() {
 
 export async function api<T>(
   path: string,
-  options: RequestInit = {}
+  options: ApiRequestInit = {}
 ): Promise<T> {
-  const headers = new Headers(options.headers || {});
-  if (!headers.has("Content-Type") && options.body) {
+  const run = () => apiInner<T>(path, options);
+  return options.silent ? run() : withLoading(run);
+}
+
+async function apiInner<T>(
+  path: string,
+  options: ApiRequestInit = {}
+): Promise<T> {
+  const fetchOptions = withoutSilent(options);
+  const headers = new Headers(fetchOptions.headers || {});
+  if (!headers.has("Content-Type") && fetchOptions.body) {
     headers.set("Content-Type", "application/json");
   }
   const publicAuth = isPublicAuthPath(path);
@@ -280,7 +341,7 @@ export async function api<T>(
   if (token) headers.set("Authorization", `Bearer ${token}`);
 
   let res = await fetch(`${API_URL}${path}`, {
-    ...options,
+    ...fetchOptions,
     headers,
     credentials: fetchCreds,
   });
@@ -290,7 +351,7 @@ export async function api<T>(
     if (fresh) {
       headers.set("Authorization", `Bearer ${fresh}`);
       res = await fetch(`${API_URL}${path}`, {
-        ...options,
+        ...fetchOptions,
         headers,
         credentials: fetchCreds,
       });
@@ -310,6 +371,13 @@ export async function api<T>(
 
 /** Upload multipart (não define Content-Type — o browser seta boundary). */
 export async function apiUpload<T>(
+  path: string,
+  formData: FormData
+): Promise<T> {
+  return withLoading(() => apiUploadInner<T>(path, formData));
+}
+
+async function apiUploadInner<T>(
   path: string,
   formData: FormData
 ): Promise<T> {
@@ -350,6 +418,13 @@ export async function apiUpload<T>(
 
 /** Download binário (PDF/Excel) com auth + refresh. */
 export async function apiDownload(
+  path: string,
+  options: RequestInit & { fallbackFilename?: string } = {}
+): Promise<{ blob: Blob; filename: string }> {
+  return withLoading(() => apiDownloadInner(path, options));
+}
+
+async function apiDownloadInner(
   path: string,
   options: RequestInit & { fallbackFilename?: string } = {}
 ): Promise<{ blob: Blob; filename: string }> {

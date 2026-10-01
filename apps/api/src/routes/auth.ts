@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import bcrypt from "bcryptjs";
 import {
   loginSchema,
+  esqueciSenhaSchema,
   updateMeSchema,
   trocarSenhaSchema,
   resolvePermissoes,
@@ -26,6 +27,8 @@ import {
 } from "../lib/uploads";
 import rateLimit from "express-rate-limit";
 import { temEstoqueAtivo } from "../lib/estoqueGate";
+import { enqueueSenhaProvisoriaEmail } from "../services/acessoContaService";
+import { generateProvisionalPassword } from "../lib/provisionalPassword";
 import {
   clearRefreshCookie,
   readRefreshToken,
@@ -44,6 +47,14 @@ const loginLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Muitas tentativas de login. Aguarde 1 minuto." },
+});
+
+const esqueciSenhaLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Muitos pedidos de senha. Aguarde alguns minutos." },
 });
 
 const refreshLimiter = rateLimit({
@@ -208,7 +219,7 @@ authRouter.post(
           : LOGIN_TIMING_HASH;
       const ok = await bcrypt.compare(senha, hash);
       if (!usuario || !usuario.ativo || !ok) {
-        throw new AppError(401, "Credenciais inválidas");
+        throw new AppError(401, "E-mail ou senha incorretos");
       }
 
       const accessToken = signAccessToken(toAuthUser(usuario));
@@ -218,6 +229,43 @@ authRouter.post(
         accessToken,
         user: await publicUser(usuario),
       });
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+const MSG_ESQUECI_SENHA =
+  "Se o e-mail estiver cadastrado, enviamos uma senha provisória. Confira a caixa de entrada.";
+
+authRouter.post(
+  "/esqueci-senha",
+  esqueciSenhaLimiter,
+  validateBody(esqueciSenhaSchema),
+  async (req, res, next) => {
+    try {
+      const { email } = req.body as { email: string };
+      const usuario = await prisma.usuario.findUnique({
+        where: { email },
+        select: { id: true, nome: true, email: true, ativo: true },
+      });
+      await bcrypt.compare("timing", LOGIN_TIMING_HASH);
+      if (usuario?.ativo) {
+        const senhaProvisoria = generateProvisionalPassword();
+        const senhaHash = await bcrypt.hash(senhaProvisoria, 12);
+        await prisma.usuario.update({
+          where: { id: usuario.id },
+          data: { senhaHash, deveTrocarSenha: true },
+        });
+        await prisma.refreshToken.deleteMany({ where: { usuarioId: usuario.id } });
+        enqueueSenhaProvisoriaEmail({
+          nome: usuario.nome,
+          email: usuario.email,
+          senhaProvisoria,
+          motivo: "esqueci",
+        });
+      }
+      res.json({ ok: true, message: MSG_ESQUECI_SENHA });
     } catch (e) {
       next(e);
     }

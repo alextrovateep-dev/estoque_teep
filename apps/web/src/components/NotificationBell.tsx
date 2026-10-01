@@ -40,7 +40,7 @@ export function NotificationBell() {
       const r = await api<{
         data: Notificacao[];
         naoLidas: number;
-      }>("/notificacoes?take=20");
+      }>("/notificacoes?take=20", { silent: true });
       setItems(r.data);
       setNaoLidas(r.naoLidas);
     } catch {

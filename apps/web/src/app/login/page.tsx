@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   clearSession,
   ensureAccessToken,
+  esqueciSenhaRequest,
   getStoredUser,
   loginRequest,
   setSession,
@@ -12,6 +13,7 @@ import {
 } from "@/lib/api";
 import { homeForUser } from "@/lib/access";
 import { TeepLogo } from "@/components/TeepLogo";
+import { PageLoader } from "@/components/PageLoader";
 
 function destinoPosLogin(user: User): string {
   if (user.deveTrocarSenha) return "/trocar-senha";
@@ -25,6 +27,9 @@ export default function LoginPage() {
   const [senha, setSenha] = useState("");
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [error, setError] = useState("");
+  const [loginFalhou, setLoginFalhou] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
 
@@ -53,6 +58,8 @@ export default function LoginPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
+    setForgotMsg("");
+    setLoginFalhou(false);
     setLoading(true);
     clearSession();
     try {
@@ -60,7 +67,10 @@ export default function LoginPage() {
       setSession(data);
       router.replace(destinoPosLogin(data.user));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Falha no login");
+      const msg = err instanceof Error ? err.message : "Falha no login";
+      setError(msg);
+      const muitas = /muitas tentativas/i.test(msg);
+      setLoginFalhou(!muitas);
     } finally {
       setLoading(false);
     }
@@ -69,7 +79,7 @@ export default function LoginPage() {
   if (checkingSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-brand-light to-slate-100 px-4">
-        <p className="text-sm text-slate-500">Verificando sessão…</p>
+        <PageLoader label="Verificando sessão…" />
       </div>
     );
   }
@@ -156,6 +166,38 @@ export default function LoginPage() {
             <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
             </p>
+          )}
+          {loginFalhou && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                disabled={forgotLoading || !email.trim()}
+                onClick={async () => {
+                  setForgotMsg("");
+                  setForgotLoading(true);
+                  try {
+                    const msg = await esqueciSenhaRequest(email);
+                    setForgotMsg(msg);
+                  } catch (err) {
+                    setForgotMsg(
+                      err instanceof Error
+                        ? err.message
+                        : "Não foi possível pedir nova senha."
+                    );
+                  } finally {
+                    setForgotLoading(false);
+                  }
+                }}
+                className="text-sm font-medium text-brand hover:underline disabled:opacity-60"
+              >
+                {forgotLoading ? "Enviando…" : "Esqueceu a senha?"}
+              </button>
+              {forgotMsg && (
+                <p className="rounded-lg bg-brand-light px-3 py-2 text-sm text-slate-700">
+                  {forgotMsg}
+                </p>
+              )}
+            </div>
           )}
           <button
             type="submit"

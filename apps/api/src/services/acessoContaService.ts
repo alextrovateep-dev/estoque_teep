@@ -15,7 +15,7 @@ export function enqueueSenhaProvisoriaEmail(opts: {
   nome: string;
   email: string;
   senhaProvisoria: string;
-  motivo: "cadastro" | "reset";
+  motivo: "cadastro" | "reset" | "esqueci";
   /** Admin que cadastrou a conta ou gerou a nova senha. */
   responsavelNome?: string | null;
 }): void {

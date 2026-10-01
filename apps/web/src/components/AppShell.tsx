@@ -9,6 +9,7 @@ import { homeForUser, userCanOpenCadastro, userHas, userHasAny } from "@/lib/acc
 import { resolveAssetUrl } from "@/lib/assets";
 import { useFocusTrap } from "@/hooks/useFocusTrap";
 import { NotificationBell } from "@/components/NotificationBell";
+import { PageLoader } from "@/components/PageLoader";
 import { TeepLogo } from "@/components/TeepLogo";
 import { PermissaoKey } from "@teep/shared";
 
@@ -137,7 +138,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     };
     window.addEventListener("teep-user-updated", onUserUpdated);
 
-    void api<User>("/auth/me")
+    void api<User>("/auth/me", { silent: true })
       .then((me) => {
         const next: User = {
           id: me.id,
@@ -196,8 +197,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     let cancelled = false;
     const load = () => {
       void Promise.all([
-        api<{ total: number }>("/movimentacoes?status=PENDENTE&pageSize=1"),
-        api<{ total: number }>("/transferencias/pendentes-aprovacao/count"),
+        api<{ total: number }>("/movimentacoes?status=PENDENTE&pageSize=1", {
+          silent: true,
+        }),
+        api<{ total: number }>("/transferencias/pendentes-aprovacao/count", {
+          silent: true,
+        }),
       ])
         .then(([movs, tr]) => {
           if (!cancelled) {
@@ -372,8 +377,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   if (!user) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-slate-500">
-        Carregando…
+      <div className="flex min-h-screen items-center justify-center bg-slate-50">
+        <PageLoader label="Carregando sessão…" />
       </div>
     );
   }

@@ -34,6 +34,14 @@ export const loginSchema = z.object({
   senha: z.string().min(1),
 });
 
+export const esqueciSenhaSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .email()
+    .transform((v) => v.toLowerCase()),
+});
+
 const senhaForteSchema = z
   .string()
   .min(8, "senha deve ter no mínimo 8 caracteres")

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import "./globals.css";
 import { AppShellGate } from "@/components/AppShellGate";
+import { GlobalLoading } from "@/components/GlobalLoading";
 
 export const metadata: Metadata = {
   title: "TEEP Estoque",
@@ -24,6 +25,7 @@ export default function RootLayout({
     <html lang="pt-BR">
       <body>
         <Suspense fallback={<div className="p-6 text-sm text-slate-500">Carregando…</div>}>
+          <GlobalLoading />
           <AppShellGate>{children}</AppShellGate>
         </Suspense>
       </body>

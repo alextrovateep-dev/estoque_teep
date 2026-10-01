@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { PageLoader } from "@/components/PageLoader";
 import { getStoredUser } from "@/lib/api";
 import { homeForUser } from "@/lib/access";
 
@@ -24,8 +25,8 @@ export default function HomePage() {
     router.replace(homeForUser(user));
   }, [router]);
   return (
-    <div className="flex min-h-screen items-center justify-center text-slate-500">
-      Carregando…
+    <div className="flex min-h-screen items-center justify-center">
+      <PageLoader />
     </div>
   );
 }

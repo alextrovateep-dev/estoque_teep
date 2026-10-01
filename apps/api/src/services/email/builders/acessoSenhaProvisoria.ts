@@ -10,7 +10,7 @@ export async function buildAcessoSenhaProvisoriaEmail(opts: {
   emailLogin: string;
   senhaProvisoria: string;
   appUrl: string;
-  motivo: "cadastro" | "reset";
+  motivo: "cadastro" | "reset" | "esqueci";
   responsavelNome?: string | null;
 }): Promise<PreparedTransactionalEmail> {
   const titulo =
@@ -20,7 +20,9 @@ export async function buildAcessoSenhaProvisoriaEmail(opts: {
   const intro =
     opts.motivo === "cadastro"
       ? "Criamos seu acesso ao controle de estoque da TEEP. Use os dados abaixo no primeiro login."
-      : "Um administrador gerou uma nova senha provisória para a sua conta. Entre com ela e defina uma senha nova em seguida.";
+      : opts.motivo === "esqueci"
+        ? "Foi pedida uma nova senha provisória na tela de login. Entre com ela e defina uma senha nova em seguida."
+        : "Um administrador gerou uma nova senha provisória para a sua conta. Entre com ela e defina uma senha nova em seguida.";
 
   const def = await resolveEmailTemplate("ACESSO_SENHA_PROVISORIA");
   return renderEmailFromTemplate(def, {

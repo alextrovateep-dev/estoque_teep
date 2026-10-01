@@ -15,9 +15,14 @@ module.exports = {
           "0%": { transform: "rotate(0deg)" },
           "100%": { transform: "rotate(360deg)" },
         },
+        "teep-indet": {
+          "0%": { transform: "translateX(-120%)" },
+          "100%": { transform: "translateX(400%)" },
+        },
       },
       animation: {
         "teep-orbit": "teep-orbit 2.8s linear infinite",
+        "teep-indet": "teep-indet 1.1s ease-in-out infinite",
       },
     },
   },
