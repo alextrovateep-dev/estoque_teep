@@ -221,6 +221,72 @@ Depois: `SEED_ON_START=0` (ver §4.3).
 
 ---
 
+## 5.5 Migração para um servidor novo (saindo do suporte)
+
+O destino é um **VPS limpo** (Debian 12, 4 GB+ RAM, **60 GB+** disco, portas **80/443** livres). Não use o host TechCenter nem o Apache do suporte.
+
+Ordem: **dump no suporte** → **Docker + código no servidor novo** → **restore** → **Caddy / HTTPS** → **só então apontar o DNS**.
+
+`SEED_ON_START=0` no servidor novo. O banco vem do dump, não do seed.
+
+### Backup no suporte (hoje)
+
+O disco está apertado: não precisa `git pull`. Cole no suporte (`ssh -p 2222 alextrova@174.138.62.243`):
+
+```bash
+cd /opt/estoque-teep
+set -a && . ./.env.production && set +a
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+OUT=/opt/estoque-teep/backups/$STAMP
+mkdir -p "$OUT"
+PG=$(docker ps --format '{{.Names}}' | grep postgres | head -1)
+docker exec -i "$PG" pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc > "$OUT/postgres.dump"
+cp .env.production "$OUT/env.production"
+chmod 600 "$OUT/env.production"
+VOL=$(docker volume ls -q | grep api_uploads | head -1)
+if [ -n "$VOL" ]; then
+  docker run --rm -v "$VOL":/data:ro -v "$OUT":/backup postgres:16-alpine \
+    tar czf /backup/uploads.tar.gz -C /data .
+fi
+ls -lh "$OUT"
+```
+
+Copie a pasta `backups/<timestamp>` para o PC e depois para o servidor novo (`/tmp/teep-backup`).
+
+### Instalar no servidor novo
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl git
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker "$USER"
+# encerre o SSH e entre de novo
+
+sudo mkdir -p /opt && sudo chown "$USER:$USER" /opt
+cd /opt
+git clone git@github.com:alextrovateep-dev/estoque_teep.git estoque-teep
+cd /opt/estoque-teep
+
+cp /tmp/teep-backup/env.production .env.production
+chmod 600 .env.production
+sed -i 's/^SEED_ON_START=.*/SEED_ON_START=0/' .env.production
+
+mkdir -p backups
+cp -a /tmp/teep-backup backups/
+
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d postgres redis
+RESTORE_UPLOADS=1 ./scripts/restore-prod.sh backups/<timestamp>
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+RAM apertada: `build api` e `build web` **um de cada vez**, depois `up -d`.
+
+Valide `https://api.estoque.teep.com.br/health` (depois do DNS) ou, antes, o IP do Caddy. Quando o novo host responder em 80/443, aponte os A de `estoque.teep.com.br` e `api.estoque.teep.com.br` para o **IP novo**. Até lá a produção continua no suporte.
+
+Restore extra: [recuperacao-backup.md](./recuperacao-backup.md).
+
+---
+
 ## 6. Ensaio em VM Debian no PC (mesmo empacotamento)
 
 Objetivo: validar **a mesma instalação** sem DNS público. Usa certificado **interno** do Caddy (`deploy/Caddyfile.lab`).
@@ -342,7 +408,7 @@ Cron diário no host (exemplo 02:30 UTC):
 0 2 * * * cd /opt/estoque-teep && ./scripts/backup-prod.sh >> /var/log/teep-backup.log 2>&1
 ```
 
-Restore / emergência: [recuperacao-backup.md](./recuperacao-backup.md).
+Migração para servidor novo: §5.5.
 
 ```bash
 RESTORE_UPLOADS=1 ./scripts/restore-prod.sh backups/<timestamp>

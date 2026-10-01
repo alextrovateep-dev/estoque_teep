@@ -36,7 +36,9 @@ O dump `openapi-egestor.yaml` do repo diverge da [documentação oficial](https:
 1. **Estoque de acabados** — no cadastro do estoque (filial), marcar **Estoque de acabados**. Pode haver vários. Sem o flag, o estoque não aparece na separação.
 2. **Tipo de saída** — um tipo `SAIDA` com a flag **Saída de pedido de venda** (no máximo um ativo). A tela de pedidos usa esse tipo; o operador **não** escolhe tipo. Sem tipo ativo, Separar fica bloqueado.
 
-Match de SKU: `codigoProprio` da linha eGestor = `Produto.codigo` no TEEP. Linha sem match aparece na tela e **impede** concluir a separação.
+Match de SKU: `codigoProprio` da linha eGestor = `Produto.codigo` no TEEP (trim, sem diferenciar maiúsculas). Linha sem match aparece na tela e **impede** concluir a separação. O sync **reusa o id** da linha no TEEP; se a tela ficou aberta durante o sync, **Separar** relê o pedido antes de enviar.
+
+Pedido **novo** na fila dispara o alerta `PEDIDO_DISPONIVEL` (sino + e-mail) para quem marcou o evento no cadastro de usuário e, no e-mail, também o master «Também enviar por e-mail». Pedido já existente no TEEP (só atualizado no sync) **não** dispara de novo. `PEDIDO_SEPARADO` continua sendo os destinatários escolhidos na hora de separar.
 
 Match de cliente: CNPJ do contato no eGestor (`/v1/contatos/{codContato}` ou `/v1/vendas/{codigo}/contato`) = `Cliente.documento` no TEEP. Sem CNPJ válido no eGestor, ou sem cliente ativo com o mesmo CNPJ no TEEP, a separação fica **bloqueada**. CPF não é aceito.
 

@@ -13,6 +13,7 @@ Todos os comandos abaixo assumem a raiz do repo com `.env.production` (ex.: `/op
 backups/YYYYMMDDTHHMMSSZ/
 ├── postgres.dump     # pg_dump -Fc
 ├── uploads.tar.gz    # volume api_uploads (se existir)
+├── env.production    # cópia do .env (só para migração; chmod 600)
 └── MANIFEST.txt
 ```
 

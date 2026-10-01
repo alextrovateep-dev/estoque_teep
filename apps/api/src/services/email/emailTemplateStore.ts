@@ -374,6 +374,19 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       ].join("\n\n"),
     };
   }
+  if (type === "PEDIDO_DISPONIVEL") {
+    return {
+      nome: "Ana Operações",
+      titulo: "Pedido disponível · 1042",
+      mensagem: [
+        "O pedido 1042 chegou do eGestor e está na fila para separação.",
+        "Cliente: Cliente Demo LTDA",
+        "Itens: 3",
+        quem,
+        `Abrir pedido: ${appUrl}/pedidos/c3d4e5f6-0000-4000-8000-000000000001`,
+      ].join("\n\n"),
+    };
+  }
   if (type === "PEDIDO_SEPARADO") {
     return {
       nome: "Ana Operações",

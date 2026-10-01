@@ -2,6 +2,13 @@
 const nextConfig = {
   transpilePackages: ["@teep/shared"],
   poweredByHeader: false,
+  // Docker: o pack do webpack no disco estoura o overlay (ENOSPC).
+  webpack: (config) => {
+    if (process.env.NEXT_WEBPACK_CACHE === "0") {
+      config.cache = false;
+    }
+    return config;
+  },
   // Evita cobrir o botão "Sair" do menu (padrão do Next é bottom-left).
   devIndicators: {
     position: "bottom-right",

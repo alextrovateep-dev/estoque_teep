@@ -4,6 +4,8 @@ RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 WORKDIR /app
 ENV CI=1
 ENV NODE_OPTIONS=--max-old-space-size=2048
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_WEBPACK_CACHE=0
 
 FROM base AS deps
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
@@ -19,7 +21,7 @@ ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 RUN pnpm --filter @teep/shared build
-RUN pnpm --filter @teep/web build
+RUN pnpm --filter @teep/web build && rm -rf apps/web/.next/cache
 
 FROM base AS runner
 WORKDIR /app

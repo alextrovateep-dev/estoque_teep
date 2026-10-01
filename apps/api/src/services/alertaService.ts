@@ -552,6 +552,28 @@ export function notificarRmaOrcamentoDecisao(opts: {
   });
 }
 
+export function notificarPedidoDisponivel(opts: {
+  pedidoId: string;
+  egestorCodigo: number;
+  clienteNome: string;
+  qtdItens: number;
+}): void {
+  const href = `/pedidos/${opts.pedidoId}`;
+  emitirAlerta("PEDIDO_DISPONIVEL", {
+    titulo: `Pedido disponível · ${opts.egestorCodigo}`,
+    mensagem: [
+      `O pedido ${opts.egestorCodigo} chegou do eGestor e está na fila para separação.`,
+      `Cliente: ${opts.clienteNome}`,
+      opts.qtdItens > 0 ? `Itens: ${opts.qtdItens}` : null,
+      `Abrir pedido: ${appBaseUrl()}${href}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+    meta: { pedidoId: opts.pedidoId, href, egestorCodigo: opts.egestorCodigo },
+    dedupeKey: `${opts.pedidoId}|DISPONIVEL`,
+  });
+}
+
 export function notificarPedidoSeparado(opts: {
   pedidoId: string;
   egestorCodigo: number;

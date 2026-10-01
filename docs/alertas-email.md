@@ -40,6 +40,8 @@ evento de domínio
 | `TRANSFERENCIA_PENDENTE_APROVACAO` | Sim | Fanout se master | Criação pendente |
 | `TRANSFERENCIA_APROVADA` / `_REJEITADA` | Sim (+ criador no sino) | Fanout se master | Decisão em Aprovações |
 | `RMA_ABERTO` / `RMA_FINANCEIRO` / `RMA_ENCERRADO` / `RMA_LAUDO` | Sim (lista do processo) | Destinatários do RMA (`forceEmail`) | Processo RMA — ver [rma.md](./rma.md) |
+| `PEDIDO_DISPONIVEL` | Sim | Fanout se master | Sync eGestor — pedido **novo** na fila |
+| `PEDIDO_SEPARADO` | Destinatários da separação | `forceEmail` nesses usuários | Tela Pedidos → Separar |
 | `ACESSO_SENHA_PROVISORIA` | Não | Sempre | Criar / reset usuário (tipo **conta**) |
 
 ### Retorno (demo/comodato) — regra especial

@@ -20,6 +20,11 @@ import {
   indexClientesPorCnpj,
   interpretarDocumentoContatoEgestor,
 } from "../lib/pedidoClienteMatch";
+import {
+  alinharItensPedidoEgestor,
+  codigoItemEgestor,
+} from "../lib/pedidoSeparacaoItens";
+import { notificarPedidoDisponivel } from "./alertaService";
 
 function parseDate(v: string | undefined): Date {
   const s = String(v || "").slice(0, 10);
@@ -150,6 +155,7 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
     const existing = await prisma.pedidoVenda.findUnique({
       where: { egestorCodigo: codigo },
     });
+    const isNovo = !existing;
 
     const pedidoId = existing?.id || randomUUID();
     await prisma.pedidoVenda.upsert({
@@ -181,23 +187,64 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
       },
     });
 
-    await prisma.pedidoVendaItem.deleteMany({ where: { pedidoId } });
-    await prisma.pedidoVendaItem.createMany({
-      data: linhas.map((l, idx) => {
-        const codigoProprio = String(l.codigoProprio || "").trim() || "SEM-SKU";
-        const produtoId =
-          produtoByCodigo.get(codigoProprio.toLowerCase()) || null;
-        return {
-          pedidoId,
-          egestorItemCodigo: l.codigo != null ? Number(l.codigo) : idx + 1,
-          codigoProprio: codigoProprio.slice(0, 80),
-          descricao: String(l.descricao || codigoProprio).slice(0, 200),
-          quantidade: Number(l.quant || 0) || 0,
-          produtoId,
-        };
-      }),
+    const usedCodes = new Set<number>();
+    const entradas = linhas.map((l, idx) => {
+      const codigoProprio = String(l.codigoProprio || "").trim() || "SEM-SKU";
+      return {
+        egestorItemCodigo: codigoItemEgestor(l.codigo, idx, usedCodes),
+        codigoProprio: codigoProprio.slice(0, 80),
+        descricao: String(l.descricao || codigoProprio).slice(0, 200),
+        quantidade: Number(l.quant || 0) || 0,
+        produtoId: produtoByCodigo.get(codigoProprio.toLowerCase()) || null,
+      };
+    });
+    const existentes = await prisma.pedidoVendaItem.findMany({
+      where: { pedidoId },
+      select: { id: true, egestorItemCodigo: true, codigoProprio: true },
+    });
+    const { criar, atualizar, removerIds } = alinharItensPedidoEgestor(
+      existentes,
+      entradas
+    );
+    await prisma.$transaction(async (tx) => {
+      if (removerIds.length) {
+        await tx.pedidoVendaItem.deleteMany({
+          where: { id: { in: removerIds } },
+        });
+      }
+      for (const [i, it] of atualizar.entries()) {
+        await tx.pedidoVendaItem.update({
+          where: { id: it.id },
+          data: { egestorItemCodigo: -(i + 1_000_000) },
+        });
+      }
+      for (const it of atualizar) {
+        await tx.pedidoVendaItem.update({
+          where: { id: it.id },
+          data: {
+            egestorItemCodigo: it.egestorItemCodigo,
+            codigoProprio: it.codigoProprio,
+            descricao: it.descricao,
+            quantidade: it.quantidade,
+            produtoId: it.produtoId,
+          },
+        });
+      }
+      if (criar.length) {
+        await tx.pedidoVendaItem.createMany({
+          data: criar.map((it) => ({ pedidoId, ...it })),
+        });
+      }
     });
     upserted += 1;
+    if (isNovo) {
+      notificarPedidoDisponivel({
+        pedidoId,
+        egestorCodigo: codigo,
+        clienteNome: nomeContato,
+        qtdItens: entradas.length,
+      });
+    }
   }
 
   const abertos = await prisma.pedidoVenda.findMany({

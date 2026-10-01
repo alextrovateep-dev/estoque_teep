@@ -22,12 +22,15 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Categoria = { id: string; nome: string; ativo: boolean };
+type FilialOpt = { id: string; nome: string; sigla: string; ativo: boolean };
 type Produto = {
   id: string;
   codigo: string;
   descricao: string;
   precoUnitario: string | number;
   estoqueMinimo: number;
+  estoqueMinimoFilialId?: string | null;
+  estoqueMinimoFilial?: { id: string; sigla: string; nome: string } | null;
   estoqueMaximo: number;
   controlaSerie?: boolean;
   categoriaId?: string;
@@ -52,6 +55,7 @@ const emptyForm = {
   unidade: "PC",
   precoUnitario: "0,00",
   estoqueMinimo: "0",
+  estoqueMinimoFilialId: "",
   estoqueMaximo: "0",
   controlaSerie: false,
   geracaoAutomatica: true,
@@ -82,6 +86,7 @@ export function ProdutoCadastroForm({
   const router = useRouter();
   const editId = produtoId || null;
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [filiais, setFiliais] = useState<FilialOpt[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [fotos, setFotos] = useState<string[]>([]);
   /** Fotos escolhidas no “Novo produto” (upload só depois do POST). */
@@ -119,9 +124,13 @@ export function ProdutoCadastroForm({
 
     async function boot() {
       try {
-        const cats = await api<Categoria[]>("/categorias");
+        const [cats, filiaisAtivas] = await Promise.all([
+          api<Categoria[]>("/categorias"),
+          api<FilialOpt[]>("/filiais?ativas=0"),
+        ]);
         if (cancelled) return;
         setCategorias(cats);
+        setFiliais(filiaisAtivas);
 
         if (!editId) {
           setForm(emptyForm);
@@ -139,6 +148,7 @@ export function ProdutoCadastroForm({
           unidade: p.unidade || "UN",
           precoUnitario: formatMoneyPlain(p.precoUnitario),
           estoqueMinimo: String(p.estoqueMinimo ?? 0),
+          estoqueMinimoFilialId: p.estoqueMinimoFilialId || "",
           estoqueMaximo: String(p.estoqueMaximo ?? 0),
           controlaSerie: Boolean(p.controlaSerie),
           geracaoAutomatica: cfg?.geracaoAutomatica ?? true,
@@ -364,6 +374,7 @@ export function ProdutoCadastroForm({
       categoriaId: form.categoriaId,
       precoUnitario: normalizeMoneyInput(form.precoUnitario),
       estoqueMinimo: Number(form.estoqueMinimo),
+      estoqueMinimoFilialId: form.estoqueMinimoFilialId || null,
       estoqueMaximo: Number(form.estoqueMaximo),
       controlaSerie: form.controlaSerie,
       unidade: form.unidade,
@@ -621,6 +632,30 @@ export function ProdutoCadastroForm({
             />
             <span className="mt-1 block text-xs text-slate-500">
               0 = sem alerta de mínimo
+            </span>
+          </label>
+          <label className="block text-sm md:col-span-3">
+            <span className="mb-1 block font-medium text-slate-700">
+              Considerar mínimo em
+            </span>
+            <select
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
+              value={form.estoqueMinimoFilialId}
+              onChange={(e) =>
+                setForm({ ...form, estoqueMinimoFilialId: e.target.value })
+              }
+            >
+              <option value="">Todos os estoques</option>
+              {filiais.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.sigla} — {f.nome}
+                  {f.ativo ? "" : " (inativo)"}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1 block text-xs text-slate-500">
+              Todos: alerta em qualquer estoque (como hoje). Um estoque: só
+              aquele é gerenciado pelo mínimo.
             </span>
           </label>
         </div>

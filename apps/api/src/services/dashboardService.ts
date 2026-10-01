@@ -1,5 +1,5 @@
 import {
-  isAbaixoMinimo,
+  isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
   hasPermissao,
   PermissoesUsuario,
@@ -10,6 +10,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
+import { sqlAbaixoMinimo } from "../lib/alertaEstoqueSql";
 import {
   operadorFilialIds,
   resolveOperadorFilialId,
@@ -119,7 +120,7 @@ async function agregarKpisEstoque(filialId: string | null): Promise<{
           COALESCE(SUM(e.saldo_atual), 0) AS quantidade_total,
           COALESCE(SUM(e.saldo_atual * p.preco_unitario), 0) AS valor_total,
           COUNT(*) FILTER (
-            WHERE p.estoque_minimo > 0 AND e.saldo_atual <= p.estoque_minimo
+            WHERE ${sqlAbaixoMinimo}
           )::int AS alertas_minimo,
           COUNT(*) FILTER (
             WHERE p.estoque_maximo > 0 AND e.saldo_atual >= p.estoque_maximo
@@ -135,7 +136,7 @@ async function agregarKpisEstoque(filialId: string | null): Promise<{
           COALESCE(SUM(e.saldo_atual), 0) AS quantidade_total,
           COALESCE(SUM(e.saldo_atual * p.preco_unitario), 0) AS valor_total,
           COUNT(*) FILTER (
-            WHERE p.estoque_minimo > 0 AND e.saldo_atual <= p.estoque_minimo
+            WHERE ${sqlAbaixoMinimo}
           )::int AS alertas_minimo,
           COUNT(*) FILTER (
             WHERE p.estoque_maximo > 0 AND e.saldo_atual >= p.estoque_maximo
@@ -175,8 +176,7 @@ async function listarAlertas(filialId: string | null, limite: number) {
           INNER JOIN produtos p ON p.id = e.produto_id
           INNER JOIN filiais f ON f.id = e.filial_id
           WHERE e.filial_id = ${filialId}::uuid
-            AND p.estoque_minimo > 0
-            AND e.saldo_atual <= p.estoque_minimo
+            AND ${sqlAbaixoMinimo}
           UNION ALL
           SELECT
             e.produto_id,
@@ -216,8 +216,7 @@ async function listarAlertas(filialId: string | null, limite: number) {
           FROM estoques e
           INNER JOIN produtos p ON p.id = e.produto_id
           INNER JOIN filiais f ON f.id = e.filial_id AND f.ativo = true
-          WHERE p.estoque_minimo > 0
-            AND e.saldo_atual <= p.estoque_minimo
+          WHERE ${sqlAbaixoMinimo}
           UNION ALL
           SELECT
             e.produto_id,
@@ -299,6 +298,7 @@ export async function obterDashboard(
             descricao: true,
             precoUnitario: true,
             estoqueMinimo: true,
+            estoqueMinimoFilialId: true,
             estoqueMaximo: true,
             ativo: true,
             controlaSerie: true,
@@ -387,7 +387,12 @@ export async function obterDashboard(
       estoqueMaximo: max,
       precoUnitario: preco,
       valor: saldo * preco,
-      abaixoMinimo: isAbaixoMinimo(saldo, min),
+      abaixoMinimo: isAbaixoMinimoNoEstoque({
+        saldo,
+        estoqueMinimo: min,
+        filialId: e.filialId,
+        estoqueMinimoFilialId: e.produto.estoqueMinimoFilialId,
+      }),
       acimaMaximo: isAcimaMaximo(saldo, max),
       atualizadoEm: e.atualizadoEm,
     };

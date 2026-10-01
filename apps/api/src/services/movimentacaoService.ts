@@ -5,7 +5,7 @@ import {
   TIPO_INVENTARIO,
   Perfil,
   exigeSerieNoLancamento,
-  isAbaixoMinimo,
+  isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
   usaSerieLivre,
 } from "@teep/shared";
@@ -1489,13 +1489,24 @@ export async function inicializarEstoque(
     }> = [];
 
     function registrarLimiar(
-      produto: { codigo: string; descricao: string; estoqueMinimo: number; estoqueMaximo: number },
+      produto: {
+        codigo: string;
+        descricao: string;
+        estoqueMinimo: number;
+        estoqueMaximo: number;
+        estoqueMinimoFilialId?: string | null;
+      },
       saldoAtual: number,
       flags?: { abaixoMinimo: boolean; acimaMaximo: boolean }
     ) {
       const abaixoMinimo =
         flags?.abaixoMinimo ??
-        isAbaixoMinimo(saldoAtual, produto.estoqueMinimo);
+        isAbaixoMinimoNoEstoque({
+          saldo: saldoAtual,
+          estoqueMinimo: produto.estoqueMinimo,
+          filialId: input.filialId,
+          estoqueMinimoFilialId: produto.estoqueMinimoFilialId,
+        });
       const acimaMaximo =
         flags?.acimaMaximo ?? isAcimaMaximo(saldoAtual, produto.estoqueMaximo);
       if (!abaixoMinimo && !acimaMaximo) return;

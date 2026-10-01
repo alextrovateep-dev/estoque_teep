@@ -28,6 +28,7 @@ const pedidoInclude = {
           codigo: true,
           descricao: true,
           controlaSerie: true,
+          ativo: true,
         },
       },
     },
@@ -356,11 +357,22 @@ export async function separarPedido(
 
   for (const line of input.itens) {
     const item = byId.get(line.id);
-    if (!item) throw new AppError(400, "Item do pedido inválido");
+    if (!item) {
+      throw new AppError(
+        400,
+        "O pedido foi atualizado pelo eGestor. Recarregue a página e separe de novo."
+      );
+    }
     if (!item.produtoId || !item.produto) {
       throw new AppError(
         400,
-        `SKU ${item.codigoProprio} não encontrado no cadastro TEEP`
+        `SKU ${item.codigoProprio} não encontrado no cadastro TEEP (o código próprio do eGestor precisa ser igual ao código do produto)`
+      );
+    }
+    if (!item.produto.ativo) {
+      throw new AppError(
+        400,
+        `Produto ${item.codigoProprio} está inativo no cadastro TEEP`
       );
     }
     if (!qtyEq(Number(item.quantidade), line.quantidade)) {

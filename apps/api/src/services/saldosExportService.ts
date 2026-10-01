@@ -2,13 +2,14 @@ import ExcelJS from "exceljs";
 import { Prisma } from "@prisma/client";
 import {
   BRAND_COLOR,
-  isAbaixoMinimo,
+  isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
 } from "@teep/shared";
 import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
 import { prisma } from "../lib/prisma";
 import { htmlToPdf } from "../lib/pdf";
+import { sqlAbaixoMinimo } from "../lib/alertaEstoqueSql";
 import { brandAssetBuffer, brandAssetDataUri } from "../lib/brandAssets";
 import {
   DASHBOARD_SALDOS_LIMITE,
@@ -188,16 +189,14 @@ async function selecionarIdsSaldos(opts: {
     );
   }
   if (opts.alerta === "min") {
-    conditions.push(
-      Prisma.sql`(p.estoque_minimo > 0 AND e.saldo_atual <= p.estoque_minimo)`
-    );
+    conditions.push(sqlAbaixoMinimo);
   } else if (opts.alerta === "max") {
     conditions.push(
       Prisma.sql`(p.estoque_maximo > 0 AND e.saldo_atual >= p.estoque_maximo)`
     );
   } else if (opts.alerta === "qualquer") {
     conditions.push(Prisma.sql`(
-      (p.estoque_minimo > 0 AND e.saldo_atual <= p.estoque_minimo)
+      ${sqlAbaixoMinimo}
       OR (p.estoque_maximo > 0 AND e.saldo_atual >= p.estoque_maximo)
     )`);
   }
@@ -302,6 +301,7 @@ export async function carregarSaldosExport(
                 descricao: true,
                 precoUnitario: true,
                 estoqueMinimo: true,
+                estoqueMinimoFilialId: true,
                 estoqueMaximo: true,
                 ativo: true,
                 categoriaId: true,
@@ -335,7 +335,12 @@ export async function carregarSaldosExport(
       estoqueMaximo: max,
       precoUnitario: preco,
       valor: saldo * preco,
-      abaixoMinimo: isAbaixoMinimo(saldo, min),
+      abaixoMinimo: isAbaixoMinimoNoEstoque({
+        saldo,
+        estoqueMinimo: min,
+        filialId: e.filialId,
+        estoqueMinimoFilialId: e.produto.estoqueMinimoFilialId,
+      }),
       acimaMaximo: isAcimaMaximo(saldo, max),
       produtoAtivo: e.produto.ativo,
     };

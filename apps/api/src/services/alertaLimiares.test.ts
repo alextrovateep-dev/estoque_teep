@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   ALERTA_EVENTO_LABELS,
   isAbaixoMinimo,
+  isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
 } from "@teep/shared";
 
@@ -17,6 +18,38 @@ describe("alerta limiares (F9)", () => {
     assert.equal(isAbaixoMinimo(6, 5), false);
     assert.equal(isAcimaMaximo(10, 10), true);
     assert.equal(isAcimaMaximo(9, 10), false);
+  });
+
+  it("mínimo só no estoque escolhido", () => {
+    const evsp = "11111111-1111-4111-8111-111111111111";
+    const rmasp = "22222222-2222-4222-8222-222222222222";
+    assert.equal(
+      isAbaixoMinimoNoEstoque({
+        saldo: 2,
+        estoqueMinimo: 10,
+        filialId: evsp,
+        estoqueMinimoFilialId: evsp,
+      }),
+      true
+    );
+    assert.equal(
+      isAbaixoMinimoNoEstoque({
+        saldo: 2,
+        estoqueMinimo: 10,
+        filialId: rmasp,
+        estoqueMinimoFilialId: evsp,
+      }),
+      false
+    );
+    assert.equal(
+      isAbaixoMinimoNoEstoque({
+        saldo: 2,
+        estoqueMinimo: 10,
+        filialId: rmasp,
+        estoqueMinimoFilialId: null,
+      }),
+      true
+    );
   });
 
   it("labels D34 existem", () => {

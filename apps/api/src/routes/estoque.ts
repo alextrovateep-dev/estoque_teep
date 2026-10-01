@@ -8,6 +8,7 @@ import {
   anexarMovimentacaoSchema,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
+import { sqlAbaixoMinimo } from "../lib/alertaEstoqueSql";
 import {
   authenticate,
   requireFilialOperador,
@@ -363,8 +364,7 @@ estoqueRouter.get(
           INNER JOIN produtos p ON p.id = e.produto_id
           INNER JOIN filiais f ON f.id = e.filial_id
           WHERE e.filial_id = ${filialId}::uuid
-            AND p.estoque_minimo > 0
-            AND e.saldo_atual <= p.estoque_minimo
+            AND ${sqlAbaixoMinimo}
           ORDER BY (e.saldo_atual - p.estoque_minimo) ASC, p.codigo ASC
           LIMIT ${lim}
         `
@@ -382,8 +382,7 @@ estoqueRouter.get(
           FROM estoques e
           INNER JOIN produtos p ON p.id = e.produto_id
           INNER JOIN filiais f ON f.id = e.filial_id AND f.ativo = true
-          WHERE p.estoque_minimo > 0
-            AND e.saldo_atual <= p.estoque_minimo
+          WHERE ${sqlAbaixoMinimo}
           ORDER BY (e.saldo_atual - p.estoque_minimo) ASC, p.codigo ASC
           LIMIT ${lim}
         `;
@@ -394,16 +393,14 @@ estoqueRouter.get(
           FROM estoques e
           INNER JOIN produtos p ON p.id = e.produto_id
           WHERE e.filial_id = ${filialId}::uuid
-            AND p.estoque_minimo > 0
-            AND e.saldo_atual <= p.estoque_minimo
+            AND ${sqlAbaixoMinimo}
         `
       : await prisma.$queryRaw<Array<{ n: number }>>`
           SELECT COUNT(*)::int AS n
           FROM estoques e
           INNER JOIN produtos p ON p.id = e.produto_id
           INNER JOIN filiais f ON f.id = e.filial_id AND f.ativo = true
-          WHERE p.estoque_minimo > 0
-            AND e.saldo_atual <= p.estoque_minimo
+          WHERE ${sqlAbaixoMinimo}
         `;
 
     const total = Number(countRows[0]?.n ?? 0);

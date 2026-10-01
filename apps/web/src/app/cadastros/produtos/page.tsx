@@ -30,6 +30,7 @@ type Produto = {
   descricao: string;
   precoUnitario: string | number;
   estoqueMinimo: number;
+  estoqueMinimoFilial?: { id: string; sigla: string; nome: string } | null;
   estoqueMaximo: number;
   unidade?: string;
   controlaSerie?: boolean;
@@ -537,7 +538,15 @@ function ProdutosPageInner() {
                     <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
                       {formatMoney(p.precoUnitario)}
                     </td>
-                    <td className="px-3 py-2">{p.estoqueMinimo || "—"}</td>
+                    <td className="px-3 py-2">
+                      {p.estoqueMinimo
+                        ? `${p.estoqueMinimo}${
+                            p.estoqueMinimoFilial
+                              ? ` · ${p.estoqueMinimoFilial.sigla}`
+                              : " · todos"
+                          }`
+                        : "—"}
+                    </td>
                     <td className="px-3 py-2">{p.estoqueMaximo || "—"}</td>
                     <td className="px-3 py-2">{p.ativo ? "Ativo" : "Inativo"}</td>
                     <td className="space-x-3 whitespace-nowrap px-3 py-2">

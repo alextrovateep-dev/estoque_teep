@@ -24,6 +24,7 @@ export const ALERTA_EMAIL_TYPES: readonly AlertaEmailType[] = [
   "RMA_LAUDO",
   "RMA_ORCAMENTO",
   "RMA_ORCAMENTO_DECISAO",
+  "PEDIDO_DISPONIVEL",
   "PEDIDO_SEPARADO",
 ] as const;
 

@@ -1,5 +1,5 @@
 import { Prisma, PrismaClient } from "@prisma/client";
-import { isAbaixoMinimo, isAcimaMaximo } from "@teep/shared";
+import { isAbaixoMinimoNoEstoque, isAcimaMaximo } from "@teep/shared";
 import { AppError } from "../middleware/error";
 
 type Tx = Prisma.TransactionClient | PrismaClient;
@@ -111,7 +111,12 @@ export async function aplicarSaldo(
 
   return {
     saldoAtual: updated.saldoAtual,
-    abaixoMinimo: isAbaixoMinimo(Number(updated.saldoAtual), produto.estoqueMinimo),
+    abaixoMinimo: isAbaixoMinimoNoEstoque({
+      saldo: Number(updated.saldoAtual),
+      estoqueMinimo: produto.estoqueMinimo,
+      filialId: params.filialId,
+      estoqueMinimoFilialId: produto.estoqueMinimoFilialId,
+    }),
     acimaMaximo: isAcimaMaximo(Number(updated.saldoAtual), produto.estoqueMaximo),
   };
 }

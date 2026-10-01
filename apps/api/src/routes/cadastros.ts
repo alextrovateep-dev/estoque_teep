@@ -376,6 +376,17 @@ async function assertFiliaisAtivas(ids: string[]) {
   }
 }
 
+async function assertEstoqueMinimoFilial(id: string | null | undefined) {
+  if (!id) return;
+  const f = await prisma.filial.findFirst({
+    where: { id, ativo: true },
+    select: { id: true },
+  });
+  if (!f) {
+    throw new AppError(400, "Estoque do alerta mínimo inválido ou inativo");
+  }
+}
+
 // —— Filiais (Admin) ——
 cadastrosRouter.get("/filiais", async (req: AuthedRequest, res, next) => {
   try {
@@ -869,6 +880,7 @@ cadastrosRouter.patch(
 const produtoInclude = {
   categoria: true,
   configuracaoSerie: true,
+  estoqueMinimoFilial: { select: { id: true, nome: true, sigla: true } },
 } as const;
 
 cadastrosRouter.get("/produtos", async (req, res, next) => {
@@ -1151,6 +1163,7 @@ cadastrosRouter.post(
   validateBody(createProdutoSchema),
   async (req, res, next) => {
     try {
+      await assertEstoqueMinimoFilial(req.body.estoqueMinimoFilialId);
       const { configuracaoSerie, ...produtoData } = req.body;
       const created = await prisma.$transaction(async (tx) => {
         const p = await tx.produto.create({
@@ -1187,6 +1200,10 @@ cadastrosRouter.patch(
         where: { id: req.params.id },
       });
       if (!atual) throw new AppError(404, "Produto não encontrado");
+
+      if (req.body.estoqueMinimoFilialId !== undefined) {
+        await assertEstoqueMinimoFilial(req.body.estoqueMinimoFilialId);
+      }
 
       const min =
         req.body.estoqueMinimo !== undefined

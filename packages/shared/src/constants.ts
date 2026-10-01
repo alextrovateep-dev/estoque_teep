@@ -595,6 +595,7 @@ export const ALERTA_EVENTOS = [
   "RMA_LAUDO",
   "RMA_ORCAMENTO",
   "RMA_ORCAMENTO_DECISAO",
+  "PEDIDO_DISPONIVEL",
   "PEDIDO_SEPARADO",
 ] as const;
 export type AlertaEvento = (typeof ALERTA_EVENTOS)[number];
@@ -614,6 +615,7 @@ export const ALERTA_EVENTO_LABELS: Record<AlertaEvento, string> = {
   RMA_LAUDO: "RMA — laudo(s) anexado(s)",
   RMA_ORCAMENTO: "RMA — orçamento pronto (fechar)",
   RMA_ORCAMENTO_DECISAO: "RMA — orçamento aprovado/recusado",
+  PEDIDO_DISPONIVEL: "Pedido de venda disponível (eGestor)",
   PEDIDO_SEPARADO: "Pedido separado",
 };
 
@@ -966,6 +968,25 @@ export function hasPermissao(
 /** 0 = limiar desligado (não gera alerta) */
 export function isAbaixoMinimo(saldo: number, estoqueMinimo: number): boolean {
   return estoqueMinimo > 0 && saldo <= estoqueMinimo;
+}
+
+/**
+ * Alerta de mínimo: se o produto escolheu um estoque, só vale naquela filial.
+ * `estoqueMinimoFilialId` vazio/null = todos (comportamento antigo).
+ */
+export function isAbaixoMinimoNoEstoque(opts: {
+  saldo: number;
+  estoqueMinimo: number;
+  filialId: string;
+  estoqueMinimoFilialId?: string | null;
+}): boolean {
+  if (
+    opts.estoqueMinimoFilialId &&
+    opts.estoqueMinimoFilialId !== opts.filialId
+  ) {
+    return false;
+  }
+  return isAbaixoMinimo(opts.saldo, opts.estoqueMinimo);
 }
 
 /** 0 = limiar desligado (não gera alerta) */

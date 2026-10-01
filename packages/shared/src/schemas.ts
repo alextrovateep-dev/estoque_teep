@@ -204,6 +204,13 @@ const unidadeField = z.preprocess(
   z.string().max(10)
 );
 
+const emptyToNullUuid = (v: unknown) => (v === "" ? null : v);
+
+const estoqueMinimoFilialIdField = z.preprocess(
+  emptyToNullUuid,
+  z.string().uuid().nullable().optional()
+);
+
 export const produtoSchema = z
   .object({
     codigo: z.string().min(1).max(50),
@@ -213,6 +220,8 @@ export const produtoSchema = z
     precoUnitario: z.coerce.number().min(0).optional(),
     /** 0 = sem alerta de mínimo */
     estoqueMinimo: z.coerce.number().int().min(0).optional(),
+    /** null = todos os estoques */
+    estoqueMinimoFilialId: estoqueMinimoFilialIdField,
     /** 0 = sem alerta de máximo */
     estoqueMaximo: z.coerce.number().int().min(0).optional(),
     fotos: fotosProdutoSchema.optional(),
@@ -245,6 +254,7 @@ export const createProdutoSchema = z
     unidade: unidadeField.default("PC"),
     precoUnitario: z.coerce.number().min(0).default(0),
     estoqueMinimo: z.coerce.number().int().min(0).default(0),
+    estoqueMinimoFilialId: estoqueMinimoFilialIdField,
     estoqueMaximo: z.coerce.number().int().min(0).default(0),
     controlaSerie: z.boolean().optional().default(false),
     configuracaoSerie: configuracaoSerieSchema.optional(),
@@ -268,6 +278,7 @@ export const updateProdutoSchema = z
     unidade: unidadeField.optional(),
     precoUnitario: z.coerce.number().min(0).optional(),
     estoqueMinimo: z.coerce.number().int().min(0).optional(),
+    estoqueMinimoFilialId: estoqueMinimoFilialIdField,
     estoqueMaximo: z.coerce.number().int().min(0).optional(),
     fotos: fotosProdutoSchema.optional(),
     controlaSerie: z.boolean().optional(),
@@ -921,7 +932,7 @@ export const separarPedidoSchema = z.object({
       })
     )
     .min(1)
-    .max(50),
+    .max(200),
 });
 
 /** NFs / observação do processo (cobrança de manutenção é por item). */

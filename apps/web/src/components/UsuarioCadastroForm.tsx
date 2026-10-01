@@ -1030,7 +1030,7 @@ export function UsuarioCadastroForm({ usuarioId }: { usuarioId?: string }) {
             <ToggleRow
               checked={form.receberAlertasEmail}
               title="Também enviar esses eventos por e-mail"
-              hint="Envia e-mail dos eventos marcados (estoque, preço, transferência, RMA). Alerta de retorno usa a lista do lançamento."
+              hint="Envia e-mail dos eventos marcados (estoque, preço, transferência, RMA, pedido do eGestor). Alerta de retorno usa a lista do lançamento. Pedido separado usa os destinatários escolhidos na separação."
               onChange={(on) =>
                 setForm({ ...form, receberAlertasEmail: on })
               }

@@ -33,6 +33,7 @@ model Filial {
   tiposMovimentacao     TipoMovimentacao[] @relation("TipoFilial")
   tiposMovimentacaoDestino TipoMovimentacao[] @relation("TipoFilialDestino")
   transformacoes        ProdutoTransformacao[]
+  produtosAlertaMinimo  Produto[] @relation("ProdutoAlertaMinimoFilial")
 
   @@map("filiais")
 }
@@ -125,6 +126,8 @@ model Produto {
   precoUnitario   Decimal            @default(0.00) @map("preco_unitario") @db.Decimal(12, 2)
   /// 0 = sem alerta de mínimo
   estoqueMinimo   Int                @default(0) @map("estoque_minimo")
+  /// null = alerta de mínimo em todos os estoques; senão só nesta filial
+  estoqueMinimoFilialId String?      @map("estoque_minimo_filial_id") @db.Uuid
   /// 0 = sem alerta de máximo
   estoqueMaximo   Int                @default(0) @map("estoque_maximo")
   /// Paths relativos /uploads/conteudo/produtos/{id}/... (ordenados; 1ª = capa)
@@ -134,6 +137,7 @@ model Produto {
   ativo           Boolean            @default(true)
   criadoEm        DateTime           @default(now()) @map("criado_em") @db.Timestamptz
   categoria       Categoria          @relation(fields: [categoriaId], references: [id], onDelete: Restrict)
+  estoqueMinimoFilial Filial?        @relation("ProdutoAlertaMinimoFilial", fields: [estoqueMinimoFilialId], references: [id], onDelete: SetNull)
   estoques        Estoque[]
   movimentacoes   Movimentacao[]
   transferenciaItens TransferenciaItem[]

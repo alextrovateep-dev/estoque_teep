@@ -16,6 +16,7 @@ type Produto = {
   codigo: string;
   descricao: string;
   controlaSerie: boolean;
+  ativo?: boolean;
 };
 
 type Item = {
@@ -61,6 +62,63 @@ function n(v: string | number) {
   return Number(v) || 0;
 }
 
+function skuKey(codigo: string) {
+  return codigo.trim().toLowerCase();
+}
+
+function assinaturaItens(itens: Item[]) {
+  return itens
+    .map((i) => `${skuKey(i.codigoProprio)}|${n(i.quantidade)}`)
+    .sort()
+    .join(";");
+}
+
+function linhaParaItem(itensLinha: LancamentoLinha[], it: Item, usados: Set<string>) {
+  const byId = itensLinha.find((l) => l.key === it.id && !usados.has(l.key));
+  if (byId) {
+    usados.add(byId.key);
+    return byId;
+  }
+  const bySku = itensLinha.find(
+    (l) => !usados.has(l.key) && skuKey(l.codigo) === skuKey(it.codigoProprio)
+  );
+  if (bySku) {
+    usados.add(bySku.key);
+    return bySku;
+  }
+  return undefined;
+}
+
+function linhasFromPedido(p: Pedido, prev: LancamentoLinha[] = []): LancamentoLinha[] {
+  const usados = new Set<string>();
+  return p.itens.map((it) => {
+    const qtd = n(it.quantidade);
+    const pedeSerie = exigeSerieNoLancamento({
+      produtoControlaSerie: it.produto?.controlaSerie,
+      tipoControleSerie: p.controleSerieSaida,
+    });
+    const seriesLen = pedeSerie ? Math.max(1, Math.round(qtd)) : 0;
+    const prevLinha = linhaParaItem(prev, it, usados);
+    const seriesPrev = prevLinha?.series || [];
+    return newLancamentoLinha({
+      key: it.id,
+      codigo: it.codigoProprio,
+      produto: it.produto
+        ? {
+            id: it.produto.id,
+            codigo: it.produto.codigo,
+            descricao: it.produto.descricao,
+            controlaSerie: it.produto.controlaSerie,
+          }
+        : null,
+      quantidade: String(qtd),
+      series: Array.from({ length: seriesLen }, (_, i) => seriesPrev[i] || ""),
+      serieStatus: Array.from({ length: seriesLen }, () => "idle"),
+      serieMsgs: Array.from({ length: seriesLen }, () => ""),
+    });
+  });
+}
+
 export default function PedidoDetalhePage() {
   const params = useParams();
   const id = String(params.id || "");
@@ -87,32 +145,7 @@ export default function PedidoDetalhePage() {
         setDestTodos(users);
         setFilialId(p.filialAcabado?.id || filiais[0]?.id || "");
         setDestIds((p.destinatarios || []).map((d) => d.usuario.id));
-        setLinhas(
-          p.itens.map((it) => {
-            const qtd = n(it.quantidade);
-            const pedeSerie = exigeSerieNoLancamento({
-              produtoControlaSerie: it.produto?.controlaSerie,
-              tipoControleSerie: p.controleSerieSaida,
-            });
-            const seriesLen = pedeSerie ? Math.max(1, Math.round(qtd)) : 0;
-            return newLancamentoLinha({
-              key: it.id,
-              codigo: it.codigoProprio,
-              produto: it.produto
-                ? {
-                    id: it.produto.id,
-                    codigo: it.produto.codigo,
-                    descricao: it.produto.descricao,
-                    controlaSerie: it.produto.controlaSerie,
-                  }
-                : null,
-              quantidade: String(qtd),
-              series: Array.from({ length: seriesLen }, () => ""),
-              serieStatus: Array.from({ length: seriesLen }, () => "idle"),
-              serieMsgs: Array.from({ length: seriesLen }, () => ""),
-            });
-          })
-        );
+        setLinhas(linhasFromPedido(p));
       })
       .catch((e) =>
         setError(e instanceof Error ? e.message : "Erro ao carregar")
@@ -150,20 +183,35 @@ export default function PedidoDetalhePage() {
     setError("");
     setSaving(true);
     try {
+      const fresh = await api<Pedido>(`/pedidos/${row.id}`);
+      if (fresh.status !== "ABERTO") {
+        setRow(fresh);
+        setError("Este pedido já não está em aberto.");
+        return;
+      }
+      if (assinaturaItens(fresh.itens) !== assinaturaItens(row.itens)) {
+        setRow(fresh);
+        setLinhas(linhasFromPedido(fresh, linhas));
+        setError(
+          "O pedido foi atualizado pelo eGestor. Confira os itens e separe de novo."
+        );
+        return;
+      }
+      const usados = new Set<string>();
       const atualizado = await api<Pedido>(`/pedidos/${row.id}/separar`, {
         method: "POST",
         body: JSON.stringify({
           filialId,
           destinatarioIds: destIds,
-          itens: row.itens.map((it) => {
-            const linha = linhas.find((l) => l.key === it.id);
+          itens: fresh.itens.map((it) => {
+            const linha = linhaParaItem(linhas, it, usados);
             return {
               id: it.id,
               quantidade: n(it.quantidade),
               series: linha?.produto &&
               exigeSerieNoLancamento({
                 produtoControlaSerie: linha.produto.controlaSerie,
-                tipoControleSerie: row.controleSerieSaida,
+                tipoControleSerie: fresh.controleSerieSaida,
               })
                 ? (linha.series || []).map((s) => s.trim()).filter(Boolean)
                 : undefined,
@@ -279,35 +327,47 @@ export default function PedidoDetalhePage() {
             const linha = linhas.find((l) => l.key === it.id);
             if (!linha) return null;
             return (
-              <LancamentoLinhaItem
-                key={it.id}
-                linha={linha}
-                index={index}
-                canRemove={false}
-                locked
-                filialId={filialId}
-                exigeSerie={(prod) =>
-                  exigeSerieNoLancamento({
-                    produtoControlaSerie: prod.controlaSerie,
+              <div key={it.id} className="space-y-1">
+                <LancamentoLinhaItem
+                  linha={linha}
+                  index={index}
+                  canRemove={false}
+                  locked
+                  filialId={filialId}
+                  exigeSerie={(prod) =>
+                    exigeSerieNoLancamento({
+                      produtoControlaSerie: prod.controlaSerie,
+                      tipoControleSerie: row.controleSerieSaida,
+                    })
+                  }
+                  serieLivre={(prod) =>
+                    usaSerieLivre({
+                      produtoControlaSerie: prod.controlaSerie,
+                      tipoControleSerie: row.controleSerieSaida,
+                    })
+                  }
+                  validarSerieEstoque={exigeSerieNoLancamento({
+                    produtoControlaSerie: it.produto?.controlaSerie,
                     tipoControleSerie: row.controleSerieSaida,
-                  })
-                }
-                serieLivre={(prod) =>
-                  usaSerieLivre({
-                    produtoControlaSerie: prod.controlaSerie,
-                    tipoControleSerie: row.controleSerieSaida,
-                  })
-                }
-                validarSerieEstoque={exigeSerieNoLancamento({
-                  produtoControlaSerie: it.produto?.controlaSerie,
-                  tipoControleSerie: row.controleSerieSaida,
-                })}
-                podeGerarAutomatico={false}
-                onPatch={(partial) => patchLinha(it.id, partial)}
-                onRemove={() => undefined}
-                onError={setError}
-                onMsg={() => undefined}
-              />
+                  })}
+                  podeGerarAutomatico={false}
+                  onPatch={(partial) => patchLinha(it.id, partial)}
+                  onRemove={() => undefined}
+                  onError={setError}
+                  onMsg={() => undefined}
+                />
+                {!it.produtoId ? (
+                  <p className="text-xs text-amber-800">
+                    SKU «{it.codigoProprio}» não encontrado no cadastro TEEP —
+                    o código próprio no eGestor precisa ser igual ao código do
+                    produto.
+                  </p>
+                ) : it.produto?.ativo === false ? (
+                  <p className="text-xs text-amber-800">
+                    Produto {it.codigoProprio} está inativo no cadastro TEEP.
+                  </p>
+                ) : null}
+              </div>
             );
           })}
         </div>
