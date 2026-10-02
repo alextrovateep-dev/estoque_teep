@@ -1,4 +1,4 @@
-import { sendPreparedMailAsync } from "./EmailService";
+import { sendPreparedMailAsync, sendPreparedMailNow } from "./EmailService";
 import { buildAcessoSenhaProvisoriaEmail } from "./email/builders/acessoSenhaProvisoria";
 
 function appUrl(): string {
@@ -31,4 +31,23 @@ export function enqueueSenhaProvisoriaEmail(opts: {
     .catch((e) => {
       console.error("[acessoConta] falha ao montar e-mail de senha:", e);
     });
+}
+
+/** Recupera senha: envia de verdade antes de gravar a provisória. */
+export async function sendSenhaProvisoriaEmailNow(opts: {
+  nome: string;
+  email: string;
+  senhaProvisoria: string;
+  motivo: "cadastro" | "reset" | "esqueci";
+  responsavelNome?: string | null;
+}): Promise<void> {
+  const prepared = await buildAcessoSenhaProvisoriaEmail({
+    destinatarioNome: opts.nome,
+    emailLogin: opts.email,
+    senhaProvisoria: opts.senhaProvisoria,
+    appUrl: appUrl(),
+    motivo: opts.motivo,
+    responsavelNome: opts.responsavelNome,
+  });
+  await sendPreparedMailNow(opts.email, prepared);
 }

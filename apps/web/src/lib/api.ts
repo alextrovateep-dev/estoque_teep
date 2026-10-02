@@ -174,39 +174,37 @@ async function loginRequestInner(
 }
 
 export async function esqueciSenhaRequest(email: string): Promise<string> {
-  return withLoading(async () => {
-    let res: Response;
-    try {
-      res = await fetch(`${API_URL}/auth/esqueci-senha`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: fetchCreds,
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
-      });
-    } catch {
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}/auth/esqueci-senha`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: fetchCreds,
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
+    });
+  } catch {
+    throw new Error(
+      `Não foi possível contactar a API (${API_URL}). Verifique DNS, HTTPS e CORS_ORIGIN.`
+    );
+  }
+  const body = await parseJsonResponse(res);
+  if (!res.ok) {
+    if (res.status === 429) {
       throw new Error(
-        `Não foi possível contactar a API (${API_URL}). Verifique DNS, HTTPS e CORS_ORIGIN.`
+        extractApiErrorMessage(body) ||
+          "Muitos pedidos de senha. Aguarde alguns minutos."
       );
     }
-    const body = await parseJsonResponse(res);
-    if (!res.ok) {
-      if (res.status === 429) {
-        throw new Error(
-          extractApiErrorMessage(body) ||
-            "Muitos pedidos de senha. Aguarde alguns minutos."
-        );
-      }
-      throw new Error(formatApiError(body, res.status));
-    }
-    const msg =
-      body &&
-      typeof body === "object" &&
-      "message" in body &&
-      typeof (body as { message: unknown }).message === "string"
-        ? (body as { message: string }).message
-        : "Se o e-mail estiver cadastrado, enviamos uma senha provisória.";
-    return msg;
-  });
+    throw new Error(formatApiError(body, res.status));
+  }
+  const msg =
+    body &&
+    typeof body === "object" &&
+    "message" in body &&
+    typeof (body as { message: unknown }).message === "string"
+      ? (body as { message: string }).message
+      : "Se o e-mail estiver cadastrado, enviamos uma senha provisória.";
+  return msg;
 }
 
 export function getStoredUser(): User | null {

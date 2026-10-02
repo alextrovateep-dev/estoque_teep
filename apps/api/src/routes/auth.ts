@@ -27,7 +27,7 @@ import {
 } from "../lib/uploads";
 import rateLimit from "express-rate-limit";
 import { temEstoqueAtivo } from "../lib/estoqueGate";
-import { enqueueSenhaProvisoriaEmail } from "../services/acessoContaService";
+import { sendSenhaProvisoriaEmailNow } from "../services/acessoContaService";
 import { generateProvisionalPassword } from "../lib/provisionalPassword";
 import {
   clearRefreshCookie,
@@ -253,17 +253,25 @@ authRouter.post(
       if (usuario?.ativo) {
         const senhaProvisoria = generateProvisionalPassword();
         const senhaHash = await bcrypt.hash(senhaProvisoria, 12);
+        try {
+          await sendSenhaProvisoriaEmailNow({
+            nome: usuario.nome,
+            email: usuario.email,
+            senhaProvisoria,
+            motivo: "esqueci",
+          });
+        } catch (e) {
+          console.error("[auth] falha ao enviar senha provisória:", e);
+          throw new AppError(
+            503,
+            "Não foi possível enviar o e-mail. Tente de novo em instantes."
+          );
+        }
         await prisma.usuario.update({
           where: { id: usuario.id },
           data: { senhaHash, deveTrocarSenha: true },
         });
         await prisma.refreshToken.deleteMany({ where: { usuarioId: usuario.id } });
-        enqueueSenhaProvisoriaEmail({
-          nome: usuario.nome,
-          email: usuario.email,
-          senhaProvisoria,
-          motivo: "esqueci",
-        });
       }
       res.json({ ok: true, message: MSG_ESQUECI_SENHA });
     } catch (e) {
