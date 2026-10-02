@@ -22,6 +22,7 @@ import {
   tipoExigeCnpj,
   MSG_CNPJ_OBRIGATORIO,
   tipoVisivelFiltroMovimentacoes,
+  tipoVisivelLancamento,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { upsertConfiguracaoSerie } from "../services/geracaoSerieService";
@@ -137,7 +138,7 @@ async function resolveFiliaisTipoCadastro(opts: {
   filialId?: string | null;
   filialDestinoId?: string | null;
   /**
-   * PATCH / cutover: permite manter tipo sem estoque (não entra em paraLancamento).
+   * PATCH / cutover: permite manter tipo sem estoque (a tela de lançamento pede o estoque).
    * CREATE continua exigindo estoque.
    */
   allowIncomplete?: boolean;
@@ -1809,27 +1810,14 @@ cadastrosRouter.get("/tipos-movimentacao", async (req: AuthedRequest, res, next)
       return res.json(all.filter((t) => !t.sistema));
     }
 
-    // Lançamento: tipos de negócio com estoque fixo configurado
+    // Lançamento: tipos de negócio que o perfil pode usar (cadastro ativo).
     const perfil = req.user!.perfil;
-    const opFiliais =
-      perfil === "OPERADOR" ? new Set(operadorFilialIds(req.user!)) : null;
+    const opIds =
+      perfil === "OPERADOR" ? operadorFilialIds(req.user!) : undefined;
     res.json(
-      all.filter((t) => {
-        if (t.sistema) return false;
-        if (t.rmaEntradaEstoque || t.rmaSaidaCliente || t.saidaPedidoVenda)
-          return false;
-        if (!t.filialId) return false;
-        if (t.operacao === "TRANSFERENCIA" && !t.filialDestinoId) return false;
-        const permitido =
-          perfil === "OPERADOR"
-            ? t.permitidoOperador
-            : perfil === "GERENTE" || perfil === "ADMIN"
-              ? t.permitidoGerente
-              : false;
-        if (!permitido) return false;
-        if (opFiliais && !opFiliais.has(t.filialId)) return false;
-        return true;
-      })
+      all.filter((t) =>
+        tipoVisivelLancamento(t, { perfil, operadorFilialIds: opIds })
+      )
     );
   } catch (e) {
     next(e);

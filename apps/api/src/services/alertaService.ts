@@ -587,7 +587,7 @@ export function notificarPedidoSeparado(opts: {
     tipo: "PEDIDO_SEPARADO",
     titulo: `Pedido separado · ${opts.egestorCodigo}`,
     mensagem: [
-      `O pedido ${opts.egestorCodigo} foi separado e o estoque já foi baixado.`,
+      `O pedido ${opts.egestorCodigo} foi separado e o estoque já foi baixado. Aguardando liberação para envio.`,
       `Cliente: ${opts.clienteNome}`,
       `Estoque: ${opts.filialSigla}`,
       linhaResponsavel(opts.responsavelNome),

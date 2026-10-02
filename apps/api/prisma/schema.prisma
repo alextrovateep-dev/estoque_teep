@@ -79,6 +79,7 @@ model Usuario {
   clientesComoComercial Cliente[]
   serieAlocacoes      SerieAlocacao[]
   pedidosVendaSeparados PedidoVenda[] @relation("PedidoSeparadoPor")
+  pedidosVendaLiberados PedidoVenda[] @relation("PedidoLiberadoPor")
   pedidosVendaDestinatarios PedidoVendaDestinatario[]
   transformacoes      ProdutoTransformacao[]
 
@@ -897,17 +898,26 @@ model PedidoVenda {
   situacao           Int
   situacaoOs         String?  @map("situacao_os") @db.VarChar(40)
   valorTotal         Decimal  @default(0) @map("valor_total") @db.Decimal(12, 2)
-  /// ABERTO | SEPARADO
+  /// ABERTO | SEPARADO | ENVIADO
   status             String   @default("ABERTO") @db.VarChar(20)
   filialAcabadoId    String?  @map("filial_acabado_id") @db.Uuid
   separadoEm         DateTime? @map("separado_em") @db.Timestamptz
   separadoPorId      String?  @map("separado_por_id") @db.Uuid
+  /// Clique em Liberado (autoriza o envio)
+  liberadoEm         DateTime? @map("liberado_em") @db.Timestamptz
+  liberadoPorId      String?  @map("liberado_por_id") @db.Uuid
+  enviadoEm          DateTime? @map("enviado_em") @db.Timestamptz
+  transportadora     String?  @db.VarChar(120)
+  rastreio           String?  @db.VarChar(80)
+  nfNumero           String?  @map("nf_numero") @db.VarChar(60)
+  nfArquivo          String?  @map("nf_arquivo") @db.VarChar(255)
   grupoLancamentoId  String?  @map("grupo_lancamento_id") @db.Uuid
   syncedAt           DateTime @default(now()) @map("synced_at") @db.Timestamptz
   criadoEm           DateTime @default(now()) @map("criado_em") @db.Timestamptz
   atualizadoEm       DateTime @updatedAt @map("atualizado_em") @db.Timestamptz
   filialAcabado      Filial?  @relation(fields: [filialAcabadoId], references: [id], onDelete: SetNull)
   separadoPor        Usuario? @relation("PedidoSeparadoPor", fields: [separadoPorId], references: [id], onDelete: SetNull)
+  liberadoPor        Usuario? @relation("PedidoLiberadoPor", fields: [liberadoPorId], references: [id], onDelete: SetNull)
   cliente            Cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
   itens              PedidoVendaItem[]
   destinatarios      PedidoVendaDestinatario[]

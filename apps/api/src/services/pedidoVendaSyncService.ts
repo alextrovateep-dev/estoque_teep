@@ -60,11 +60,11 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
     (r) => pedidoEgestorCandidatoLista(r) && pedidoEgestorNaJanela(r, desde)
   );
 
-  const separados = await prisma.pedidoVenda.findMany({
-    where: { status: "SEPARADO" },
+  const congelados = await prisma.pedidoVenda.findMany({
+    where: { status: { in: ["SEPARADO", "ENVIADO"] } },
     select: { egestorCodigo: true },
   });
-  const separadosSet = new Set(separados.map((s) => s.egestorCodigo));
+  const congeladosSet = new Set(congelados.map((s) => s.egestorCodigo));
 
   let upserted = 0;
   let skipped = 0;
@@ -107,7 +107,7 @@ async function runSyncPedidosEgestor(): Promise<SyncResult> {
   for (const summary of candidatos) {
     const codigo = Number(summary.codigo);
     if (!codigo) continue;
-    if (separadosSet.has(codigo)) {
+    if (congeladosSet.has(codigo)) {
       skipped += 1;
       continue;
     }

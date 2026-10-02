@@ -26,17 +26,31 @@ export function aplicarFiliaisDoTipoOperacional(
   if (!tipoOperacional) return { ok: true };
 
   if (!tipo.filialId) {
-    return {
-      ok: false,
-      message: "Tipo sem estoque configurado — edite o tipo em Admin → Tipos",
-    };
+    if (!input.filialId) {
+      return {
+        ok: false,
+        message: "Selecione o estoque do lançamento",
+      };
+    }
+    if (tipo.operacao === "TRANSFERENCIA" && !tipo.filialDestinoId) {
+      if (!input.filialDestinoId) {
+        return {
+          ok: false,
+          message: "Selecione o estoque de destino",
+        };
+      }
+    }
+    return { ok: true };
   }
   if (tipo.operacao === "TRANSFERENCIA" && !tipo.filialDestinoId) {
-    return {
-      ok: false,
-      message:
-        "Tipo de transferência sem estoque de destino — edite o tipo em Admin → Tipos",
-    };
+    if (!input.filialDestinoId) {
+      return {
+        ok: false,
+        message: "Selecione o estoque de destino",
+      };
+    }
+    input.filialId = tipo.filialId;
+    return { ok: true };
   }
   input.filialId = tipo.filialId;
   input.filialDestinoId =

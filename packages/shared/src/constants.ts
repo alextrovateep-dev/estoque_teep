@@ -49,6 +49,18 @@ export const MOVIMENTACAO_STATUS = [
 ] as const;
 export type MovimentacaoStatus = (typeof MOVIMENTACAO_STATUS)[number];
 
+/** Fila de pedidos eGestor no TEEP (não altera o eGestor). */
+export const PEDIDO_STATUS = ["ABERTO", "SEPARADO", "ENVIADO"] as const;
+export type PedidoStatus = (typeof PEDIDO_STATUS)[number];
+export const PEDIDO_STATUS_LABELS: Record<PedidoStatus, string> = {
+  ABERTO: "Em aberto",
+  SEPARADO: "Separado",
+  ENVIADO: "Enviados",
+};
+export function isPedidoStatus(v: string): v is PedidoStatus {
+  return (PEDIDO_STATUS as readonly string[]).includes(v);
+}
+
 export const TRANSFERENCIA_STATUS = [
   "PENDENTE_APROVACAO",
   "EM_TRANSITO",

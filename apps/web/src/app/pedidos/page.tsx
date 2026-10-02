@@ -1,6 +1,12 @@
 "use client";
 
 import { api } from "@/lib/api";
+import {
+  isPedidoStatus,
+  PEDIDO_STATUS,
+  PEDIDO_STATUS_LABELS,
+  type PedidoStatus,
+} from "@teep/shared";
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
@@ -9,26 +15,35 @@ type Row = {
   id: string;
   egestorCodigo: number;
   nomeContato: string;
-  documentoContato?: string | null;
   clienteId?: string | null;
-  cliente?: { id: string; nome: string; documento: string | null } | null;
+  cliente?: { id: string; nome: string } | null;
   dtVenda: string;
-  situacao: number;
-  situacaoOs: string | null;
   status: string;
-  valorTotal: string | number;
   filialAcabado?: { sigla: string } | null;
+  liberadoEm?: string | null;
+  rastreio?: string | null;
+  nfNumero?: string | null;
   _count: { itens: number };
 };
 
-function situacaoLabel(row: Row) {
-  if (row.situacao === 10) return "Orçamento";
-  return row.situacaoOs || "Em espera";
+function tabFromQuery(raw: string | null): PedidoStatus {
+  if (raw === "AGUARDANDO") return "SEPARADO";
+  return raw && isPedidoStatus(raw) ? raw : "ABERTO";
+}
+
+function hrefTab(status: PedidoStatus) {
+  return status === "ABERTO" ? "/pedidos" : `/pedidos?status=${status}`;
+}
+
+function dataCurta(iso: string) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("pt-BR");
 }
 
 function PedidosInner() {
   const searchParams = useSearchParams();
-  const tab = searchParams.get("status") === "SEPARADO" ? "SEPARADO" : "ABERTO";
+  const tab = tabFromQuery(searchParams.get("status"));
   const [lista, setLista] = useState<Row[]>([]);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -56,7 +71,7 @@ function PedidosInner() {
         { method: "POST" }
       );
       setMsg(
-        `Sincronizado: ${r.upserted} atualizado(s), ${r.removed} removido(s) da fila.`
+        `Sincronizado: ${r.upserted} atualizado(s), ${r.removed} removido(s).`
       );
       await load(tab);
     } catch (e) {
@@ -72,46 +87,35 @@ function PedidosInner() {
         <div>
           <h1 className="text-2xl font-semibold">Pedidos</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Pedidos de venda gerados no ERP para separação e baixa no estoque.
+            Em aberto → separar → enviado.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void syncNow()}
-          disabled={syncing}
-          className="rounded-lg border border-slate-200 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
-        >
-          {syncing ? "Atualizando…" : "Atualizar do eGestor"}
-        </button>
+        {tab === "ABERTO" && (
+          <button
+            type="button"
+            onClick={() => void syncNow()}
+            disabled={syncing}
+            className="rounded-lg border border-slate-200 px-4 py-2 text-sm hover:bg-slate-50 disabled:opacity-50"
+          >
+            {syncing ? "Atualizando…" : "Atualizar do eGestor"}
+          </button>
+        )}
       </div>
-      {syncing && (
-        <p className="mt-2 text-sm text-slate-500">
-          Consultando o eGestor. Há muitas páginas de orçamento; a atualização
-          pode levar alguns minutos (limite de 60 consultas por minuto).
-        </p>
-      )}
 
-      <div className="mt-4 flex gap-2 text-sm">
-        <Link
-          href="/pedidos"
-          className={
-            tab === "ABERTO"
-              ? "rounded-lg bg-brand px-3 py-1.5 font-medium text-white"
-              : "rounded-lg border px-3 py-1.5"
-          }
-        >
-          Em aberto
-        </Link>
-        <Link
-          href="/pedidos?status=SEPARADO"
-          className={
-            tab === "SEPARADO"
-              ? "rounded-lg bg-brand px-3 py-1.5 font-medium text-white"
-              : "rounded-lg border px-3 py-1.5"
-          }
-        >
-          Separados
-        </Link>
+      <div className="mt-4 flex flex-wrap gap-2 text-sm">
+        {PEDIDO_STATUS.map((st) => (
+          <Link
+            key={st}
+            href={hrefTab(st)}
+            className={
+              tab === st
+                ? "rounded-lg bg-brand px-3 py-1.5 font-medium text-white"
+                : "rounded-lg border px-3 py-1.5"
+            }
+          >
+            {PEDIDO_STATUS_LABELS[st]}
+          </Link>
+        ))}
       </div>
 
       {error && (
@@ -125,36 +129,48 @@ function PedidosInner() {
         </p>
       )}
 
-      <ul className="mt-6 space-y-2">
+      <ul className="mt-6 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
         {lista.length === 0 && (
-          <li className="rounded-xl border border-slate-200 bg-white px-4 py-6 text-center text-sm text-slate-500">
+          <li className="px-4 py-8 text-center text-sm text-slate-500">
             Nenhum pedido nesta lista.
           </li>
         )}
-        {lista.map((p) => (
-          <li key={p.id}>
-            <Link
-              href={`/pedidos/${p.id}`}
-              className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 hover:border-brand/40"
-            >
-              <div>
-                <div className="font-medium">
-                  #{p.egestorCodigo}
-                  <span className="text-slate-400"> — </span>
-                  {p.cliente?.nome || p.nomeContato}
+        {lista.map((p) => {
+          const cliente = p.cliente?.nome || p.nomeContato;
+          const extra =
+            tab === "SEPARADO"
+              ? "Aguardando envio"
+              : tab === "ENVIADO"
+                ? [p.rastreio ? `Rastreio ${p.rastreio}` : null, p.nfNumero ? `NF ${p.nfNumero}` : null]
+                    .filter(Boolean)
+                    .join(" · ")
+                : dataCurta(p.dtVenda);
+          return (
+            <li key={p.id}>
+              <Link
+                href={`/pedidos/${p.id}`}
+                className="flex items-center justify-between gap-3 px-4 py-3 hover:bg-slate-50"
+              >
+                <div className="min-w-0">
+                  <div className="truncate font-medium">
+                    #{p.egestorCodigo}
+                    <span className="font-normal text-slate-500">
+                      {" "}
+                      · {cliente}
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    {p._count.itens} item(ns)
+                    {p.filialAcabado ? ` · ${p.filialAcabado.sigla}` : ""}
+                    {extra ? ` · ${extra}` : ""}
+                    {tab === "ABERTO" && !p.clienteId ? " · Sem cliente" : ""}
+                  </div>
                 </div>
-                <div className="text-xs text-slate-500">
-                  {situacaoLabel(p)} · {p._count.itens} item(ns)
-                  {p.filialAcabado ? ` · ${p.filialAcabado.sigla}` : ""}
-                  {tab === "ABERTO" && !p.clienteId
-                    ? " · Pendente cliente (CNPJ)"
-                    : ""}
-                </div>
-              </div>
-              <span className="text-sm text-brand">Abrir</span>
-            </Link>
-          </li>
-        ))}
+                <span className="shrink-0 text-sm text-brand">Abrir</span>
+              </Link>
+            </li>
+          );
+        })}
       </ul>
     </>
   );

@@ -25,7 +25,7 @@ Só linhas de **produto**. Na API real o campo da linha é `tipo` (`produto` | `
 
 **Não entra** (e some da fila **Em aberto** se já estava no TEEP): Finalizada, Entregue, Em execução, Cancelada, faturadas, e pedidos sem nenhuma linha de produto.
 
-Pedido já **Separado** no TEEP **permanece** (histórico da baixa de estoque). O sync deixa de atualizar as linhas.
+Pedido já **Separado** ou **Enviado** no TEEP **permanece** (histórico da baixa de estoque). O sync deixa de atualizar as linhas. Pedidos do fluxo antigo que já estavam `SEPARADO` (baixa feita, sem envio) continuam no Separador até Liberado + NF.
 
 O dump `openapi-egestor.yaml` do repo diverge da [documentação oficial](https://github.com/eGestor/documentacao-api): linhas usam `tipo`, listagem usa `tipo`/`situOS`. O sync segue a API oficial.
 
@@ -48,8 +48,8 @@ Match de cliente: CNPJ do contato no eGestor (`/v1/contatos/{codContato}` ou `/v
 
 | Tela | Papel |
 |------|--------|
-| **Pedidos** (`/pedidos`) | Abas Em aberto / Separados. Botão **Atualizar do eGestor**. |
-| **Detalhe** (`/pedidos/[id]`) | Itens, escolha **um** estoque de acabados para o pedido inteiro, séries (fluxo padrão de saída), destinatários, Separar. |
+| **Pedidos** (`/pedidos`) | Abas Em aberto / Separado / Enviados. Botão **Atualizar do eGestor** (só em aberto). |
+| **Detalhe** (`/pedidos/[id]`) | Em aberto: separar (séries + estoque). Separado: itens só leitura + Enviar (NF obrigatória). Enviados: consulta. |
 
 Permissão: `pedidos` (Gerente e Operador por padrão).
 
@@ -62,9 +62,10 @@ Operador só separa em acabados aos quais está vinculado. Gerente/Admin: qualqu
 1. Pedido `ABERTO`; todos os itens com produto TEEP; quantidades iguais às do eGestor.
 2. Contato com **CNPJ** no eGestor e **Cliente** ativo no TEEP com o mesmo CNPJ (a saída grava esse `clienteId`).
 3. Escolhe o acabado; informa série quando o produto controla série (`POST /series/validar-saida`).
-4. Marca usuários que recebem e-mail (IDs do cadastro, não lista livre). O e-mail é enviado quando o pedido fica `SEPARADO`.
+4. Marca usuários que recebem e-mail (IDs do cadastro, não lista livre). O e-mail é enviado quando a baixa de estoque conclui (`SEPARADO`).
 5. API chama `criarMovimentacao` (SAÍDA: saldo + séries + cliente), sempre com `grupoLancamentoId` (também em pedido de 1 SKU). Linhas do mesmo produto são agrupadas. A separação **conclui na hora** — não entra na fila de Aprovações (a flag «Requer aprovação» do tipo é ignorada / forçada off no tipo de saída de pedido).
-6. Status TEEP `ABERTO` → `SEPARADO`. eGestor **não** muda.
+6. Status TEEP `ABERTO` → `SEPARADO` (aba **Separado**: embalado, aguardando envio). eGestor **não** muda.
+7. No Separado, **Enviar** pede número e anexo da NF (transportadora opcional). Confirmar move para **Enviados** (`ENVIADO`). Só consulta.
 
 Pedidos antigos que tenham ficado com saída `PENDENTE` (tipo com aprovação ligada no passado) continuam aparecendo como aguardando em Aprovações até alguém aprovar ou rejeitar.
 
@@ -74,14 +75,18 @@ Pedidos antigos que tenham ficado com saída `PENDENTE` (tipo com aprovação li
 
 | Uso | Endpoint |
 |-----|----------|
-| Lista | `GET /pedidos?status=ABERTO\|SEPARADO` |
+| Lista | `GET /pedidos?status=ABERTO\|SEPARADO\|ENVIADO` |
 | Detalhe | `GET /pedidos/:id` |
 | Acabados | `GET /pedidos/estoques-acabados` |
 | Destinatários | `GET /pedidos/usuarios-destinatarios` |
 | Sync agora | `POST /pedidos/sync` |
 | Separar | `POST /pedidos/:id/separar` |
+| Liberar | `POST /pedidos/:id/liberar` |
+| Enviar | `POST /pedidos/:id/enviar` |
 
 Body de separar: `filialId`, `destinatarioIds` (mín. 1), `itens: [{ id, quantidade, series? }]`.
+
+Body de enviar: `nfNumero`, `nfArquivo` (`/uploads/notas-fiscais/...`); `transportadora` e `rastreio` opcionais. Exige pedido `SEPARADO`.
 
 ---
 
@@ -111,4 +116,4 @@ Com `SEED_DEMO=1`: estoques PLN/TBO como acabados; tipo **Saída pedido eGestor*
 
 ## Fora deste módulo (v1)
 
-Escrever no eGestor, NF, reserva no eGestor, acabado **por item**, webhook.
+Escrever no eGestor, reserva no eGestor, acabado **por item**, webhook.

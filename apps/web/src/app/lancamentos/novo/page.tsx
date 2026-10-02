@@ -236,10 +236,10 @@ function NovoLancamentoForm() {
   /** Produto vem da saída vinculada — não pode divergir. */
   const travaProdutoFilial = retornoPrefill || Boolean(movimentacaoOrigemId);
 
-  /** Estoques do lançamento vêm do tipo (cadastro); UI só exibe. */
+  /** Estoque fixo do tipo; se o cadastro não tiver, a tela deixa escolher. */
   useEffect(() => {
     if (!tipo) return;
-    if (tipo.filialId) setFilialId(tipo.filialId);
+    setFilialId(tipo.filialId || "");
     if (tipo.operacao === "TRANSFERENCIA") {
       setFilialDestinoId(tipo.filialDestinoId || "");
     } else {
@@ -802,15 +802,11 @@ function NovoLancamentoForm() {
         return;
       }
       if (!filialId) {
-        setError(
-          "Tipo sem estoque configurado — edite o tipo em Admin → Tipos"
-        );
+        setError("Selecione o estoque do lançamento");
         return;
       }
       if (isTransf && !filialDestinoId) {
-        setError(
-          "Tipo de transferência sem estoque de destino — edite o tipo em Admin → Tipos"
-        );
+        setError("Selecione o estoque de destino");
         return;
       }
       if (isTransf && filialDestinoId === filialId) {
@@ -1285,6 +1281,7 @@ function NovoLancamentoForm() {
           setTipoId(e.target.value);
         }}
       >
+        <option value="">Selecione o tipo…</option>
         {tipos.map((t) => (
           <option key={t.id} value={t.id}>
             {t.codigo ? `${t.codigo} — ` : ""}
@@ -1295,38 +1292,77 @@ function NovoLancamentoForm() {
     </label>
   );
 
+  const estoqueLivre = Boolean(tipo && !tipo.filialId);
+  const destinoLivre = Boolean(isTransf && tipo && !tipo.filialDestinoId);
+
   const estoqueDoTipoField = (
     <div className="flex min-w-0 flex-col">
       <span className="mb-1 block h-5 text-sm font-medium leading-5">
-        {isTransf ? "Estoques do tipo" : "Estoque do tipo"}
+        {isTransf ? "Estoques" : "Estoque"}
       </span>
-      <div className="flex min-h-12 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-        {isTransf ? (
-          filialOrigemLabel && filialDestinoLabel ? (
-            <span>
-              {filialOrigemLabel.sigla} → {filialDestinoLabel.sigla}
-              <span className="mt-0.5 block text-xs text-slate-500">
-                {filialOrigemLabel.nome} → {filialDestinoLabel.nome}
+      {estoqueLivre || destinoLivre ? (
+        <div className="space-y-2">
+          {estoqueLivre && (
+            <select
+              className="h-12 w-full rounded-lg border px-3 py-2"
+              value={filialId}
+              onChange={(e) => setFilialId(e.target.value)}
+            >
+              <option value="">Estoque…</option>
+              {filiais.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.sigla} — {f.nome}
+                </option>
+              ))}
+            </select>
+          )}
+          {destinoLivre && (
+            <select
+              className="h-12 w-full rounded-lg border px-3 py-2"
+              value={filialDestinoId}
+              onChange={(e) => setFilialDestinoId(e.target.value)}
+            >
+              <option value="">Destino…</option>
+              {filiais
+                .filter((f) => f.id !== filialId)
+                .map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.sigla} — {f.nome}
+                  </option>
+                ))}
+            </select>
+          )}
+          <span className="block text-xs leading-4 text-slate-500">
+            Este tipo não tem estoque fixo no cadastro — escolha aqui.
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="flex min-h-12 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+            {isTransf ? (
+              filialOrigemLabel && filialDestinoLabel ? (
+                <span>
+                  {filialOrigemLabel.sigla} → {filialDestinoLabel.sigla}
+                  <span className="mt-0.5 block text-xs text-slate-500">
+                    {filialOrigemLabel.nome} → {filialDestinoLabel.nome}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-amber-700">Configure origem e destino</span>
+              )
+            ) : filialOrigemLabel ? (
+              <span>
+                {filialOrigemLabel.sigla} — {filialOrigemLabel.nome}
               </span>
-            </span>
-          ) : (
-            <span className="text-amber-700">
-              Tipo sem origem/destino — configure em Admin → Tipos
-            </span>
-          )
-        ) : filialOrigemLabel ? (
-          <span>
-            {filialOrigemLabel.sigla} — {filialOrigemLabel.nome}
+            ) : (
+              <span className="text-slate-500">Selecione um tipo</span>
+            )}
+          </div>
+          <span className="mt-1 block text-xs leading-4 text-slate-500">
+            Definido no cadastro do tipo
           </span>
-        ) : (
-          <span className="text-amber-700">
-            Tipo sem estoque — configure em Admin → Tipos
-          </span>
-        )}
-      </div>
-      <span className="mt-1 block text-xs leading-4 text-slate-500">
-        Definido no cadastro do tipo (não editável aqui)
-      </span>
+        </>
+      )}
     </div>
   );
 

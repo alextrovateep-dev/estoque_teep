@@ -141,6 +141,7 @@ uploadRouter.post(
           req.user!.perfil !== "ADMIN" &&
           !perms.lancamentos &&
           !perms.transferencias &&
+          !perms.pedidos &&
           !perms.rma &&
           !perms.rma_cobranca
         ) {

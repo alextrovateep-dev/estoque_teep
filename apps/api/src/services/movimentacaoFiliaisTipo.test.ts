@@ -52,7 +52,7 @@ describe("aplicarFiliaisDoTipoOperacional", () => {
     assert.equal(input.filialDestinoId, FILIAL_DEST);
   });
 
-  it("rejeita tipo operacional sem filial", () => {
+  it("rejeita tipo operacional sem filial no cadastro e no body", () => {
     const r = aplicarFiliaisDoTipoOperacional(
       {
         sistema: false,
@@ -63,10 +63,31 @@ describe("aplicarFiliaisDoTipoOperacional", () => {
         filialId: null,
         filialDestinoId: null,
       },
-      { filialId: FILIAL_ERRADA },
+      {},
       false
     );
     assert.equal(r.ok, false);
+  });
+
+  it("aceita estoque do body quando o tipo não tem estoque fixo", () => {
+    const input: { filialId?: string; filialDestinoId?: string | null } = {
+      filialId: FILIAL_ERRADA,
+    };
+    const r = aplicarFiliaisDoTipoOperacional(
+      {
+        sistema: false,
+        rmaEntradaEstoque: false,
+        rmaSaidaCliente: false,
+        saidaPedidoVenda: false,
+        operacao: "SAIDA",
+        filialId: null,
+        filialDestinoId: null,
+      },
+      input,
+      false
+    );
+    assert.equal(r.ok, true);
+    assert.equal(input.filialId, FILIAL_ERRADA);
   });
 
   it("não altera body em tipo de pedido / uso interno", () => {

@@ -26,7 +26,7 @@
    - tipo **baixa por árvore** (`baixaPorArvore`) — explode BOM (ver [arvore-produto.md](./arvore-produto.md)).
 4. Flags do tipo: `requerCliente`, `geraAlertaRetorno`, `requerTermoComodato`, `requerAprovacao`, séries, etc.
 
-Tipos sem `filialId` (e, em transferência, sem `filialDestinoId`) **não aparecem** em `paraLancamento=1` e a API rejeita o lançamento até o admin completar o cadastro. Tipos sistema / RMA / saída pedido eGestor não usam essa amarração (filial vem do fluxo interno).
+Tipos **sistema** não entram em `paraLancamento=1`. Os demais tipos ativos que o perfil pode usar **aparecem** no campo Tipo, inclusive RMA, saída de pedido e cadastro sem estoque fixo — nesse caso a tela pede o estoque na hora do lançamento.
 
 ### Transferência no lançamento
 

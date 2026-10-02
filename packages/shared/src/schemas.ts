@@ -943,6 +943,33 @@ export const separarPedidoSchema = z.object({
     .max(200),
 });
 
+/** Envio após Liberado: NF obrigatória; transportadora/rastreio opcionais. */
+export const enviarPedidoSchema = z.object({
+  transportadora: z
+    .string()
+    .max(120)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      const t = (v ?? "").trim();
+      return t || null;
+    }),
+  rastreio: z
+    .string()
+    .max(80)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      const t = (v ?? "").trim();
+      return t || null;
+    }),
+  nfNumero: z.string().trim().min(1, "Informe o número da nota fiscal").max(60),
+  nfArquivo: z
+    .string()
+    .max(255)
+    .regex(/^\/uploads\/notas-fiscais\//, "Anexe a nota fiscal"),
+});
+
 /** NFs / observação do processo (cobrança de manutenção é por item). */
 export const updateRmaFinanceiroSchema = z.object({
   nfEntradaNumero: z.string().max(60).optional().nullable(),

@@ -12,11 +12,17 @@ import {
 } from "../lib/pedidoClienteMatch";
 import { criarMovimentacao } from "./movimentacaoService";
 import { notificarPedidoSeparado } from "./alertaService";
-import { CONTROLE_SERIE_PADRAO, exigeSerieNoLancamento } from "@teep/shared";
+import {
+  CONTROLE_SERIE_PADRAO,
+  exigeSerieNoLancamento,
+  isPedidoStatus,
+} from "@teep/shared";
+import { isValidUploadPath } from "../lib/uploads";
 
 const pedidoInclude = {
   filialAcabado: { select: { id: true, nome: true, sigla: true } },
   separadoPor: { select: { id: true, nome: true, email: true } },
+  liberadoPor: { select: { id: true, nome: true, email: true } },
   cliente: {
     select: { id: true, nome: true, documento: true, ativo: true },
   },
@@ -44,7 +50,7 @@ function qtyEq(a: number, b: number) {
 }
 
 export async function listarPedidos(status?: string) {
-  const st = status === "SEPARADO" ? "SEPARADO" : "ABERTO";
+  const st = status && isPedidoStatus(status) ? status : "ABERTO";
   return prisma.pedidoVenda.findMany({
     where: { status: st },
     include: {
@@ -52,7 +58,10 @@ export async function listarPedidos(status?: string) {
       cliente: { select: { id: true, nome: true, documento: true } },
       _count: { select: { itens: true } },
     },
-    orderBy: { dtVenda: "desc" },
+    orderBy:
+      st === "ABERTO"
+        ? { dtVenda: "desc" as const }
+        : { atualizadoEm: "desc" as const },
     take: 200,
   });
 }
@@ -191,7 +200,7 @@ export async function syncPedidoAposGrupoLancamento(grupoId: string) {
       itens: { select: { produtoId: true } },
     },
   });
-  if (!pedido || pedido.status === "SEPARADO") return;
+  if (!pedido || pedido.status !== "ABERTO") return;
 
   const movs = await prisma.movimentacao.findMany({
     where: { grupoLancamentoId: grupoId },
@@ -301,7 +310,7 @@ export async function separarPedido(
   });
   if (!pedido) throw new AppError(404, "Pedido não encontrado");
   if (pedido.status !== "ABERTO") {
-    throw new AppError(400, "Pedido já separado");
+    throw new AppError(400, "Pedido já saiu da fila em aberto");
   }
 
   if (pedido.grupoLancamentoId) {
@@ -461,4 +470,60 @@ async function retomarSeparacaoExistente(pedidoId: string, grupoId: string) {
     data: { grupoLancamentoId: null, filialAcabadoId: null },
   });
   return null;
+}
+
+export async function liberarPedido(user: AuthUser, pedidoId: string) {
+  const pedido = await prisma.pedidoVenda.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, status: true, liberadoEm: true },
+  });
+  if (!pedido) throw new AppError(404, "Pedido não encontrado");
+  if (pedido.status !== "SEPARADO") {
+    throw new AppError(400, "Só é possível liberar pedido já separado");
+  }
+  if (pedido.liberadoEm) {
+    return obterPedido(pedidoId);
+  }
+  await prisma.pedidoVenda.update({
+    where: { id: pedidoId },
+    data: { liberadoEm: new Date(), liberadoPorId: user.id },
+  });
+  return obterPedido(pedidoId);
+}
+
+export async function enviarPedido(
+  user: AuthUser,
+  pedidoId: string,
+  input: {
+    transportadora?: string | null;
+    rastreio?: string | null;
+    nfNumero: string;
+    nfArquivo: string;
+  }
+) {
+  const pedido = await prisma.pedidoVenda.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, status: true, liberadoEm: true },
+  });
+  if (!pedido) throw new AppError(404, "Pedido não encontrado");
+  if (pedido.status !== "SEPARADO") {
+    throw new AppError(400, "Pedido não está separado");
+  }
+  if (!isValidUploadPath(input.nfArquivo, "nota-fiscal", user.id)) {
+    throw new AppError(400, "Anexe a nota fiscal");
+  }
+  await prisma.pedidoVenda.update({
+    where: { id: pedidoId },
+    data: {
+      status: "ENVIADO",
+      liberadoEm: pedido.liberadoEm ?? new Date(),
+      liberadoPorId: pedido.liberadoEm ? undefined : user.id,
+      enviadoEm: new Date(),
+      transportadora: input.transportadora || null,
+      rastreio: input.rastreio || null,
+      nfNumero: input.nfNumero,
+      nfArquivo: input.nfArquivo,
+    },
+  });
+  return obterPedido(pedidoId);
 }

@@ -392,7 +392,7 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
       nome: "Ana Operações",
       titulo: "Pedido separado · 1042",
       mensagem: [
-        "O pedido 1042 foi separado e o estoque já foi baixado.",
+        "O pedido 1042 foi separado e o estoque já foi baixado. Aguardando liberação para envio.",
         "Cliente: Cliente Demo LTDA",
         "Estoque: PLN",
         quem,

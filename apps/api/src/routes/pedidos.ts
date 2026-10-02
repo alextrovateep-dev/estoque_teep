@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { separarPedidoSchema } from "@teep/shared";
+import { enviarPedidoSchema, separarPedidoSchema } from "@teep/shared";
 import {
   authenticate,
   requireFilialOperador,
@@ -10,6 +10,8 @@ import { requireEstoqueParaOperar } from "../lib/estoqueGate";
 import { validateBody } from "../middleware/error";
 import { syncPedidosEgestor } from "../services/pedidoVendaSyncService";
 import {
+  enviarPedido,
+  liberarPedido,
   listarEstoquesAcabados,
   listarPedidos,
   listarUsuariosDestinatariosPedido,
@@ -87,6 +89,31 @@ pedidosRouter.post(
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(await separarPedido(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+pedidosRouter.post(
+  "/:id/liberar",
+  requirePermissao("pedidos"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await liberarPedido(req.user!, req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+pedidosRouter.post(
+  "/:id/enviar",
+  requirePermissao("pedidos"),
+  validateBody(enviarPedidoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await enviarPedido(req.user!, req.params.id, req.body));
     } catch (e) {
       next(e);
     }
