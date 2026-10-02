@@ -19,7 +19,7 @@ import {
   useState,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { SIGLA_ESTOQUE_DESCARTE, RMA_ITEM_ETAPA_LABELS, RMA_MODALIDADE_AQUISICAO, RMA_MODALIDADE_AQUISICAO_LABELS, mensagemBloqueioNfRetorno, mensagemBloqueioNfRetornoSemEntrada, formatYmdBr, rmaModalidadeAquisicaoLabel, ymdFromApi, ymdVencido, type RmaModalidadeAquisicao } from "@teep/shared";
+import { SIGLA_ESTOQUE_DESCARTE, RMA_FRETE_MODALIDADE, RMA_FRETE_MODALIDADE_LABELS, RMA_ITEM_ETAPA_LABELS, RMA_MODALIDADE_AQUISICAO, RMA_MODALIDADE_AQUISICAO_LABELS, mensagemBloqueioFreteRma, mensagemBloqueioNfRetorno, mensagemBloqueioNfRetornoSemEntrada, formatYmdBr, podeExcluirAberturaRma, rmaModalidadeAquisicaoLabel, ymdFromApi, ymdVencido, type RmaFreteModalidade, type RmaModalidadeAquisicao } from "@teep/shared";
 
 type RmaAnexo = {
   id: string;
@@ -55,6 +55,7 @@ type RmaItem = {
   produto: { id: string; codigo: string; descricao: string };
   unidadeSerie?: { id: string; numeroSerie: string } | null;
   unidadeSerieSubstituicao?: { id: string; numeroSerie: string } | null;
+  substituicaoAutorizadaPor?: { id: string; nome: string } | null;
   anexos?: RmaAnexo[];
   movEntradaId?: string | null;
   movSaidaId?: string | null;
@@ -81,6 +82,9 @@ type Rma = {
   criadoEm: string;
   responsavelComercialId?: string | null;
   modalidadeAquisicao?: string | null;
+  freteModalidade?: string | null;
+  transportadora?: string | null;
+  freteCobrado?: boolean | null;
   cliente: { id: string; nome: string; documento?: string | null };
   filial: { id: string; sigla: string; nome: string };
   criadoPor: { nome: string };
@@ -202,6 +206,7 @@ export default function RmaDetalhePage() {
   const canFin = Boolean(user && userHas(user, "rma_cobranca"));
   const canCancelar =
     user?.perfil === "ADMIN" || user?.perfil === "GERENTE";
+  const canExcluirAbertura = podeExcluirAberturaRma(user?.perfil);
 
   const [row, setRow] = useState<Rma | null>(null);
   const [error, setError] = useState("");
@@ -229,8 +234,16 @@ export default function RmaDetalhePage() {
   const [seriesDisp, setSeriesDisp] = useState<SerieOpt[]>([]);
   const [trocaObs, setTrocaObs] = useState("");
   const [trocaErro, setTrocaErro] = useState("");
+  const [autorizadorId, setAutorizadorId] = useState("");
+  const [freteModalidade, setFreteModalidade] = useState<RmaFreteModalidade | "">(
+    ""
+  );
+  const [freteTransportadora, setFreteTransportadora] = useState("");
+  const [freteCobrado, setFreteCobrado] = useState<"" | "true" | "false">("");
+  const [semCobrancaItemId, setSemCobrancaItemId] = useState<string | null>(null);
+  const [semCobrancaObs, setSemCobrancaObs] = useState("");
   const [painelAcao, setPainelAcao] = useState<
-    null | "cancelar" | "devolver-todos"
+    null | "cancelar" | "devolver-todos" | "excluir-abertura"
   >(null);
   const [motivoAcao, setMotivoAcao] = useState("");
   const [removerItemId, setRemoverItemId] = useState<string | null>(null);
@@ -278,6 +291,17 @@ export default function RmaDetalhePage() {
         setNfSai(r.nfSaidaNumero || "");
         setObs(r.observacao || "");
         setPrazoManutencao(ymdFromApi(r.prazoManutencao) || "");
+        setFreteModalidade(
+          r.freteModalidade === "TRANSPORTADORA" ||
+            r.freteModalidade === "RETIRO_PROPRIO" ||
+            r.freteModalidade === "ENTREGA_TEEP"
+            ? r.freteModalidade
+            : ""
+        );
+        setFreteTransportadora(r.transportadora || "");
+        setFreteCobrado(
+          r.freteCobrado === true ? "true" : r.freteCobrado === false ? "false" : ""
+        );
       } catch (e) {
         if (signal?.cancelled) return;
         setError(e instanceof Error ? e.message : "Erro");
@@ -294,6 +318,60 @@ export default function RmaDetalhePage() {
     };
   }, [load]);
 
+  useEffect(() => {
+    api<Array<{ id: string; nome: string; email: string }>>(
+      "/rma/usuarios-destinatarios"
+    )
+      .then(setDestTodos)
+      .catch(() => undefined);
+  }, []);
+
+  async function salvarFrete() {
+    if (actingRef.current || !row) return;
+    if (!freteModalidade || (freteCobrado !== "true" && freteCobrado !== "false")) {
+      setError("Informe modalidade e se o frete foi cobrado.");
+      return;
+    }
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/frete`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          freteModalidade,
+          transportadora:
+            freteModalidade === "TRANSPORTADORA"
+              ? freteTransportadora.trim() || null
+              : null,
+          freteCobrado: freteCobrado === "true",
+        }),
+      });
+      setMsg("Frete salvo");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  function payloadFrete() {
+    if (!freteModalidade || (freteCobrado !== "true" && freteCobrado !== "false")) {
+      return {};
+    }
+    return {
+      freteModalidade,
+      transportadora:
+        freteModalidade === "TRANSPORTADORA"
+          ? freteTransportadora.trim() || null
+          : null,
+      freteCobrado: freteCobrado === "true",
+    };
+  }
+
   async function salvarFinanceiro(e: FormEvent) {
     e.preventDefault();
     if (actingRef.current) return;
@@ -303,7 +381,7 @@ export default function RmaDetalhePage() {
     }
     if (!nfEnt.trim()) {
       setError(
-        "Informe o número da NF de entrada. Se estiver errada, troque pelo correto."
+        "Informe o número da NF de entrada."
       );
       return;
     }
@@ -541,6 +619,7 @@ export default function RmaDetalhePage() {
           itemIds,
           nfSaidaNumero: nfSai.trim() || undefined,
           observacao: observacao?.trim() || undefined,
+          ...payloadFrete(),
         }),
       });
       setMsg(
@@ -576,6 +655,58 @@ export default function RmaDetalhePage() {
       setMsg("RMA cancelado. Entradas estornadas quando havia estoque.");
       setPainelAcao(null);
       setMotivoAcao("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function confirmarExcluirAbertura() {
+    const motivo = motivoAcao.trim();
+    if (!motivo || actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/excluir-abertura`, {
+        method: "POST",
+        body: JSON.stringify({ observacao: motivo }),
+      });
+      setMsg("Abertura excluída. Histórico permanece em Cancelados.");
+      setPainelAcao(null);
+      setMotivoAcao("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function aprovarSemCobranca(itemId: string) {
+    const obs = semCobrancaObs.trim();
+    if (!obs) {
+      setError("Informe a observação da aprovação sem cobrança.");
+      return;
+    }
+    if (actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await api(`/rma/${id}/sem-cobranca`, {
+        method: "POST",
+        body: JSON.stringify({ itemIds: [itemId], observacao: obs }),
+      });
+      setMsg("Laudo aprovado sem cobrança. O item segue o fluxo.");
+      setSemCobrancaItemId(null);
+      setSemCobrancaObs("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
@@ -871,6 +1002,7 @@ export default function RmaDetalhePage() {
     setTrocaItemId(item.id);
     setSerieBoa("");
     setTrocaObs("");
+    setAutorizadorId("");
     setSeriesDisp([]);
     try {
       const [list, defs] = await Promise.all([
@@ -966,6 +1098,10 @@ export default function RmaDetalhePage() {
       falhaLocal("Selecione o estoque de descarte");
       return;
     }
+    if (!autorizadorId) {
+      falhaLocal("Informe quem autorizou a troca");
+      return;
+    }
     const faltaDocs = !nfEnt.trim()
       ? "Informe o número da NF de entrada"
       : !anexoAtivoPorTipo(row?.anexos || [], "NF_ENTRADA")
@@ -996,6 +1132,8 @@ export default function RmaDetalhePage() {
           destinoDescarteFilialId: destinoDescarteId,
           nfSaidaNumero: nfSai.trim() || undefined,
           observacao: trocaObs.trim() || undefined,
+          substituicaoAutorizadaPorId: autorizadorId,
+          ...payloadFrete(),
         }),
       });
       setMsg("Troca concluída — série boa enviada ao cliente; série ruim no descarte.");
@@ -1056,6 +1194,16 @@ export default function RmaDetalhePage() {
     nfSaidaNumero: row.nfSaidaNumero,
     temArquivoNfSaida: temNfRetornoArquivo,
   });
+  const faltaFrete = mensagemBloqueioFreteRma({
+    freteModalidade: freteModalidade || row.freteModalidade,
+    transportadora: freteTransportadora || row.transportadora,
+    freteCobrado:
+      freteCobrado === "true"
+        ? true
+        : freteCobrado === "false"
+          ? false
+          : row.freteCobrado,
+  });
   const faltaDocsRetorno = !nfEnt.trim()
     ? "Informe o número da NF de entrada"
     : !temNfEntradaArquivo
@@ -1064,15 +1212,13 @@ export default function RmaDetalhePage() {
         ? "Informe o número da NF de retorno"
         : !temNfRetornoArquivo
           ? "Anexe o arquivo da NF de retorno"
-          : "";
+          : faltaFrete || "";
   const itensAguardandoAprovacao = itensAtivos.filter(
     (i) => i.etapa === "AGUARDANDO_APROVACAO"
   );
   const ctaOrcamento = itensAtivos.some((i) => i.etapa === "AGUARDANDO_ORCAMENTO")
     ? "Gerar orçamento"
-    : itensAguardandoAprovacao.length > 0
-      ? "PDF e orçar com cliente"
-      : "Orçamento";
+    : "Orçamento";
   const podeDecidirAprovacao =
     processoAberto &&
     (canCancelar ||
@@ -1089,16 +1235,6 @@ export default function RmaDetalhePage() {
         "AGUARDANDO_LAUDO",
       ].includes(i.etapa || "")
     );
-  const resumoEtapas = (() => {
-    const counts = new Map<string, number>();
-    for (const i of itensAtivos) {
-      const e = i.etapa || "AGUARDANDO_RECEBIMENTO";
-      counts.set(e, (counts.get(e) || 0) + 1);
-    }
-    return [...counts.entries()]
-      .map(([e, n]) => `${n} ${ETAPA_LABEL[e] || e}`)
-      .join(" · ");
-  })();
   const podeEditarCliente =
     processoAberto &&
     !row.itens.some(
@@ -1139,19 +1275,11 @@ export default function RmaDetalhePage() {
             void salvarPrazoManutencao(v);
           }}
         />
-        <span
-          className={`text-[11px] ${
-            processoAberto && ymdVencido(prazoManutencao)
-              ? "font-medium text-amber-800"
-              : "text-slate-500"
-          }`}
-        >
-          {prazoManutencao
-            ? ymdVencido(prazoManutencao)
-              ? `Vencido em ${formatYmdBr(prazoManutencao)}`
-              : `Concluir a manutenção até ${formatYmdBr(prazoManutencao)}`
-            : "Data limite para concluir a manutenção do equipamento."}
-        </span>
+          {prazoManutencao && processoAberto && ymdVencido(prazoManutencao) ? (
+            <span className="text-[11px] font-medium text-amber-800">
+              Vencido em {formatYmdBr(prazoManutencao)}
+            </span>
+          ) : null}
       </label>
       <p className="mt-1 text-sm text-slate-600">
         <span className="font-medium text-slate-800">{row.cliente.nome}</span>
@@ -1286,10 +1414,6 @@ export default function RmaDetalhePage() {
             <h2 className="text-sm font-semibold text-slate-900">
               Comercial
             </h2>
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              Aprovação e cobrança são por item. Pendente no item bloqueia
-              Devolver/Trocar daquele item.
-            </p>
           </div>
           {podeEditarComercial && !editComercial && (
             <button
@@ -1303,22 +1427,13 @@ export default function RmaDetalhePage() {
           )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-slate-700">
-            Comercial:{" "}
-            <span className="font-medium">
-              {row.responsavelComercial?.nome || "—"}
-            </span>
+          <span className="font-medium text-slate-800">
+            {row.responsavelComercial?.nome || "—"}
           </span>
           <span className="text-slate-400">·</span>
           <span className="text-slate-700">
-            Modalidade:{" "}
-            <span className="font-medium">
-              {rmaModalidadeAquisicaoLabel(row.modalidadeAquisicao)}
-            </span>
+            {rmaModalidadeAquisicaoLabel(row.modalidadeAquisicao)}
           </span>
-          {resumoEtapas && (
-            <span className="text-xs text-slate-500">· {resumoEtapas}</span>
-          )}
         </div>
         {processoAberto && !editModalidade && (
           <button
@@ -1410,12 +1525,10 @@ export default function RmaDetalhePage() {
         )}
         {podeDecidirAprovacao && itensAguardandoAprovacao.length > 0 && (
           <p className="mt-2 text-xs text-amber-800">
-            {itensAguardandoAprovacao.length} item(ns) aguardando aprovação —
-            decida em{" "}
+            {itensAguardandoAprovacao.length} item(ns) aguardando aprovação —{" "}
             <Link href={`/rma/${id}/orcamento`} className="underline">
               Orçamento
             </Link>
-            .
           </p>
         )}
       </section>
@@ -1426,10 +1539,6 @@ export default function RmaDetalhePage() {
             <h2 className="text-sm font-semibold text-slate-900">
               Notificações
             </h2>
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              Quem recebe sino e e-mail. “Avisar diagnóstico” só notifica a
-              equipe — o orçamento fica na página Gerar orçamento.
-            </p>
           </div>
           <div className="flex flex-wrap gap-1.5">
             {processoAberto && (
@@ -1561,19 +1670,6 @@ export default function RmaDetalhePage() {
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-slate-900">Processo / NFs</h2>
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              A NF habilita a operação: entrada na chegada, retorno na
-              liberação e no envio ao cliente. Informe o número, salve e anexe
-              o arquivo da NF de retorno antes de concluir o checklist de
-              liberação ou de Devolver/Trocar. Se o número ou o arquivo vierem
-              errados, troque pelo correto — o histórico antigo fica em
-              Anteriores. O processo fecha quando a operação devolve ou troca o
-              último item com a NF de retorno. Orçamento e negociação não
-              fecham o RMA. Cobrança de manutenção fica em cada item.
-              {!canFin && " Cobrança por item exige permissão financeiro."}
-              {row.status === "FECHADO" &&
-                " Processo fechado — ainda dá para corrigir número e arquivo da NF."}
-            </p>
           </div>
           {canEditNfsProcesso && (
             <button
@@ -1636,11 +1732,7 @@ export default function RmaDetalhePage() {
 
         <div className="mt-4 border-t border-slate-100 pt-3">
           <p className="mb-2 text-[11px] font-medium uppercase tracking-wide text-slate-400">
-            Arquivos do RMA
-          </p>
-          <p className="mb-2 text-[11px] leading-snug text-slate-500">
-            Se o PDF veio errado, use Trocar — o arquivo anterior fica em
-            Anteriores.
+            Arquivos
           </p>
           <div className="grid gap-2 sm:grid-cols-3">
             {(
@@ -1741,14 +1833,87 @@ export default function RmaDetalhePage() {
 
       <section className="mt-4 rounded-xl border bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">
+              Frete / logística
+            </h2>
+          </div>
+          {row.status !== "CANCELADO" && (
+            <button
+              type="button"
+              disabled={acting}
+              onClick={() => void salvarFrete()}
+              className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+            >
+              Salvar frete
+            </button>
+          )}
+        </div>
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+          <label className="block text-xs">
+            <span className="mb-0.5 block font-medium text-slate-600">
+              Modalidade
+            </span>
+            <select
+              disabled={row.status === "CANCELADO" || acting}
+              className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
+              value={freteModalidade}
+              onChange={(e) =>
+                setFreteModalidade(e.target.value as RmaFreteModalidade | "")
+              }
+            >
+              <option value="">Selecione…</option>
+              {RMA_FRETE_MODALIDADE.map((m) => (
+                <option key={m} value={m}>
+                  {RMA_FRETE_MODALIDADE_LABELS[m]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs">
+            <span className="mb-0.5 block font-medium text-slate-600">
+              Transportadora
+            </span>
+            <input
+              disabled={
+                row.status === "CANCELADO" ||
+                acting ||
+                freteModalidade !== "TRANSPORTADORA"
+              }
+              className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
+              value={freteTransportadora}
+              onChange={(e) => setFreteTransportadora(e.target.value)}
+            />
+          </label>
+          <label className="block text-xs">
+            <span className="mb-0.5 block font-medium text-slate-600">
+              Frete cobrado
+            </span>
+            <select
+              disabled={row.status === "CANCELADO" || acting}
+              className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm disabled:bg-slate-50"
+              value={freteCobrado}
+              onChange={(e) =>
+                setFreteCobrado(e.target.value as "" | "true" | "false")
+              }
+            >
+              <option value="">Selecione…</option>
+              <option value="true">Sim</option>
+              <option value="false">Não</option>
+            </select>
+          </label>
+        </div>
+        {faltaFrete ? (
+          <p className="mt-2 text-xs text-amber-800">{faltaFrete}</p>
+        ) : null}
+      </section>
+
+      <section className="mt-4 rounded-xl border bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-slate-900">
               Itens / Estoque
             </h2>
-            <p className="mt-0.5 text-[11px] leading-snug text-slate-500">
-              Checklist e diagnóstico no sistema · devolução ou troca após
-              aprovação comercial.
-            </p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {processoAberto && (
@@ -1822,6 +1987,25 @@ export default function RmaDetalhePage() {
                 className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 disabled:opacity-50"
               >
                 Cancelar RMA
+              </button>
+            )}
+            {canExcluirAbertura && row.status === "ABERTO" && (
+              <button
+                type="button"
+                disabled={
+                  acting || painelAcao !== null || removerItemId !== null
+                }
+                onClick={() => {
+                  setError("");
+                  setMotivoAcao("");
+                  setEditCliente(false);
+                  setRemoverItemId(null);
+                  setShowAddItem(false);
+                  setPainelAcao("excluir-abertura");
+                }}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 disabled:opacity-50"
+              >
+                Excluir abertura
               </button>
             )}
           </div>
@@ -1953,18 +2137,35 @@ export default function RmaDetalhePage() {
             <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">
               {noRma.length > 0 ? (
                 <li>
-                  Estorna as entradas de {noRma.length} item(ns) no Estoque RMA
-                  (séries/saldos voltam).
+                  Estorna {noRma.length} item(ns) do estoque RMA.
                 </li>
-              ) : (
-                <li>Não há itens no Estoque RMA para estornar.</li>
-              )}
-              <li>
-                O processo fica <strong>CANCELADO</strong> — isto{" "}
-                <strong>não</strong> é devolução ao cliente. Prefira alterar
-                cliente ou remover/incluir itens quando for só correção.
-              </li>
+              ) : null}
+              <li>O processo fica cancelado — não devolve ao cliente.</li>
             </ul>
+          </ConfirmMotivoPanel>
+        )}
+
+        {painelAcao === "excluir-abertura" && (
+          <ConfirmMotivoPanel
+            title="Excluir abertura deste RMA?"
+            confirmLabel="Excluir abertura"
+            cancelLabel="Voltar"
+            motivoLabel="Motivo da exclusão"
+            motivoRequired
+            motivoPlaceholder="Obrigatório — por que a abertura foi feita por engano?"
+            motivo={motivoAcao}
+            onMotivoChange={setMotivoAcao}
+            onConfirm={() => void confirmarExcluirAbertura()}
+            onCancel={() => {
+              setPainelAcao(null);
+              setMotivoAcao("");
+            }}
+            loading={acting}
+            danger
+          >
+            <p className="text-xs text-slate-600">
+              Estorna o estoque. O processo vai para Cancelados.
+            </p>
           </ConfirmMotivoPanel>
         )}
 
@@ -1992,21 +2193,10 @@ export default function RmaDetalhePage() {
             }}
             loading={acting}
           >
-            <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">
-              <li>
-                Só itens em <strong>Aguardando envio</strong> ou{" "}
-                <strong>Não aprovado</strong> ({itensParaDevolver.length}).
-              </li>
-              <li>
-                Destino: cliente do processo ({row.cliente.nome}) —{" "}
-                <strong>não</strong> estorna a entrada.
-              </li>
-              <li>
-                Usa a NF de retorno <strong>{nfSai.trim()}</strong>
-                {temNfRetornoArquivo ? " e o arquivo anexado" : ""}. Se for o
-                último item em atendimento, o processo fecha.
-              </li>
-            </ul>
+            <p className="text-xs text-slate-600">
+              Sai do estoque RMA para o cliente. Se for o último item, o
+              processo fecha.
+            </p>
           </ConfirmMotivoPanel>
         )}
       </section>
@@ -2014,7 +2204,6 @@ export default function RmaDetalhePage() {
       <RmaDocumentosSection
         processoId={id}
         itens={row.itens}
-        processoAberto={processoAberto}
       />
 
       <section className="mt-3 rounded-xl border bg-white p-3 sm:p-4">
@@ -2167,6 +2356,7 @@ export default function RmaDetalhePage() {
                     produtoDescricao={descLimpa || i.produto.descricao}
                     numeroSerie={i.unidadeSerie?.numeroSerie || null}
                     bloqueioNfRetorno={bloqueioNfRetorno}
+                    bloqueioFrete={faltaFrete}
                     onUpdated={async () => {
                       await load();
                     }}
@@ -2203,8 +2393,24 @@ export default function RmaDetalhePage() {
                               href={`/rma/${id}/orcamento`}
                               className="min-h-8 font-medium text-amber-800 underline"
                             >
-                              PDF / orçar com cliente
+                              Orçamento
                             </Link>
+                          )}
+                        {podeDecidirAprovacao &&
+                          (i.etapa === "AGUARDANDO_ORCAMENTO" ||
+                            i.etapa === "AGUARDANDO_APROVACAO") && (
+                            <button
+                              type="button"
+                              disabled={acting || removerItemId !== null}
+                              className="min-h-8 font-medium text-emerald-800 underline disabled:opacity-50"
+                              onClick={() => {
+                                setSemCobrancaItemId(i.id);
+                                setSemCobrancaObs("");
+                                setError("");
+                              }}
+                            >
+                              Aprovar sem cobrança
+                            </button>
                           )}
                         {podeExcluir && i.etapa === "AGUARDANDO_MANUTENCAO" && (
                           <button
@@ -2379,14 +2585,48 @@ export default function RmaDetalhePage() {
                     </p>
                   )}
                 </div>
+                {semCobrancaItemId === i.id && (
+                  <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-xs">
+                    <p className="font-medium text-emerald-950">
+                      Aprovar sem cobrança
+                    </p>
+                    <textarea
+                      className="mt-2 w-full rounded border px-2 py-1.5"
+                      rows={2}
+                      maxLength={500}
+                      value={semCobrancaObs}
+                      onChange={(e) => setSemCobrancaObs(e.target.value)}
+                      placeholder="Observação obrigatória"
+                    />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={acting || !semCobrancaObs.trim()}
+                        className="rounded bg-emerald-700 px-3 py-1.5 text-white disabled:opacity-50"
+                        onClick={() => void aprovarSemCobranca(i.id)}
+                      >
+                        Confirmar
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded border px-3 py-1.5"
+                        onClick={() => {
+                          setSemCobrancaItemId(null);
+                          setSemCobrancaObs("");
+                        }}
+                      >
+                        Voltar
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {trocaItemId === i.id && (
                   <div
                     id={`troca-painel-${i.id}`}
                     className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3"
                   >
                     <p className="font-medium text-amber-950 sm:col-span-2 lg:col-span-3">
-                      Troca — peça boa: origem → estoque RMA do processo →
-                      cliente; série ruim → descarte
+                      Troca
                     </p>
                     {rmaDefaults?.avisos && rmaDefaults.avisos.length > 0 && (
                       <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950 sm:col-span-2 lg:col-span-3">
@@ -2412,18 +2652,10 @@ export default function RmaDetalhePage() {
                       </select>
                     </label>
                     <div className="block">
-                      <span className="text-slate-600">
-                        Destino da peça boa (estoque RMA do processo)
-                      </span>
-                      <p
-                        className="mt-0.5 rounded border border-amber-200 bg-white px-2 py-1.5 font-medium text-slate-900"
-                        title="Definido na abertura do RMA — não se escolhe na troca"
-                      >
+                      <span className="text-slate-600">Destino da peça boa</span>
+                      <p className="mt-0.5 rounded border border-amber-200 bg-white px-2 py-1.5 font-medium text-slate-900">
                         {row.filial.sigla} — {row.filial.nome}
                       </p>
-                      <span className="mt-0.5 block text-[10px] text-slate-500">
-                        Estoque deste RMA (definido na abertura do processo).
-                      </span>
                     </div>
                     <label className="block">
                       <span className="text-slate-600">Série substituta</span>
@@ -2456,9 +2688,7 @@ export default function RmaDetalhePage() {
                       )}
                     </label>
                     <label className="block">
-                      <span className="text-slate-600">
-                        Destino da série ruim (descarte)
-                      </span>
+                      <span className="text-slate-600">Descarte da série ruim</span>
                       <select
                         className="mt-0.5 w-full rounded border px-2 py-1.5"
                         value={destinoDescarteId}
@@ -2468,6 +2698,21 @@ export default function RmaDetalhePage() {
                         {filiaisDescarte.map((f) => (
                           <option key={f.id} value={f.id}>
                             {f.sigla} — {f.nome}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="text-slate-600">Quem autorizou a troca *</span>
+                      <select
+                        className="mt-0.5 w-full rounded border px-2 py-1.5"
+                        value={autorizadorId}
+                        onChange={(e) => setAutorizadorId(e.target.value)}
+                      >
+                        <option value="">Selecione…</option>
+                        {destTodos.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.nome}
                           </option>
                         ))}
                       </select>
@@ -2498,6 +2743,7 @@ export default function RmaDetalhePage() {
                           !origemFilialId ||
                           !serieBoa.trim() ||
                           !destinoDescarteId ||
+                          !autorizadorId ||
                           Boolean(faltaDocsRetorno)
                         }
                         title={
@@ -2527,7 +2773,12 @@ export default function RmaDetalhePage() {
                   </div>
                 )}
                 {i.observacao && i.status === "DESCARTADO" && (
-                  <p className="mt-1 text-[11px] text-slate-500">{i.observacao}</p>
+                  <p className="mt-1 text-xs text-slate-600">{i.observacao}</p>
+                )}
+                {i.substituicaoAutorizadaPor && (
+                  <p className="mt-1 text-xs text-slate-600">
+                    Troca autorizada por {i.substituicaoAutorizadaPor.nome}
+                  </p>
                 )}
               </li>
             );
@@ -2536,7 +2787,6 @@ export default function RmaDetalhePage() {
         {itensAtivos.length === 0 && (
           <p className="text-sm text-slate-500">
             Nenhum item ativo neste RMA.
-            {processoAberto ? " Use Incluir item para adicionar." : ""}
           </p>
         )}
         {itensRemovidos.length > 0 && (

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { rmaItemEntraNoPdfOrcamento, rmaItemEntraNoPdfOrcamentoArquivo } from "@teep/shared";
+import { rmaItemEntraNoPdfOrcamento, rmaItemEntraNoPdfOrcamentoArquivo, rmaItemEntraNoPdfOrcamentoComercial } from "@teep/shared";
 import {
   formatarRespostaChecklistCampo,
   htmlLaudoRecebimento,
+  htmlOrcamentoComercialCorpo,
   mapPerguntasLaudo,
 } from "./rmaOrcamentoPdfHtml";
 
@@ -44,6 +45,23 @@ describe("rmaItemEntraNoPdfOrcamento", () => {
       rmaItemEntraNoPdfOrcamento({
         etapa: "AGUARDANDO_ENVIO",
         orcamentoStatus: "ENVIADO",
+      }),
+      false
+    );
+  });
+
+  it("comercial inclui aprovado (ex.: sem cobrança)", () => {
+    assert.equal(
+      rmaItemEntraNoPdfOrcamentoComercial({
+        etapa: "AGUARDANDO_MANUTENCAO",
+        orcamentoStatus: "APROVADO",
+      }),
+      true
+    );
+    assert.equal(
+      rmaItemEntraNoPdfOrcamentoComercial({
+        etapa: "NAO_APROVADO",
+        orcamentoStatus: "RECUSADO",
       }),
       false
     );
@@ -136,5 +154,21 @@ describe("html laudo de recebimento no PDF", () => {
     assert.match(html, /Cabo oxidado/);
     assert.match(html, /foto-frame/);
     assert.match(html, /data:image\/jpeg;base64,QQ==/);
+  });
+});
+
+describe("htmlOrcamentoComercialCorpo", () => {
+  it("mostra só o total, sem breakdown de linhas", () => {
+    const html = htmlOrcamentoComercialCorpo({
+      observacoes: ["Desconto combinado"],
+      total: 1500,
+      money: (n) => `R$ ${n.toFixed(2)}`,
+    });
+    assert.match(html, /Valor total/);
+    assert.match(html, /R\$ 1500\.00/);
+    assert.match(html, /Desconto combinado/);
+    assert.equal(html.includes("<th>"), false);
+    assert.equal(html.includes("Qtd"), false);
+    assert.equal(html.includes("Valor unitário"), false);
   });
 });

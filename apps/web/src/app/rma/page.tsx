@@ -6,11 +6,14 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
+  isRmaListaAba,
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPA_LABELS,
-  RMA_PROCESSO_STATUS,
+  RMA_LISTA_ABA_LABELS,
+  RMA_LISTA_ABAS,
   formatYmdBr,
   rmaModalidadeAquisicaoLabel,
+  type RmaListaAba,
   ymdFromApi,
   ymdVencido,
 } from "@teep/shared";
@@ -46,7 +49,9 @@ const STATUS_LABEL: Record<string, string> = {
   CANCELADO: "Cancelado",
 };
 
-const PROCESSO_STATUS_SET = new Set<string>(RMA_PROCESSO_STATUS);
+function abaFromQuery(raw: string | null): RmaListaAba {
+  return raw && isRmaListaAba(raw) ? raw : "aberto";
+}
 
 function resumoEtapasItens(
   itens?: Array<{ etapa?: string }>
@@ -74,6 +79,13 @@ function tomCardRma(status: string, criadoEm: string) {
       card: "border-emerald-200/80 bg-emerald-50/50 hover:border-emerald-300",
       badge: "bg-emerald-100 text-emerald-800",
       dot: "bg-emerald-500",
+    };
+  }
+  if (status === "CANCELADO") {
+    return {
+      card: "border-slate-200 bg-slate-50/70 hover:border-slate-300",
+      badge: "bg-slate-200 text-slate-700",
+      dot: "bg-slate-400",
     };
   }
   if (status === "ABERTO") {
@@ -115,7 +127,9 @@ function RmaListPageInner() {
   const [data, setData] = useState<Row[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState("");
+  const [aba, setAba] = useState<RmaListaAba>(() =>
+    abaFromQuery(searchParams.get("aba"))
+  );
   const [etapa, setEtapa] = useState("");
   const [cobrou, setCobrou] = useState("");
   const [dataInicio, setDataInicio] = useState("");
@@ -166,8 +180,8 @@ function RmaListPageInner() {
     const params = new URLSearchParams({
       page: String(page),
       pageSize: "20",
+      aba,
     });
-    if (status) params.set("status", status);
     if (etapa) params.set("etapa", etapa);
     if (cobrou) params.set("cobrou", cobrou);
     if (dataInicio) params.set("dataInicio", dataInicio);
@@ -187,7 +201,7 @@ function RmaListPageInner() {
       .finally(() => {
         if (gen === fetchGen.current) setLoading(false);
       });
-  }, [page, status, etapa, cobrou, dataInicio, dataFim, clienteId]);
+  }, [page, aba, etapa, cobrou, dataInicio, dataFim, clienteId]);
 
   function resetPage() {
     setPage(1);
@@ -204,9 +218,6 @@ function RmaListPageInner() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">RMA</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Entrada no Estoque RMA, checklist/diagnóstico, cobrança e devolução.
-          </p>
         </div>
         <Link
           href="/rma/novo"
@@ -214,6 +225,31 @@ function RmaListPageInner() {
         >
           Novo RMA
         </Link>
+      </div>
+
+      <div className="mt-4 flex flex-wrap gap-2 text-sm">
+        {RMA_LISTA_ABAS.map((a) => (
+          <button
+            key={a}
+            type="button"
+            onClick={() => {
+              setAba(a);
+              setPage(1);
+              const q = new URLSearchParams(searchParams.toString());
+              if (a === "aberto") q.delete("aba");
+              else q.set("aba", a);
+              const qs = q.toString();
+              router.replace(qs ? `/rma?${qs}` : "/rma", { scroll: false });
+            }}
+            className={
+              aba === a
+                ? "rounded-lg bg-brand px-3 py-1.5 font-medium text-white"
+                : "rounded-lg border px-3 py-1.5"
+            }
+          >
+            {RMA_LISTA_ABA_LABELS[a]}
+          </button>
+        ))}
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -306,39 +342,20 @@ function RmaListPageInner() {
         </div>
 
         <select
-          value={status || etapa}
+          value={etapa}
           onChange={(e) => {
-            const v = e.target.value;
-            if (!v) {
-              setStatus("");
-              setEtapa("");
-            } else if (PROCESSO_STATUS_SET.has(v)) {
-              setStatus(v);
-              setEtapa("");
-            } else {
-              setStatus("");
-              setEtapa(v);
-            }
+            setEtapa(e.target.value);
             resetPage();
           }}
           className="rounded-lg border px-3 py-2 text-sm"
-          aria-label="Filtrar por status ou etapa"
+          aria-label="Filtrar por etapa do item"
         >
-          <option value="">Status: todos</option>
-          <optgroup label="Processo">
-            {RMA_PROCESSO_STATUS.map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s] || s}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Etapa do item">
-            {RMA_ITEM_ETAPA.map((e) => (
-              <option key={e} value={e}>
-                {RMA_ITEM_ETAPA_LABELS[e]}
-              </option>
-            ))}
-          </optgroup>
+          <option value="">Etapa: todas</option>
+          {RMA_ITEM_ETAPA.map((e) => (
+            <option key={e} value={e}>
+              {RMA_ITEM_ETAPA_LABELS[e]}
+            </option>
+          ))}
         </select>
         <select
           value={cobrou}
@@ -375,6 +392,7 @@ function RmaListPageInner() {
         )}
         {data.map((r) => {
           const tom = tomCardRma(r.status, r.criadoEm);
+          const etapas = r.status === "ABERTO" ? resumoEtapasItens(r.itens) : "";
           return (
             <Link
               key={r.id}
@@ -437,11 +455,11 @@ function RmaListPageInner() {
                         {rmaModalidadeAquisicaoLabel(r.modalidadeAquisicao)}
                       </span>
                     )}
-                  {resumoEtapasItens(r.itens) && (
+                  {etapas ? (
                     <span className="rounded-full bg-slate-100 px-1.5 py-0.5 font-medium text-slate-700">
-                      {resumoEtapasItens(r.itens)}
+                      {etapas}
                     </span>
-                  )}
+                  ) : null}
                 </div>
               )}
             </Link>

@@ -19,6 +19,9 @@ import {
   CONTROLE_SERIE_PADRAO,
   exigeSerieNoLancamento,
   isPedidoStatus,
+  mensagemBloqueioEnvioPedidoLocacao,
+  tiposAnexosPedidoEnvio,
+  parseYmd,
 } from "@teep/shared";
 import { deleteUploadBestEffort, isValidUploadPath } from "../lib/uploads";
 
@@ -46,6 +49,7 @@ const pedidoInclude = {
   destinatarios: {
     include: { usuario: { select: { id: true, nome: true, email: true } } },
   },
+  anexos: { orderBy: { criadoEm: "desc" as const } },
 };
 
 function qtyEq(a: number, b: number) {
@@ -61,6 +65,8 @@ const listaSelect = {
   status: true,
   rastreio: true,
   nfNumero: true,
+  tipoContrato: true,
+  dataPrevistaEntrega: true,
   filialAcabado: { select: { sigla: true } },
   cliente: { select: { id: true, nome: true } },
   _count: { select: { itens: true } },
@@ -396,6 +402,9 @@ export async function separarPedido(
   input: {
     filialId: string;
     destinatarioIds: string[];
+    tipoContrato: string;
+    dataPrevistaEntrega: string;
+    anexos?: Array<{ tipo: string; arquivo: string; label?: string | null }>;
     itens: Array<{ id: string; quantidade: number; series?: string[] }>;
   }
 ) {
@@ -512,6 +521,12 @@ export async function separarPedido(
     });
   }
 
+  const ymd = parseYmd(input.dataPrevistaEntrega);
+  if (!ymd) {
+    throw new AppError(400, "Informe a data prevista de entrega");
+  }
+  await validarAnexosPedido(user, input.anexos);
+
   const itensLancamento = agruparItensSaidaPedido(itensMov);
   const grupoId = randomUUID();
 
@@ -527,9 +542,13 @@ export async function separarPedido(
         grupoLancamentoId: grupoId,
         separadoPorId: user.id,
         clienteId,
+        tipoContrato: input.tipoContrato,
+        dataPrevistaEntrega: new Date(`${ymd}T00:00:00.000Z`),
       },
     }),
   ]);
+
+  await persistirAnexosPedido(pedidoId, input.anexos);
 
   await criarMovimentacao(user, {
     tipoId: tipo.id,
@@ -594,11 +613,19 @@ export async function enviarPedido(
     rastreio?: string | null;
     nfNumero: string;
     nfArquivo: string;
+    freteCobrado: boolean;
+    anexos?: Array<{ tipo: string; arquivo: string; label?: string | null }>;
   }
 ) {
   const pedido = await prisma.pedidoVenda.findUnique({
     where: { id: pedidoId },
-    select: { id: true, status: true, liberadoEm: true },
+    select: {
+      id: true,
+      status: true,
+      liberadoEm: true,
+      tipoContrato: true,
+      anexos: { select: { tipo: true } },
+    },
   });
   if (!pedido) throw new AppError(404, "Pedido não encontrado");
   if (pedido.status !== "SEPARADO") {
@@ -607,6 +634,27 @@ export async function enviarPedido(
   if (!isValidUploadPath(input.nfArquivo, "nota-fiscal", user.id)) {
     throw new AppError(400, "Anexe a nota fiscal");
   }
+  await validarAnexosPedido(user, input.anexos);
+  const tipos = tiposAnexosPedidoEnvio(pedido.anexos, input.anexos);
+  const bloqueioLocacao = mensagemBloqueioEnvioPedidoLocacao({
+    tipoContrato: pedido.tipoContrato,
+    temTermoComodato: tipos.has("TERMO_COMODATO"),
+  });
+  if (bloqueioLocacao) throw new AppError(400, bloqueioLocacao);
+
+  await persistirAnexosPedido(pedidoId, input.anexos);
+  const jaTemNfSaida = tipos.has("NF_SAIDA");
+  if (!jaTemNfSaida) {
+    await prisma.pedidoVendaAnexo.create({
+      data: {
+        pedidoId,
+        tipo: "NF_SAIDA",
+        arquivo: input.nfArquivo,
+        label: input.nfNumero,
+      },
+    });
+  }
+
   await prisma.pedidoVenda.update({
     where: { id: pedidoId },
     data: {
@@ -618,9 +666,73 @@ export async function enviarPedido(
       rastreio: input.rastreio || null,
       nfNumero: input.nfNumero,
       nfArquivo: input.nfArquivo,
+      freteCobrado: input.freteCobrado,
     },
   });
   return obterPedido(pedidoId);
+}
+
+export async function anexarDocumentoPedido(
+  user: AuthUser,
+  pedidoId: string,
+  input: { tipo: string; arquivo: string; label?: string | null }
+) {
+  const pedido = await prisma.pedidoVenda.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, status: true },
+  });
+  if (!pedido) throw new AppError(404, "Pedido não encontrado");
+  if (pedido.status === "ENVIADO") {
+    throw new AppError(400, "Pedido já enviado — não é possível anexar documentos");
+  }
+  await validarAnexosPedido(user, [input]);
+  await persistirAnexosPedido(pedidoId, [input]);
+  return obterPedido(pedidoId);
+}
+
+export async function removerAnexoPedido(pedidoId: string, anexoId: string) {
+  const pedido = await prisma.pedidoVenda.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, status: true },
+  });
+  if (!pedido) throw new AppError(404, "Pedido não encontrado");
+  if (pedido.status === "ENVIADO") {
+    throw new AppError(400, "Pedido já enviado — não é possível excluir anexos");
+  }
+  const anexo = await prisma.pedidoVendaAnexo.findFirst({
+    where: { id: anexoId, pedidoId },
+  });
+  if (!anexo) throw new AppError(404, "Anexo não encontrado");
+  deleteUploadBestEffort(anexo.arquivo);
+  await prisma.pedidoVendaAnexo.delete({ where: { id: anexo.id } });
+  return obterPedido(pedidoId);
+}
+
+async function validarAnexosPedido(
+  user: AuthUser,
+  anexos?: Array<{ arquivo: string }>
+) {
+  if (!anexos?.length) return;
+  for (const a of anexos) {
+    if (!isValidUploadPath(a.arquivo, "documento", user.id)) {
+      throw new AppError(400, "Anexo de documento inválido. Envie o arquivo de novo.");
+    }
+  }
+}
+
+async function persistirAnexosPedido(
+  pedidoId: string,
+  anexos?: Array<{ tipo: string; arquivo: string; label?: string | null }>
+) {
+  if (!anexos?.length) return;
+  await prisma.pedidoVendaAnexo.createMany({
+    data: anexos.map((a) => ({
+      pedidoId,
+      tipo: a.tipo,
+      arquivo: a.arquivo,
+      label: a.label || null,
+    })),
+  });
 }
 
 export async function removerNotaFiscalPedido(pedidoId: string) {

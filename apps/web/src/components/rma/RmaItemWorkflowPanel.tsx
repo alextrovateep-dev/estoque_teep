@@ -143,6 +143,8 @@ type Props = {
   numeroSerie?: string | null;
   /** NF de retorno (número salvo + arquivo) — obrigatória para concluir a liberação */
   bloqueioNfRetorno?: string | null;
+  /** Frete do processo — obrigatório para concluir a liberação / envio */
+  bloqueioFrete?: string | null;
   onUpdated: () => Promise<void> | void;
   onError: (msg: string) => void;
 };
@@ -155,6 +157,7 @@ export function RmaItemWorkflowPanel({
   produtoDescricao,
   numeroSerie,
   bloqueioNfRetorno,
+  bloqueioFrete,
   onUpdated,
   onError,
 }: Props) {
@@ -362,6 +365,10 @@ export function RmaItemWorkflowPanel({
     }
     if (concluir && tipo === "LIBERACAO" && bloqueioNfRetorno) {
       reportError(bloqueioNfRetorno);
+      return;
+    }
+    if (concluir && tipo === "LIBERACAO" && bloqueioFrete) {
+      reportError(bloqueioFrete);
       return;
     }
     if (concluir) {
@@ -705,10 +712,6 @@ export function RmaItemWorkflowPanel({
                               }));
                             }}
                           />
-                          <span className="mt-0.5 block text-[11px] text-slate-500">
-                            Informe a data impressa no lacre (vencimento ou
-                            validade da garantia).
-                          </span>
                         </label>
                       ) : null}
                       {r.valorBool === false ? (
@@ -870,6 +873,15 @@ export function RmaItemWorkflowPanel({
     showRecv || showPlano || showLib || Boolean(item.diagnostico);
 
   if (!hasWorkflowUi) {
+    if (
+      processoAberto &&
+      bloqueioFrete &&
+      (etapa === "AGUARDANDO_LIBERACAO" || etapa === "AGUARDANDO_ENVIO")
+    ) {
+      return (
+        <p className="mt-2 text-xs text-amber-800">{bloqueioFrete}</p>
+      );
+    }
     return null;
   }
 
@@ -907,11 +919,7 @@ export function RmaItemWorkflowPanel({
   }
   if (item.orcamento) {
     resumoCard.push(
-      `Orçamento: ${rmaOrcamentoStatusLabel(item.orcamento.status)}${
-        item.orcamento.status === "ENVIADO"
-          ? " · negociar, PDF e gerar de novo"
-          : ""
-      }`
+      `Orçamento: ${rmaOrcamentoStatusLabel(item.orcamento.status)}`
     );
   }
   if (lib) {
@@ -959,9 +967,6 @@ export function RmaItemWorkflowPanel({
             <header className="shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3 sm:px-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400">
-                    Item do RMA
-                  </p>
                   <p className="mt-0.5 font-mono text-base font-semibold text-slate-900">
                     {produtoCodigo}
                     {numeroSerie ? (
@@ -1026,10 +1031,6 @@ export function RmaItemWorkflowPanel({
                   </label>
                   <div className="mt-3">
                     <p className="font-medium">Serviços</p>
-                    <p className="text-[11px] text-slate-500">
-                      Informe o tempo gasto em minutos. O valor fica no
-                      orçamento (comercial).
-                    </p>
                     {servicos.map((s, idx) => (
                       <div key={idx} className="mt-1 flex flex-wrap gap-1">
                         <input
@@ -1228,11 +1229,11 @@ export function RmaItemWorkflowPanel({
                     disabled={
                       busy ||
                       (checklistFooterTipo === "LIBERACAO" &&
-                        Boolean(bloqueioNfRetorno))
+                        Boolean(bloqueioNfRetorno || bloqueioFrete))
                     }
                     title={
-                      checklistFooterTipo === "LIBERACAO" && bloqueioNfRetorno
-                        ? bloqueioNfRetorno
+                      checklistFooterTipo === "LIBERACAO"
+                        ? bloqueioNfRetorno || bloqueioFrete || undefined
                         : undefined
                     }
                     onClick={() =>
@@ -1244,17 +1245,15 @@ export function RmaItemWorkflowPanel({
                   </button>
                 </div>
                 <p className="mt-1.5 text-[11px] text-slate-500">
-                  Use <strong>Salvar checklist</strong> para gravar o rascunho
-                  (pode incompleto). <strong>Concluir</strong> exige todos os
-                  campos obrigatórios.
-                  {checklistFooterTipo === "RECEBIMENTO" && showPlano
-                    ? " O diagnóstico tem botão próprio na seção abaixo."
-                    : null}
+                  Salvar grava rascunho. Concluir exige os obrigatórios.
                 </p>
                 {checklistFooterTipo === "LIBERACAO" && bloqueioNfRetorno ? (
                   <p className="mt-2 text-xs text-amber-800">
                     {bloqueioNfRetorno}
                   </p>
+                ) : null}
+                {checklistFooterTipo === "LIBERACAO" && bloqueioFrete ? (
+                  <p className="mt-2 text-xs text-amber-800">{bloqueioFrete}</p>
                 ) : null}
               </footer>
             ) : null}

@@ -49,7 +49,7 @@ Match de cliente: CNPJ do contato no eGestor (`/v1/contatos/{codContato}` ou `/v
 | Tela | Papel |
 |------|--------|
 | **Pedidos** (`/pedidos`) | Abas Em aberto / Separado / Enviados. Botão **Atualizar do eGestor** (só em aberto). |
-| **Detalhe** (`/pedidos/[id]`) | Em aberto: separar (séries + estoque). Separado/Enviados: itens só leitura com as séries baixadas. Separado: Enviar (NF obrigatória). |
+| **Detalhe** (`/pedidos/[id]`) | Em aberto: separar (contrato, data prevista, anexos, séries + estoque). Separado/Enviados: itens só leitura com as séries baixadas e o tipo do contrato. Separado: Enviar (NF + frete cobrado; Locação exige termo de comodato). |
 
 Permissão: `pedidos` (Gerente e Operador por padrão).
 
@@ -65,7 +65,9 @@ Operador só separa em acabados aos quais está vinculado. Gerente/Admin: qualqu
 4. Marca usuários que recebem e-mail (IDs do cadastro, não lista livre). O e-mail é enviado quando a baixa de estoque conclui (`SEPARADO`).
 5. API chama `criarMovimentacao` (SAÍDA: saldo + séries + cliente), sempre com `grupoLancamentoId` (também em pedido de 1 SKU). Linhas do mesmo produto são agrupadas. A separação **conclui na hora** — não entra na fila de Aprovações (a flag «Requer aprovação» do tipo é ignorada / forçada off no tipo de saída de pedido).
 6. Status TEEP `ABERTO` → `SEPARADO` (aba **Separado**: embalado, aguardando envio). O detalhe lista as séries da baixa em cada item. eGestor **não** muda.
-7. No Separado, **Enviar** pede número e anexo da NF (transportadora opcional). O anexo pode ser excluído ou substituído antes de enviar. Confirmar move para **Enviados** (`ENVIADO`). Lá também dá para excluir/trocar o arquivo.
+7. No Separado, **Enviar** pede número e anexo da NF, **frete cobrado (Sim/Não)** (transportadora opcional). Locação exige também **termo de comodato** anexado. O anexo de NF pode ser excluído ou substituído antes de enviar. Confirmar move para **Enviados** (`ENVIADO`). Lá também dá para excluir/trocar o arquivo.
+
+Na hora de **Separar** o operador escolhe o **tipo de contrato** (Locação ou Contrato assistência) e a **data prevista de entrega**, e pode anexar adendo / termo de entrega. Lista e detalhe (Separado/Enviado) mostram contrato e data prevista. Anexos são gravados na hora do upload (não somem ao recarregar).
 
 Pedidos antigos que tenham ficado com saída `PENDENTE` (tipo com aprovação ligada no passado) continuam aparecendo como aguardando em Aprovações até alguém aprovar ou rejeitar.
 
@@ -83,12 +85,13 @@ Pedidos antigos que tenham ficado com saída `PENDENTE` (tipo com aprovação li
 | Separar | `POST /pedidos/:id/separar` |
 | Liberar | `POST /pedidos/:id/liberar` |
 | Enviar | `POST /pedidos/:id/enviar` |
+| Anexos | `POST /pedidos/:id/anexos` · `DELETE /pedidos/:id/anexos/:anexoId` |
 | Excluir NF | `DELETE /pedidos/:id/nota-fiscal` (enviado) |
 | Trocar NF | `PATCH /pedidos/:id/nota-fiscal` (enviado) |
 
-Body de separar: `filialId`, `destinatarioIds` (mín. 1), `itens: [{ id, quantidade, series? }]`.
+Body de separar: `filialId`, `destinatarioIds` (mín. 1), `tipoContrato` (`LOCACAO` | `CONTRATO_ASSISTENCIA`), `dataPrevistaEntrega` (YYYY-MM-DD), `anexos?`, `itens: [{ id, quantidade, series? }]`.
 
-Body de enviar: `nfNumero`, `nfArquivo` (`/uploads/notas-fiscais/...`); `transportadora` e `rastreio` opcionais. Exige pedido `SEPARADO`.
+Body de enviar: `nfNumero`, `nfArquivo` (`/uploads/notas-fiscais/...`), `freteCobrado` (boolean); `transportadora` e `rastreio` opcionais; `anexos?`. Exige pedido `SEPARADO`. Locação sem termo de comodato não envia.
 
 ---
 

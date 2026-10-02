@@ -10,8 +10,16 @@ import {
 import {
   exigeSerieNoLancamento,
   formatCnpj,
+  PEDIDO_ANEXO_TIPO_LABELS,
+  PEDIDO_ANEXO_TIPOS,
   PEDIDO_STATUS_LABELS,
+  PEDIDO_TIPO_CONTRATO,
+  PEDIDO_TIPO_CONTRATO_LABELS,
+  formatYmdBr,
+  ymdFromApi,
+  type PedidoAnexoTipo,
   type PedidoStatus,
+  type PedidoTipoContrato,
   usaSerieLivre,
 } from "@teep/shared";
 import Link from "next/link";
@@ -45,6 +53,13 @@ type Cliente = {
   ativo?: boolean;
 };
 
+type PedidoAnexo = {
+  id: string;
+  tipo: string;
+  arquivo: string;
+  label?: string | null;
+};
+
 type Pedido = {
   id: string;
   egestorCodigo: number;
@@ -62,8 +77,19 @@ type Pedido = {
   rastreio?: string | null;
   nfNumero?: string | null;
   nfArquivo?: string | null;
+  tipoContrato?: string | null;
+  dataPrevistaEntrega?: string | null;
+  freteCobrado?: boolean | null;
+  anexos?: PedidoAnexo[];
   itens: Item[];
   destinatarios?: Array<{ usuario: Dest }>;
+};
+
+type AnexoPendente = {
+  key: string;
+  tipo: PedidoAnexoTipo;
+  arquivo: string;
+  label: string;
 };
 
 type Filial = { id: string; nome: string; sigla: string };
@@ -127,6 +153,116 @@ function linhasFromPedido(p: Pedido, prev: LancamentoLinha[] = []): LancamentoLi
       serieMsgs: Array.from({ length: seriesLen }, () => ""),
     });
   });
+}
+
+function PedidoAnexosBlock({
+  salvos,
+  pendentes,
+  tipoNovo,
+  uploading,
+  canEdit,
+  tiposPermitidos,
+  onTipoNovo,
+  onFile,
+  onRemovePendente,
+  onRemoveSalvo,
+}: {
+  salvos: PedidoAnexo[];
+  pendentes: AnexoPendente[];
+  tipoNovo: PedidoAnexoTipo;
+  uploading: boolean;
+  canEdit: boolean;
+  tiposPermitidos?: PedidoAnexoTipo[];
+  onTipoNovo: (t: PedidoAnexoTipo) => void;
+  onFile: (f: File) => void;
+  onRemovePendente: (key: string) => void;
+  onRemoveSalvo?: (id: string) => void;
+}) {
+  const tipos = tiposPermitidos || [...PEDIDO_ANEXO_TIPOS];
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4">
+      <p className="text-sm font-medium">Anexos</p>
+      <ul className="mt-2 space-y-1 text-sm">
+        {salvos.map((a) => (
+          <li
+            key={a.id}
+            className="flex flex-wrap items-center justify-between gap-2"
+          >
+            <a
+              href={resolveAssetUrl(a.arquivo) || "#"}
+              target="_blank"
+              rel="noreferrer"
+              className="text-brand hover:underline"
+            >
+              {PEDIDO_ANEXO_TIPO_LABELS[a.tipo as PedidoAnexoTipo] || a.tipo}
+              {a.label ? ` — ${a.label}` : ""}
+            </a>
+            {canEdit && onRemoveSalvo ? (
+              <button
+                type="button"
+                className="text-xs text-slate-500 underline"
+                onClick={() => onRemoveSalvo(a.id)}
+              >
+                Excluir
+              </button>
+            ) : null}
+          </li>
+        ))}
+        {pendentes.map((a) => (
+          <li
+            key={a.key}
+            className="flex flex-wrap items-center justify-between gap-2"
+          >
+            <span>
+              {PEDIDO_ANEXO_TIPO_LABELS[a.tipo]} — {a.label}{" "}
+              <span className="text-xs text-slate-400">(pendente)</span>
+            </span>
+            {canEdit ? (
+              <button
+                type="button"
+                className="text-xs text-slate-500 underline"
+                onClick={() => onRemovePendente(a.key)}
+              >
+                Remover
+              </button>
+            ) : null}
+          </li>
+        ))}
+        {salvos.length === 0 && pendentes.length === 0 ? (
+          <li className="text-slate-400">Nenhum anexo</li>
+        ) : null}
+      </ul>
+      {canEdit ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <select
+            className="rounded-lg border px-2 py-1.5 text-sm"
+            value={tipoNovo}
+            onChange={(e) => onTipoNovo(e.target.value as PedidoAnexoTipo)}
+          >
+            {tipos.map((t) => (
+              <option key={t} value={t}>
+                {PEDIDO_ANEXO_TIPO_LABELS[t]}
+              </option>
+            ))}
+          </select>
+          <label className="inline-flex cursor-pointer rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50">
+            {uploading ? "Enviando…" : "Anexar arquivo"}
+            <input
+              type="file"
+              accept=".pdf,.doc,.docx,image/*"
+              className="sr-only"
+              disabled={uploading}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) onFile(file);
+              }}
+            />
+          </label>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function statusLabel(status: string) {
@@ -198,6 +334,16 @@ export default function PedidoDetalhePage() {
   const [nfNumero, setNfNumero] = useState("");
   const [nfArquivo, setNfArquivo] = useState("");
   const [uploadingNf, setUploadingNf] = useState(false);
+  const [tipoContrato, setTipoContrato] = useState<PedidoTipoContrato | "">(
+    ""
+  );
+  const [dataPrevista, setDataPrevista] = useState("");
+  const [anexosPendentes, setAnexosPendentes] = useState<AnexoPendente[]>([]);
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [anexoTipoNovo, setAnexoTipoNovo] = useState<PedidoAnexoTipo>(
+    "ADENDO_CONTRATO"
+  );
+  const [freteCobrado, setFreteCobrado] = useState<"" | "true" | "false">("");
 
   useEffect(() => {
     if (!id) return;
@@ -217,6 +363,17 @@ export default function PedidoDetalhePage() {
         setRastreio(p.rastreio || "");
         setNfNumero(p.nfNumero || "");
         setNfArquivo(p.nfArquivo || "");
+        setTipoContrato(
+          p.tipoContrato === "LOCACAO" || p.tipoContrato === "CONTRATO_ASSISTENCIA"
+            ? p.tipoContrato
+            : ""
+        );
+        setDataPrevista(
+          p.dataPrevistaEntrega ? String(p.dataPrevistaEntrega).slice(0, 10) : ""
+        );
+        setFreteCobrado(
+          p.freteCobrado === true ? "true" : p.freteCobrado === false ? "false" : ""
+        );
       })
       .catch((e) =>
         setError(e instanceof Error ? e.message : "Erro ao carregar")
@@ -250,6 +407,62 @@ export default function PedidoDetalhePage() {
     );
   }
 
+  function temTermoComodato() {
+    const salvos = (row?.anexos || []).some((a) => a.tipo === "TERMO_COMODATO");
+    const pend = anexosPendentes.some((a) => a.tipo === "TERMO_COMODATO");
+    return salvos || pend;
+  }
+
+  async function onDocFile(file: File) {
+    setUploadingDoc(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("context", "documento");
+      const r = await apiUpload<{ url: string }>("/upload", fd);
+      if (row && row.status !== "ENVIADO") {
+        const atualizado = await api<Pedido>(`/pedidos/${row.id}/anexos`, {
+          method: "POST",
+          body: JSON.stringify({
+            tipo: anexoTipoNovo,
+            arquivo: r.url,
+            label: file.name,
+          }),
+        });
+        setRow(atualizado);
+        return;
+      }
+      setAnexosPendentes((prev) => [
+        ...prev,
+        {
+          key: `${Date.now()}-${file.name}`,
+          tipo: anexoTipoNovo,
+          arquivo: r.url,
+          label: file.name,
+        },
+      ]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao anexar");
+    } finally {
+      setUploadingDoc(false);
+    }
+  }
+
+  async function removerAnexoSalvo(anexoId: string) {
+    if (!row) return;
+    setError("");
+    try {
+      const atualizado = await api<Pedido>(
+        `/pedidos/${row.id}/anexos/${anexoId}`,
+        { method: "DELETE" }
+      );
+      setRow(atualizado);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir anexo");
+    }
+  }
+
   async function onSeparar(e: FormEvent) {
     e.preventDefault();
     if (!row || !podeSeparar) return;
@@ -276,6 +489,13 @@ export default function PedidoDetalhePage() {
         body: JSON.stringify({
           filialId,
           destinatarioIds: destIds,
+          tipoContrato,
+          dataPrevistaEntrega: dataPrevista,
+          anexos: anexosPendentes.map((a) => ({
+            tipo: a.tipo,
+            arquivo: a.arquivo,
+            label: a.label,
+          })),
           itens: fresh.itens.map((it) => {
             const linha = linhaParaItem(linhas, it, usados);
             return {
@@ -312,6 +532,14 @@ export default function PedidoDetalhePage() {
       setError("Anexe a nota fiscal para enviar.");
       return;
     }
+    if (freteCobrado !== "true" && freteCobrado !== "false") {
+      setError("Informe se o frete foi cobrado.");
+      return;
+    }
+    if (row.tipoContrato === "LOCACAO" && !temTermoComodato()) {
+      setError("Anexe o termo de comodato para enviar pedido de locação.");
+      return;
+    }
     setError("");
     setSaving(true);
     try {
@@ -322,6 +550,12 @@ export default function PedidoDetalhePage() {
           rastreio: rastreio.trim(),
           nfNumero: nfNumero.trim(),
           nfArquivo,
+          freteCobrado: freteCobrado === "true",
+          anexos: anexosPendentes.map((a) => ({
+            tipo: a.tipo,
+            arquivo: a.arquivo,
+            label: a.label,
+          })),
         }),
       });
       if (atualizado.status === "ENVIADO") {
@@ -405,6 +639,16 @@ export default function PedidoDetalhePage() {
           <p className="mt-1 text-sm text-slate-500">
             {row.cliente?.nome || row.nomeContato}
             {row.filialAcabado ? ` · ${row.filialAcabado.sigla}` : ""}
+            {row.tipoContrato
+              ? ` · ${
+                  PEDIDO_TIPO_CONTRATO_LABELS[
+                    row.tipoContrato as PedidoTipoContrato
+                  ] || row.tipoContrato
+                }`
+              : ""}
+            {row.dataPrevistaEntrega
+              ? ` · Prevista ${formatYmdBr(ymdFromApi(row.dataPrevistaEntrega))}`
+              : ""}
             {" · "}
             {statusLabel(row.status)}
           </p>
@@ -445,7 +689,9 @@ export default function PedidoDetalhePage() {
       )}
       {row.status === "SEPARADO" && (
         <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Separado e embalado. Anexe a nota fiscal para enviar.
+          Separado e embalado. Anexe a nota fiscal
+          {row.tipoContrato === "LOCACAO" ? " e o termo de comodato" : ""} para
+          enviar.
         </p>
       )}
 
@@ -549,10 +795,54 @@ export default function PedidoDetalhePage() {
                   </label>
                 )}
               </div>
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium">Frete cobrado</span>
+                <select
+                  required
+                  className="w-full rounded-lg border px-3 py-2"
+                  value={freteCobrado}
+                  onChange={(e) =>
+                    setFreteCobrado(e.target.value as "" | "true" | "false")
+                  }
+                >
+                  <option value="">Selecione…</option>
+                  <option value="true">Sim</option>
+                  <option value="false">Não</option>
+                </select>
+              </label>
+              {row.tipoContrato === "LOCACAO" && !temTermoComodato() ? (
+                <p className="text-sm text-amber-800">
+                  Locação: anexe o termo de comodato antes de enviar.
+                </p>
+              ) : null}
+              <PedidoAnexosBlock
+                salvos={row.anexos || []}
+                pendentes={anexosPendentes}
+                tipoNovo={anexoTipoNovo}
+                uploading={uploadingDoc}
+                canEdit
+                tiposPermitidos={
+                  row.tipoContrato === "LOCACAO"
+                    ? ["TERMO_COMODATO", "ADENDO_CONTRATO", "TERMO_ENTREGA", "OUTRO"]
+                    : ["ADENDO_CONTRATO", "TERMO_ENTREGA", "OUTRO"]
+                }
+                onTipoNovo={setAnexoTipoNovo}
+                onFile={(f) => void onDocFile(f)}
+                onRemovePendente={(key) =>
+                  setAnexosPendentes((prev) => prev.filter((a) => a.key !== key))
+                }
+                onRemoveSalvo={(anexoId) => void removerAnexoSalvo(anexoId)}
+              />
               <button
                 type="submit"
                 disabled={
-                  saving || uploadingNf || !nfArquivo || !nfNumero.trim()
+                  saving ||
+                  uploadingNf ||
+                  uploadingDoc ||
+                  !nfArquivo ||
+                  !nfNumero.trim() ||
+                  (freteCobrado !== "true" && freteCobrado !== "false") ||
+                  (row.tipoContrato === "LOCACAO" && !temTermoComodato())
                 }
                 className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
@@ -615,8 +905,49 @@ export default function PedidoDetalhePage() {
                   )}
                 </dd>
               </div>
+              <div>
+                <dt className="text-slate-500">Frete cobrado</dt>
+                <dd className="font-medium">
+                  {row.freteCobrado === true
+                    ? "Sim"
+                    : row.freteCobrado === false
+                      ? "Não"
+                      : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Tipo de contrato</dt>
+                <dd className="font-medium">
+                  {row.tipoContrato
+                    ? PEDIDO_TIPO_CONTRATO_LABELS[
+                        row.tipoContrato as PedidoTipoContrato
+                      ] || row.tipoContrato
+                    : "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-slate-500">Data prevista de entrega</dt>
+                <dd className="font-medium">
+                  {row.dataPrevistaEntrega
+                    ? formatYmdBr(ymdFromApi(row.dataPrevistaEntrega))
+                    : "—"}
+                </dd>
+              </div>
             </dl>
           )}
+
+          {row.anexos && row.anexos.length > 0 && row.status === "ENVIADO" ? (
+            <PedidoAnexosBlock
+              salvos={row.anexos}
+              pendentes={[]}
+              tipoNovo={anexoTipoNovo}
+              uploading={false}
+              canEdit={false}
+              onTipoNovo={setAnexoTipoNovo}
+              onFile={() => undefined}
+              onRemovePendente={() => undefined}
+            />
+          ) : null}
         </div>
       ) : (
         <form onSubmit={onSeparar} className="mt-6 space-y-4">
@@ -642,6 +973,41 @@ export default function PedidoDetalhePage() {
                 </span>
               )}
             </label>
+          )}
+
+          {podeSeparar && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium">Tipo de contrato</span>
+                <select
+                  required
+                  className="w-full rounded-lg border px-3 py-2"
+                  value={tipoContrato}
+                  onChange={(e) =>
+                    setTipoContrato(e.target.value as PedidoTipoContrato | "")
+                  }
+                >
+                  <option value="">Selecione…</option>
+                  {PEDIDO_TIPO_CONTRATO.map((t) => (
+                    <option key={t} value={t}>
+                      {PEDIDO_TIPO_CONTRATO_LABELS[t]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-sm">
+                <span className="mb-1 block font-medium">
+                  Data prevista de entrega
+                </span>
+                <input
+                  type="date"
+                  required
+                  className="w-full rounded-lg border px-3 py-2"
+                  value={dataPrevista}
+                  onChange={(e) => setDataPrevista(e.target.value)}
+                />
+              </label>
+            </div>
           )}
 
           <div className="space-y-3">
@@ -719,9 +1085,33 @@ export default function PedidoDetalhePage() {
           )}
 
           {podeSeparar && (
+            <PedidoAnexosBlock
+              salvos={row.anexos || []}
+              pendentes={anexosPendentes}
+              tipoNovo={anexoTipoNovo}
+              uploading={uploadingDoc}
+              canEdit
+              tiposPermitidos={["ADENDO_CONTRATO", "TERMO_ENTREGA", "OUTRO"]}
+              onTipoNovo={setAnexoTipoNovo}
+              onFile={(f) => void onDocFile(f)}
+              onRemovePendente={(key) =>
+                setAnexosPendentes((prev) => prev.filter((a) => a.key !== key))
+              }
+              onRemoveSalvo={(anexoId) => void removerAnexoSalvo(anexoId)}
+            />
+          )}
+
+          {podeSeparar && (
             <button
               type="submit"
-              disabled={saving || !filialId || destIds.length === 0}
+              disabled={
+                saving ||
+                uploadingDoc ||
+                !filialId ||
+                destIds.length === 0 ||
+                !tipoContrato ||
+                !dataPrevista
+              }
               className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
             >
               {saving ? "Separando…" : "Separar pedido"}

@@ -20,7 +20,12 @@ import {
   rmaOrcamentoPodeEditar,
   salvarRmaDiagnosticoPlanoSchema,
   semManutencaoRmaSchema,
+  aprovarSemCobrancaRmaSchema,
+  atualizarRmaFreteSchema,
   trocarRmaItemSchema,
+  mensagemBloqueioFreteRma,
+  podeExcluirAberturaRma,
+  rmaListaWhereAba,
   updateRmaItemFinanceiroSchema,
 } from "@teep/shared";
 import {
@@ -159,8 +164,19 @@ describe("trocarRmaItemSchema", () => {
       origemFilialId: UUID_ORIGEM,
       numeroSerieBoa: "SN-BOA-001",
       destinoDescarteFilialId: UUID_DESC,
+      substituicaoAutorizadaPorId: UUID_A,
     });
     assert.equal(r.success, true);
+  });
+
+  it("exige quem autorizou a troca", () => {
+    const r = trocarRmaItemSchema.safeParse({
+      itemId: UUID_ITEM,
+      origemFilialId: UUID_ORIGEM,
+      numeroSerieBoa: "SN-BOA-001",
+      destinoDescarteFilialId: UUID_DESC,
+    });
+    assert.equal(r.success, false);
   });
 
   it("rejeita série boa vazia", () => {
@@ -701,5 +717,81 @@ describe("mensagemErroValidacao", () => {
   it("usa fallback genérico sem citar série", () => {
     const msg = mensagemErroValidacao({ message: "Dados inválidos" });
     assert.equal(/série|serie|cliente/i.test(msg), false);
+  });
+});
+
+describe("rmaListaWhereAba", () => {
+  it("aberto não inclui cancelados nem só envio", () => {
+    const w = rmaListaWhereAba("aberto") as {
+      status: string;
+      itens: { some: { etapa: { notIn: string[] } } };
+    };
+    assert.equal(w.status, "ABERTO");
+    assert.ok(w.itens.some.etapa.notIn.includes("AGUARDANDO_ENVIO"));
+    assert.ok(w.itens.some.etapa.notIn.includes("FINALIZADO"));
+    assert.deepEqual(rmaListaWhereAba("cancelado"), { status: "CANCELADO" });
+  });
+
+  it("enviado inclui fechados e itens em envio", () => {
+    const w = rmaListaWhereAba("enviado") as {
+      OR: Array<Record<string, unknown>>;
+    };
+    assert.ok(Array.isArray(w.OR));
+    assert.equal(w.OR[0]?.status, "FECHADO");
+  });
+});
+
+describe("podeExcluirAberturaRma", () => {
+  it("só Admin pode excluir abertura", () => {
+    assert.equal(podeExcluirAberturaRma("ADMIN"), true);
+    assert.equal(podeExcluirAberturaRma("GERENTE"), false);
+    assert.equal(podeExcluirAberturaRma("OPERADOR"), false);
+  });
+});
+
+describe("mensagemBloqueioFreteRma", () => {
+  it("exige modalidade e cobrado", () => {
+    assert.ok(mensagemBloqueioFreteRma({}));
+    assert.ok(
+      mensagemBloqueioFreteRma({
+        freteModalidade: "TRANSPORTADORA",
+        freteCobrado: true,
+      })
+    );
+    assert.equal(
+      mensagemBloqueioFreteRma({
+        freteModalidade: "RETIRO_PROPRIO",
+        freteCobrado: false,
+      }),
+      null
+    );
+  });
+});
+
+describe("atualizarRmaFreteSchema", () => {
+  it("exige transportadora quando modalidade é transportadora", () => {
+    const r = atualizarRmaFreteSchema.safeParse({
+      freteModalidade: "TRANSPORTADORA",
+      freteCobrado: true,
+    });
+    assert.equal(r.success, false);
+  });
+});
+
+describe("aprovarSemCobrancaRmaSchema", () => {
+  it("exige observação", () => {
+    const r = aprovarSemCobrancaRmaSchema.safeParse({
+      itemIds: [UUID_ITEM],
+      observacao: "   ",
+    });
+    assert.equal(r.success, false);
+  });
+
+  it("aceita aprovação sem cobrança", () => {
+    const r = aprovarSemCobrancaRmaSchema.safeParse({
+      itemIds: [UUID_ITEM],
+      observacao: "Coberto pelo contrato",
+    });
+    assert.equal(r.success, true);
   });
 });

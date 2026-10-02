@@ -3,9 +3,11 @@ import {
   anexarRmaSchema,
   adicionarRmaItemSchema,
   aprovarManutencaoRmaItemSchema,
+  aprovarSemCobrancaRmaSchema,
   atualizarRmaClienteSchema,
   atualizarRmaComercialSchema,
   atualizarRmaDestinatariosSchema,
+  atualizarRmaFreteSchema,
   atualizarRmaModalidadeSchema,
   cancelarRmaSchema,
   clonarRmaChecklistTemplateSchema,
@@ -38,16 +40,19 @@ import {
   atualizarRmaComercial,
   atualizarRmaDestinatarios,
   atualizarRmaFinanceiro,
+  atualizarRmaFrete,
   atualizarRmaItemFinanceiro,
   atualizarRmaModalidade,
   cancelarRma,
   criarRmaProcesso,
   devolverRmaItens,
+  excluirAberturaRma,
   listarDestinatariosPadraoRma,
   listarRma,
   listarUsuariosParaDestinatarioRma,
   marcarManutencaoRealizadaRmaItem,
   marcarSemManutencaoRma,
+  aprovarSemCobrancaRma,
   notificarLaudosRma,
   obterRma,
   registrarAprovacaoManutencaoRmaItem,
@@ -62,6 +67,7 @@ import {
   reabrirOrcamentoRmaItem,
   exportarOrcamentoRmaPdf,
   exportarOrcamentoRmaArquivoPdf,
+  exportarOrcamentoRmaComercialPdf,
   exportarLaudoRmaItemPdf,
   iniciarOuObterChecklist,
   listarRmaChecklistTemplates,
@@ -87,6 +93,7 @@ rmaRouter.get("/", requirePermissao("rma"), async (req: AuthedRequest, res, next
     res.json(
       await listarRma(req.user!, {
         status: String(req.query.status || "").trim() || undefined,
+        aba: String(req.query.aba || "").trim() || undefined,
         etapa: String(req.query.etapa || "").trim() || undefined,
         clienteId: String(req.query.clienteId || "").trim() || undefined,
         cobrou: String(req.query.cobrou || "").trim() || undefined,
@@ -288,6 +295,19 @@ rmaRouter.patch(
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(await atualizarRmaComercial(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.patch(
+  "/:id/frete",
+  requirePermissao("rma"),
+  validateBody(atualizarRmaFreteSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await atualizarRmaFrete(req.user!, req.params.id, req.body));
     } catch (e) {
       next(e);
     }
@@ -661,6 +681,29 @@ rmaRouter.get(
   }
 );
 
+rmaRouter.get(
+  "/:id/orcamento/comercial.pdf",
+  requirePermissao("rma", "rma_cobranca"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      const itemId = String(req.query.itemId || "").trim() || undefined;
+      const { buffer, filename } = await exportarOrcamentoRmaComercialPdf(
+        req.user!,
+        req.params.id,
+        itemId
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`
+      );
+      res.send(buffer);
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
 /** PDF arquivo do orçamento (histórico; funciona com RMA fechado). */
 rmaRouter.get(
   "/:id/orcamento/arquivo.pdf",
@@ -817,6 +860,19 @@ rmaRouter.post(
 );
 
 rmaRouter.post(
+  "/:id/sem-cobranca",
+  requirePermissao("rma"),
+  validateBody(aprovarSemCobrancaRmaSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await aprovarSemCobrancaRma(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
   "/:id/sem-manutencao",
   requirePermissao("rma"),
   validateBody(semManutencaoRmaSchema),
@@ -849,6 +905,19 @@ rmaRouter.post(
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(await cancelarRma(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/excluir-abertura",
+  requirePermissao("rma"),
+  validateBody(cancelarRmaSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await excluirAberturaRma(req.user!, req.params.id, req.body));
     } catch (e) {
       next(e);
     }

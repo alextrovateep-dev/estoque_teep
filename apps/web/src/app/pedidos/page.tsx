@@ -5,7 +5,11 @@ import {
   isPedidoStatus,
   PEDIDO_STATUS,
   PEDIDO_STATUS_LABELS,
+  PEDIDO_TIPO_CONTRATO_LABELS,
+  formatYmdBr,
+  ymdFromApi,
   type PedidoStatus,
+  type PedidoTipoContrato,
 } from "@teep/shared";
 import Link from "next/link";
 import { Suspense, useEffect, useState } from "react";
@@ -22,6 +26,8 @@ type Row = {
   filialAcabado?: { sigla: string } | null;
   rastreio?: string | null;
   nfNumero?: string | null;
+  tipoContrato?: string | null;
+  dataPrevistaEntrega?: string | null;
   _count: { itens: number };
 };
 
@@ -192,9 +198,29 @@ function PedidosInner() {
           const cliente = p.cliente?.nome || p.nomeContato;
           const extra =
             tab === "SEPARADO"
-              ? "Aguardando envio"
+              ? [
+                  p.tipoContrato
+                    ? PEDIDO_TIPO_CONTRATO_LABELS[
+                        p.tipoContrato as PedidoTipoContrato
+                      ] || p.tipoContrato
+                    : null,
+                  p.dataPrevistaEntrega
+                    ? `Prevista ${formatYmdBr(ymdFromApi(p.dataPrevistaEntrega))}`
+                    : null,
+                  "Aguardando envio",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               : tab === "ENVIADO"
                 ? [
+                    p.tipoContrato
+                      ? PEDIDO_TIPO_CONTRATO_LABELS[
+                          p.tipoContrato as PedidoTipoContrato
+                        ] || p.tipoContrato
+                      : null,
+                    p.dataPrevistaEntrega
+                      ? `Prevista ${formatYmdBr(ymdFromApi(p.dataPrevistaEntrega))}`
+                      : null,
                     p.rastreio ? `Rastreio ${p.rastreio}` : null,
                     p.nfNumero ? `NF ${p.nfNumero}` : null,
                   ]

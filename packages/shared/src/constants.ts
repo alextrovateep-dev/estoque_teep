@@ -61,6 +61,57 @@ export function isPedidoStatus(v: string): v is PedidoStatus {
   return (PEDIDO_STATUS as readonly string[]).includes(v);
 }
 
+/** Tipo de contrato escolhido na hora de separar o pedido. */
+export const PEDIDO_TIPO_CONTRATO = ["LOCACAO", "CONTRATO_ASSISTENCIA"] as const;
+export type PedidoTipoContrato = (typeof PEDIDO_TIPO_CONTRATO)[number];
+export const PEDIDO_TIPO_CONTRATO_LABELS: Record<PedidoTipoContrato, string> = {
+  LOCACAO: "Locação",
+  CONTRATO_ASSISTENCIA: "Contrato assistência",
+};
+export function isPedidoTipoContrato(v: string): v is PedidoTipoContrato {
+  return (PEDIDO_TIPO_CONTRATO as readonly string[]).includes(v);
+}
+
+export const PEDIDO_ANEXO_TIPOS = [
+  "ADENDO_CONTRATO",
+  "TERMO_ENTREGA",
+  "TERMO_COMODATO",
+  "NF_SAIDA",
+  "OUTRO",
+] as const;
+export type PedidoAnexoTipo = (typeof PEDIDO_ANEXO_TIPOS)[number];
+export const PEDIDO_ANEXO_TIPO_LABELS: Record<PedidoAnexoTipo, string> = {
+  ADENDO_CONTRATO: "Adendo de contrato",
+  TERMO_ENTREGA: "Termo de entrega",
+  TERMO_COMODATO: "Termo de comodato",
+  NF_SAIDA: "NF de saída",
+  OUTRO: "Outro",
+};
+
+export const MSG_PEDIDO_TERMO_COMODATO_PENDENTE =
+  "Anexe o termo de comodato para enviar pedido de locação";
+
+/** Une anexos já gravados com os do body do envio. */
+export function tiposAnexosPedidoEnvio(
+  salvos: Array<{ tipo: string }>,
+  novos?: Array<{ tipo: string }>
+): Set<string> {
+  return new Set([
+    ...salvos.map((a) => a.tipo),
+    ...(novos || []).map((a) => a.tipo),
+  ]);
+}
+
+/** Locação só envia com termo de comodato anexado (além da NF). */
+export function mensagemBloqueioEnvioPedidoLocacao(opts: {
+  tipoContrato?: string | null;
+  temTermoComodato: boolean;
+}): string | null {
+  if (opts.tipoContrato !== "LOCACAO") return null;
+  if (opts.temTermoComodato) return null;
+  return MSG_PEDIDO_TERMO_COMODATO_PENDENTE;
+}
+
 export const TRANSFERENCIA_STATUS = [
   "PENDENTE_APROVACAO",
   "EM_TRANSITO",
@@ -153,6 +204,98 @@ export const RMA_ANEXO_TIPOS = [
   "OUTRO",
 ] as const;
 export type RmaAnexoTipo = (typeof RMA_ANEXO_TIPOS)[number];
+
+/** Abas da lista de RMA (cancelados fora de Em aberto). */
+export const RMA_LISTA_ABAS = ["aberto", "cancelado", "enviado"] as const;
+export type RmaListaAba = (typeof RMA_LISTA_ABAS)[number];
+export const RMA_LISTA_ABA_LABELS: Record<RmaListaAba, string> = {
+  aberto: "Em aberto",
+  cancelado: "Cancelados",
+  enviado: "Liberados / Enviado",
+};
+export function isRmaListaAba(v: string): v is RmaListaAba {
+  return (RMA_LISTA_ABAS as readonly string[]).includes(v);
+}
+
+const RMA_ETAPAS_LISTA_ENVIADO = ["AGUARDANDO_ENVIO", "FINALIZADO"] as const;
+
+/** Fragmento Prisma `where` da aba da lista (sem misturar cancelados no aberto). */
+export function rmaListaWhereAba(
+  aba?: string | null
+): Record<string, unknown> | null {
+  const a = (aba || "").trim().toLowerCase();
+  if (a === "aberto") {
+    return {
+      status: "ABERTO",
+      itens: {
+        some: {
+          status: { not: "CANCELADO" },
+          etapa: { notIn: [...RMA_ETAPAS_LISTA_ENVIADO] },
+        },
+      },
+    };
+  }
+  if (a === "cancelado") return { status: "CANCELADO" };
+  if (a === "enviado") {
+    return {
+      OR: [
+        { status: "FECHADO" },
+        {
+          status: "ABERTO",
+          itens: {
+            some: { etapa: { in: [...RMA_ETAPAS_LISTA_ENVIADO] } },
+          },
+        },
+      ],
+    };
+  }
+  return null;
+}
+
+/** Excluir abertura (estorno como cancelar) só Admin. */
+export function podeExcluirAberturaRma(perfil?: string | null): boolean {
+  return perfil === "ADMIN";
+}
+
+export const RMA_FRETE_MODALIDADE = [
+  "TRANSPORTADORA",
+  "RETIRO_PROPRIO",
+  "ENTREGA_TEEP",
+] as const;
+export type RmaFreteModalidade = (typeof RMA_FRETE_MODALIDADE)[number];
+export const RMA_FRETE_MODALIDADE_LABELS: Record<RmaFreteModalidade, string> = {
+  TRANSPORTADORA: "Transportadora",
+  RETIRO_PROPRIO: "Retiro próprio",
+  ENTREGA_TEEP: "Entrega TEEP",
+};
+
+export const MSG_RMA_FRETE_MODALIDADE = "Informe a modalidade de frete";
+export const MSG_RMA_FRETE_TRANSPORTADORA = "Informe a transportadora";
+export const MSG_RMA_FRETE_COBRADO = "Informe se o frete foi cobrado";
+
+/** Frete obrigatório na liberação / envio (devolver, trocar, fechar envio). */
+export function mensagemBloqueioFreteRma(opts: {
+  freteModalidade?: string | null;
+  transportadora?: string | null;
+  freteCobrado?: boolean | null;
+}): string | null {
+  if (
+    !opts.freteModalidade ||
+    !(RMA_FRETE_MODALIDADE as readonly string[]).includes(opts.freteModalidade)
+  ) {
+    return MSG_RMA_FRETE_MODALIDADE;
+  }
+  if (
+    opts.freteModalidade === "TRANSPORTADORA" &&
+    !opts.transportadora?.trim()
+  ) {
+    return MSG_RMA_FRETE_TRANSPORTADORA;
+  }
+  if (opts.freteCobrado !== true && opts.freteCobrado !== false) {
+    return MSG_RMA_FRETE_COBRADO;
+  }
+  return null;
+}
 
 /** Workflow comercial/operacional por item (nota = processo; manutenção = item) */
 export const RMA_ITEM_ETAPA = [
@@ -546,7 +689,7 @@ export function rmaOrcamentoPodeEditar(opts: {
   return opts.etapa === "AGUARDANDO_APROVACAO" && st === "ENVIADO";
 }
 
-/** PDF do cliente: só rascunho ou em negociação. Aprovado/recusado ficam de fora. */
+/** PDF interno de negociação: só rascunho ou em aprovação. Aprovado/recusado ficam de fora. */
 export function rmaItemEntraNoPdfOrcamento(opts: {
   etapa?: string | null;
   orcamentoStatus?: string | null;
@@ -557,6 +700,15 @@ export function rmaItemEntraNoPdfOrcamento(opts: {
     opts.etapa === "AGUARDANDO_ORCAMENTO" ||
     opts.etapa === "AGUARDANDO_APROVACAO"
   );
+}
+
+/** PDF comercial (cliente): negociação + já aprovado (ex.: sem cobrança). Recusado fica de fora. */
+export function rmaItemEntraNoPdfOrcamentoComercial(opts: {
+  etapa?: string | null;
+  orcamentoStatus?: string | null;
+}): boolean {
+  if (opts.orcamentoStatus === "APROVADO") return true;
+  return rmaItemEntraNoPdfOrcamento(opts);
 }
 
 /** PDF arquivo (histórico): qualquer item com orçamento salvo, inclusive aprovado/recusado. */

@@ -4,9 +4,12 @@ import {
   CLIENTE_TIPOS,
   CONTROLES_SERIE,
   OPERACOES,
+  PEDIDO_ANEXO_TIPOS,
+  PEDIDO_TIPO_CONTRATO,
   PERFIS,
   PERMISSAO_KEYS,
   parseYmd,
+  RMA_FRETE_MODALIDADE,
 } from "./constants";
 import {
   isValidCnpj,
@@ -928,9 +931,36 @@ export const atualizarRmaDestinatariosSchema = z.object({
   destinatarioIds: z.array(z.string().uuid()).min(1).max(50),
 });
 
+const pedidoAnexoInputSchema = z.object({
+  tipo: z.enum(PEDIDO_ANEXO_TIPOS),
+  arquivo: z
+    .string()
+    .max(255)
+    .regex(/^\/uploads\/movimentacao-anexos\//, "Anexe o documento"),
+  label: z
+    .string()
+    .max(120)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      const t = (v ?? "").trim();
+      return t || null;
+    }),
+});
+
+export const anexarPedidoSchema = pedidoAnexoInputSchema;
+
 export const separarPedidoSchema = z.object({
   filialId: z.string().uuid(),
   destinatarioIds: z.array(z.string().uuid()).min(1).max(50),
+  tipoContrato: z.enum(PEDIDO_TIPO_CONTRATO),
+  dataPrevistaEntrega: z
+    .string()
+    .trim()
+    .refine((v) => parseYmd(v) != null, {
+      message: "Informe a data prevista de entrega",
+    }),
+  anexos: z.array(pedidoAnexoInputSchema).max(20).optional(),
   itens: z
     .array(
       z.object({
@@ -943,7 +973,7 @@ export const separarPedidoSchema = z.object({
     .max(200),
 });
 
-/** Envio após Liberado: NF obrigatória; transportadora/rastreio opcionais. */
+/** Envio após Separado: NF + frete cobrado; Locação exige termo de comodato. */
 export const enviarPedidoSchema = z.object({
   transportadora: z
     .string()
@@ -968,6 +998,11 @@ export const enviarPedidoSchema = z.object({
     .string()
     .max(255)
     .regex(/^\/uploads\/notas-fiscais\//, "Anexe a nota fiscal"),
+  freteCobrado: z.boolean({
+    required_error: "Informe se o frete foi cobrado",
+    invalid_type_error: "Informe se o frete foi cobrado",
+  }),
+  anexos: z.array(pedidoAnexoInputSchema).max(20).optional(),
 });
 
 /** Trocar NF de pedido já enviado. */
@@ -1133,6 +1168,33 @@ export const anexarRmaSchema = z
     }
   });
 
+export const atualizarRmaFreteSchema = z
+  .object({
+    freteModalidade: z.enum(RMA_FRETE_MODALIDADE),
+    transportadora: z
+      .string()
+      .max(120)
+      .optional()
+      .nullable()
+      .transform((v) => {
+        const t = (v ?? "").trim();
+        return t || null;
+      }),
+    freteCobrado: z.boolean({
+      required_error: "Informe se o frete foi cobrado",
+      invalid_type_error: "Informe se o frete foi cobrado",
+    }),
+  })
+  .superRefine((val, ctx) => {
+    if (val.freteModalidade === "TRANSPORTADORA" && !val.transportadora) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Informe a transportadora",
+        path: ["transportadora"],
+      });
+    }
+  });
+
 export const devolverRmaSchema = z.object({
   itemIds: z.array(z.string().uuid()).min(1).optional(),
   nfSaidaNumero: z.string().max(60).optional().nullable(),
@@ -1146,6 +1208,18 @@ export const devolverRmaSchema = z.object({
       const t = v.trim();
       return t ? t : null;
     }),
+  freteModalidade: z.enum(RMA_FRETE_MODALIDADE).optional(),
+  transportadora: z
+    .string()
+    .max(120)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      if (v == null) return v;
+      const t = v.trim();
+      return t || null;
+    }),
+  freteCobrado: z.boolean().optional(),
 });
 
 /** Cancelar processo RMA — observação obrigatória (auditoria). */
@@ -1208,6 +1282,37 @@ export const trocarRmaItemSchema = z.object({
   destinoDescarteFilialId: z.string().uuid().optional(),
   nfSaidaNumero: z.string().max(60).optional().nullable(),
   observacao: z.string().max(500).optional().nullable(),
+  /** Colaborador que autorizou a substituição antecipada */
+  substituicaoAutorizadaPorId: z.string().uuid({
+    message: "Informe quem autorizou a troca",
+  }),
+  freteModalidade: z.enum(RMA_FRETE_MODALIDADE).optional(),
+  transportadora: z
+    .string()
+    .max(120)
+    .optional()
+    .nullable()
+    .transform((v) => {
+      if (v == null) return v;
+      const t = String(v).trim();
+      return t || null;
+    }),
+  freteCobrado: z.boolean().optional(),
+});
+
+/** Aprova o laudo sem fatura — avança o fluxo (não é recusa). */
+export const aprovarSemCobrancaRmaSchema = z.object({
+  itemIds: z.array(z.string().uuid()).min(1),
+  observacao: z
+    .string()
+    .max(500)
+    .transform((v) => v.trim())
+    .pipe(
+      z
+        .string()
+        .min(1, "Informe a observação da aprovação sem cobrança")
+        .max(500)
+    ),
 });
 
 const rmaChecklistCampoTipo = z.enum([

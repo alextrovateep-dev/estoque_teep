@@ -207,6 +207,22 @@ export function htmlLaudoChecklist(
   </section>`;
 }
 
+/** Modelo comercial: cabeçalho TEEP + cliente + RMA + só o total (sem breakdown). */
+export function htmlOrcamentoComercialCorpo(opts: {
+  observacoes: string[];
+  total: number;
+  money: (n: number) => string;
+}): string {
+  const obsHtml = opts.observacoes
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .map((o) => `<p class="note">${escHtmlPdf(o)}</p>`)
+    .join("");
+  return `${obsHtml}<p class="total">Valor total: ${escHtmlPdf(
+    opts.money(opts.total)
+  )}</p>`;
+}
+
 /** Laudo de inspeção (checklist de recebimento + diagnóstico). */
 export function htmlLaudoRecebimento(
   itens: ItemLaudoPdf[],

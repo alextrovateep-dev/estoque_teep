@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   anexarNotaFiscalPedidoSchema,
+  anexarPedidoSchema,
   enviarPedidoSchema,
   separarPedidoSchema,
 } from "@teep/shared";
@@ -14,6 +15,7 @@ import { requireEstoqueParaOperar } from "../lib/estoqueGate";
 import { validateBody } from "../middleware/error";
 import { syncPedidosEgestor } from "../services/pedidoVendaSyncService";
 import {
+  anexarDocumentoPedido,
   anexarNotaFiscalPedido,
   enviarPedido,
   liberarPedido,
@@ -22,6 +24,7 @@ import {
   listarPedidosAgrupados,
   listarUsuariosDestinatariosPedido,
   obterPedido,
+  removerAnexoPedido,
   removerNotaFiscalPedido,
   separarPedido,
 } from "../services/pedidoVendaService";
@@ -137,6 +140,33 @@ pedidosRouter.delete(
   async (req, res, next) => {
     try {
       res.json(await removerNotaFiscalPedido(req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+pedidosRouter.post(
+  "/:id/anexos",
+  requirePermissao("pedidos"),
+  validateBody(anexarPedidoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await anexarDocumentoPedido(req.user!, req.params.id, req.body)
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+pedidosRouter.delete(
+  "/:id/anexos/:anexoId",
+  requirePermissao("pedidos"),
+  async (req, res, next) => {
+    try {
+      res.json(await removerAnexoPedido(req.params.id, req.params.anexoId));
     } catch (e) {
       next(e);
     }

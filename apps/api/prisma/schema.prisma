@@ -76,6 +76,7 @@ model Usuario {
   rmaDestinatarios     RmaDestinatario[]
   rmaChecklistExecucoes RmaChecklistExecucao[] @relation("RmaChecklistPreenchidoPor")
   rmaOrcamentosAprovados RmaOrcamento[] @relation("RmaOrcamentoAprovadoPor")
+  rmaItensSubstituicaoAutorizados RmaItem[] @relation("RmaItemSubstituicaoAutorizadaPor")
   clientesComoComercial Cliente[]
   serieAlocacoes      SerieAlocacao[]
   pedidosVendaSeparados PedidoVenda[] @relation("PedidoSeparadoPor")
@@ -605,6 +606,11 @@ model RmaProcesso {
   responsavelComercialId   String?    @map("responsavel_comercial_id") @db.Uuid
   /// NENHUM | CONTRATO | LOCACAO — modalidade de aquisição (cobrança)
   modalidadeAquisicao      String     @default("NENHUM") @map("modalidade_aquisicao") @db.VarChar(20)
+  /// TRANSPORTADORA | RETIRO_PROPRIO | ENTREGA_TEEP
+  freteModalidade          String?    @map("frete_modalidade") @db.VarChar(30)
+  transportadora           String?    @db.VarChar(120)
+  /// null = ainda não informado
+  freteCobrado             Boolean?   @map("frete_cobrado")
   criadoPorId              String     @map("criado_por_id") @db.Uuid
   criadoEm                 DateTime   @default(now()) @map("criado_em") @db.Timestamptz
   atualizadoEm             DateTime   @updatedAt @map("atualizado_em") @db.Timestamptz
@@ -668,11 +674,14 @@ model RmaItem {
   movDescarteId   String?       @map("mov_descarte_id") @db.Uuid
   /// Série boa enviada ao cliente na troca (substitui a unidadeSerie ruim)
   unidadeSerieSubstituicaoId String? @map("unidade_serie_substituicao_id") @db.Uuid
+  /// Colaborador que autorizou a substituição antecipada
+  substituicaoAutorizadaPorId String? @map("substituicao_autorizada_por_id") @db.Uuid
   observacao      String?       @db.Text
   processo        RmaProcesso   @relation(fields: [processoId], references: [id], onDelete: Cascade)
   produto         Produto       @relation(fields: [produtoId], references: [id], onDelete: Restrict)
   unidadeSerie    UnidadeSerie? @relation("RmaItemSerieOriginal", fields: [unidadeSerieId], references: [id], onDelete: SetNull)
   unidadeSerieSubstituicao UnidadeSerie? @relation("RmaItemSerieSubstituicao", fields: [unidadeSerieSubstituicaoId], references: [id], onDelete: SetNull)
+  substituicaoAutorizadaPor Usuario? @relation("RmaItemSubstituicaoAutorizadaPor", fields: [substituicaoAutorizadaPorId], references: [id], onDelete: SetNull)
   aprovacaoPor    Usuario?      @relation("RmaItemAprovacaoPor", fields: [aprovacaoPorId], references: [id], onDelete: SetNull)
   movEntrada      Movimentacao? @relation("RmaItemEntrada", fields: [movEntradaId], references: [id], onDelete: SetNull)
   movSaida        Movimentacao? @relation("RmaItemSaida", fields: [movSaidaId], references: [id], onDelete: SetNull)
@@ -911,6 +920,11 @@ model PedidoVenda {
   rastreio           String?  @db.VarChar(80)
   nfNumero           String?  @map("nf_numero") @db.VarChar(60)
   nfArquivo          String?  @map("nf_arquivo") @db.VarChar(255)
+  /// LOCACAO | CONTRATO_ASSISTENCIA
+  tipoContrato       String?  @map("tipo_contrato") @db.VarChar(30)
+  dataPrevistaEntrega DateTime? @map("data_prevista_entrega") @db.Date
+  /// null = ainda não informado
+  freteCobrado       Boolean? @map("frete_cobrado")
   grupoLancamentoId  String?  @map("grupo_lancamento_id") @db.Uuid
   syncedAt           DateTime @default(now()) @map("synced_at") @db.Timestamptz
   criadoEm           DateTime @default(now()) @map("criado_em") @db.Timestamptz
@@ -921,6 +935,7 @@ model PedidoVenda {
   cliente            Cliente? @relation(fields: [clienteId], references: [id], onDelete: SetNull)
   itens              PedidoVendaItem[]
   destinatarios      PedidoVendaDestinatario[]
+  anexos             PedidoVendaAnexo[]
 
   @@index([status])
   @@index([status, atualizadoEm])
@@ -958,6 +973,21 @@ model PedidoVendaDestinatario {
   @@unique([pedidoId, usuarioId])
   @@index([usuarioId])
   @@map("pedido_venda_destinatarios")
+}
+
+model PedidoVendaAnexo {
+  id        String      @id @default(uuid()) @db.Uuid
+  pedidoId  String      @map("pedido_id") @db.Uuid
+  /// ADENDO_CONTRATO | TERMO_ENTREGA | TERMO_COMODATO | NF_SAIDA | OUTRO
+  tipo      String      @db.VarChar(40)
+  arquivo   String      @db.VarChar(255)
+  label     String?     @db.VarChar(120)
+  criadoEm  DateTime    @default(now()) @map("criado_em") @db.Timestamptz
+  pedido    PedidoVenda @relation(fields: [pedidoId], references: [id], onDelete: Cascade)
+
+  @@index([pedidoId])
+  @@index([pedidoId, tipo])
+  @@map("pedido_venda_anexos")
 }
 
 /// Histórico: acabado A (série) → produto B (série nova), com baixa da árvore de B.

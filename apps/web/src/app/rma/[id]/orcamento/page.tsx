@@ -3,7 +3,6 @@
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import {
-  rmaModalidadeAquisicaoLabel,
   rmaOrcamentoPodeEditar,
   rmaOrcamentoStatusLabel,
 } from "@teep/shared";
@@ -302,19 +301,24 @@ export default function RmaOrcamentoPage() {
     }
   }
 
-  async function pdf(itemId?: string) {
+  async function pdf(itemId?: string, kind: "interno" | "comercial" = "interno") {
     setBusy(true);
     setError("");
     try {
       const base =
-        data?.processo.status === "ABERTO"
-          ? `/rma/${id}/orcamento.pdf`
-          : `/rma/${id}/orcamento/arquivo.pdf`;
+        kind === "comercial"
+          ? `/rma/${id}/orcamento/comercial.pdf`
+          : data?.processo.status === "ABERTO"
+            ? `/rma/${id}/orcamento.pdf`
+            : `/rma/${id}/orcamento/arquivo.pdf`;
       const path = itemId
         ? `${base}?itemId=${encodeURIComponent(itemId)}`
         : base;
       const { blob, filename } = await apiDownload(path, {
-        fallbackFilename: `orcamento-rma-${id.slice(0, 8)}.pdf`,
+        fallbackFilename:
+          kind === "comercial"
+            ? `orcamento-comercial-rma-${id.slice(0, 8)}.pdf`
+            : `orcamento-rma-${id.slice(0, 8)}.pdf`,
       });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -324,6 +328,28 @@ export default function RmaOrcamentoPage() {
       URL.revokeObjectURL(url);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao gerar PDF");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function aprovarSemCobranca(itemId: string) {
+    const obs = (decisaoObs[itemId] || "").trim();
+    if (!obs) {
+      setError("Informe a observação da aprovação sem cobrança.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/rma/${id}/sem-cobranca`, {
+        method: "POST",
+        body: JSON.stringify({ itemIds: [itemId], observacao: obs }),
+      });
+      setMsg("Laudo aprovado sem cobrança. O item segue o fluxo.");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro na aprovação");
     } finally {
       setBusy(false);
     }
@@ -400,8 +426,6 @@ export default function RmaOrcamentoPage() {
   }
 
   const p = data.processo;
-  const fechados = data.itens.filter((i) => i.orcamento?.status === "ENVIADO");
-  const modalidadeLabel = rmaModalidadeAquisicaoLabel(p.modalidadeAquisicao);
 
   return (
     <>
@@ -415,17 +439,8 @@ export default function RmaOrcamentoPage() {
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {p.cliente.documento ? `${p.cliente.documento} · ` : ""}
-            Estoque {p.filial.sigla}
+            {p.filial.sigla}
             {p.nfEntradaNumero ? ` · NF ${p.nfEntradaNumero}` : ""}
-            {" · "}
-            {p.id.slice(0, 8)}
-          </p>
-          <p className="mt-1 text-sm text-slate-700">
-            Modalidade:{" "}
-            <span className="font-medium">{modalidadeLabel}</span>
-            {p.responsavelComercial?.nome
-              ? ` · Comercial: ${p.responsavelComercial.nome}`
-              : ""}
           </p>
         </div>
         <Link
@@ -436,11 +451,11 @@ export default function RmaOrcamentoPage() {
         </Link>
       </div>
 
-      <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
-        {p.status === "ABERTO"
-          ? "Feche o orçamento para ir a “Aguardando aprovação”. Gere o PDF e envie ao cliente pelo e-mail do comercial. Negocie, ajuste valores e gere o PDF de novo. O RMA só finaliza depois da aprovação, manutenção e retorno."
-          : "Processo fechado — visualização do orçamento em arquivo. Use Documentos no RMA para baixar PDFs."}
-      </p>
+          {p.status !== "ABERTO" ? (
+        <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          Processo fechado.
+        </p>
+      ) : null}
 
       {error ? (
         <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -456,8 +471,7 @@ export default function RmaOrcamentoPage() {
       <div className="mt-6 space-y-4">
         {data.itens.length === 0 ? (
           <p className="rounded-xl border bg-white p-6 text-sm text-slate-500">
-            Nenhum item com diagnóstico/orçamento ainda. Conclua o diagnóstico
-            no item primeiro.
+            Nenhum item com orçamento ainda.
           </p>
         ) : null}
 
@@ -494,20 +508,26 @@ export default function RmaOrcamentoPage() {
                   <p className="text-sm text-slate-600">{it.produto.descricao}</p>
                   <p className="mt-1 text-xs text-slate-400">
                     {it.orcamento
-                      ? `Status: ${rmaOrcamentoStatusLabel(it.orcamento.status)}`
+                      ? rmaOrcamentoStatusLabel(it.orcamento.status)
                       : "Sem orçamento salvo"}
-                    {" · "}
-                    {it.etapa}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => void pdf(it.id)}
+                    onClick={() => void pdf(it.id, "interno")}
                     className="rounded border px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
                   >
-                    PDF
+                    PDF interno
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void pdf(it.id, "comercial")}
+                    className="rounded border px-2.5 py-1 text-xs font-medium hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    PDF comercial
                   </button>
                   {podeFecharItem ? (
                     <button
@@ -532,6 +552,14 @@ export default function RmaOrcamentoPage() {
                       <button
                         type="button"
                         disabled={busy || !canDecidir}
+                        onClick={() => void aprovarSemCobranca(it.id)}
+                        className="rounded border border-emerald-300 px-2.5 py-1 text-xs text-emerald-800 disabled:opacity-50"
+                      >
+                        Sem cobrança
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy || !canDecidir}
                         onClick={() => void decidir(it.id, "recusar")}
                         className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-700 disabled:opacity-50"
                       >
@@ -549,6 +577,19 @@ export default function RmaOrcamentoPage() {
                   ) : null}
                 </div>
               </div>
+              {podeDecidirItem ? (
+                <input
+                  className="mt-3 w-full rounded border px-2 py-1.5 text-xs"
+                  placeholder="Obs. da decisão (obrigatória em Sem cobrança)"
+                  value={decisaoObs[it.id] || ""}
+                  onChange={(e) =>
+                    setDecisaoObs((prev) => ({
+                      ...prev,
+                      [it.id]: e.target.value,
+                    }))
+                  }
+                />
+              ) : null}
 
               {it.diagnostico ? (
                 <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -675,20 +716,6 @@ export default function RmaOrcamentoPage() {
                 </button>
               ) : null}
 
-              {podeDecidirItem ? (
-                <input
-                  className="mt-3 w-full rounded border px-2 py-1.5 text-xs"
-                  placeholder="Obs. da decisão (opcional)"
-                  value={decisaoObs[it.id] || ""}
-                  onChange={(e) =>
-                    setDecisaoObs((prev) => ({
-                      ...prev,
-                      [it.id]: e.target.value,
-                    }))
-                  }
-                />
-              ) : null}
-
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
                 <label className="text-sm">
                   Desconto
@@ -744,10 +771,18 @@ export default function RmaOrcamentoPage() {
         <button
           type="button"
           disabled={busy}
-          onClick={() => void pdf()}
+          onClick={() => void pdf(undefined, "interno")}
           className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
         >
-          Gerar PDF
+          PDF interno
+        </button>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void pdf(undefined, "comercial")}
+          className="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50"
+        >
+          PDF comercial
         </button>
         <button
           type="button"
@@ -758,71 +793,6 @@ export default function RmaOrcamentoPage() {
           Fechar orçamento
         </button>
       </div>
-
-      {fechados.length > 0 ? (
-        <section className="mt-8 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
-          <h2 className="text-base font-semibold text-amber-950">
-            Aguardando aprovação ({fechados.length})
-          </h2>
-          <p className="mt-1 text-xs text-amber-900/80">
-            Status interno após fechar. Envie o PDF ao cliente pelo e-mail do
-            comercial. Use os atalhos em cada item (PDF / Aprovar / Recusar /
-            Reabrir) ou os botões abaixo.
-          </p>
-          <ul className="mt-3 space-y-2">
-            {fechados.map((it) => (
-              <li
-                key={it.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-100 bg-white px-3 py-2 text-sm"
-              >
-                <span className="font-mono font-semibold">
-                  {it.produto.codigo}
-                  {it.unidadeSerie?.numeroSerie
-                    ? ` · N/S ${it.unidadeSerie.numeroSerie}`
-                    : ""}
-                  <span className="ml-2 font-sans font-normal text-slate-600">
-                    {money(it.total)}
-                  </span>
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void pdf(it.id)}
-                    className="rounded border px-2.5 py-1 text-xs disabled:opacity-50"
-                  >
-                    PDF
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy || p.status !== "ABERTO"}
-                    onClick={() => void reabrir(it.id)}
-                    className="rounded border border-amber-300 px-2.5 py-1 text-xs text-amber-900 disabled:opacity-50"
-                  >
-                    Reabrir
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy || !canDecidir || p.status !== "ABERTO"}
-                    onClick={() => void decidir(it.id, "aprovar")}
-                    className="rounded bg-emerald-700 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
-                  >
-                    Aprovar
-                  </button>
-                  <button
-                    type="button"
-                    disabled={busy || !canDecidir || p.status !== "ABERTO"}
-                    onClick={() => void decidir(it.id, "recusar")}
-                    className="rounded border border-red-200 px-2.5 py-1 text-xs text-red-700 disabled:opacity-50"
-                  >
-                    Recusar
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
     </>
   );
 }

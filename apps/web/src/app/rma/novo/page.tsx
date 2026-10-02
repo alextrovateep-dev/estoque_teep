@@ -398,12 +398,6 @@ export default function RmaNovoPage() {
         </Link>
       </div>
       <h1 className="text-2xl font-semibold">Novo RMA</h1>
-      <p className="mt-1 text-sm text-slate-500">
-        Um RMA = uma NF de entrada. Informe o número da nota de chegada; se
-        vier errada, dá para corrigir no processo. Cada produto/série entra no
-        estoque RMA escolhido. Checklist e diagnóstico ficam no sistema, item a
-        item.
-      </p>
 
       <form
         onSubmit={(e) => void onSubmit(e)}
@@ -623,10 +617,6 @@ export default function RmaNovoPage() {
             onChange={(e) => ajustarTotal(e.target.value)}
             placeholder="Ex.: 3"
           />
-          <span className="mt-1 block text-xs text-slate-500">
-            Ao preencher, abre um card por produto/série (máx.{" "}
-            {MAX_ITENS_NOTA}).
-          </span>
         </label>
 
         {linhas.length > 0 && (
@@ -736,10 +726,6 @@ export default function RmaNovoPage() {
             <div>
               <p className="text-sm font-medium text-slate-800">
                 Quem será notificado
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Pré-selecionados: usuários com alerta global RMA aberto. Inclua
-                outros se precisar.
               </p>
             </div>
             <button

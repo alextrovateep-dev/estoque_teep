@@ -13,6 +13,7 @@ import {
   rmaOrcamentoPodeEditar,
   rmaItemEntraNoPdfOrcamento,
   rmaItemEntraNoPdfOrcamentoArquivo,
+  rmaItemEntraNoPdfOrcamentoComercial,
   type RmaChecklistTipo,
 } from "@teep/shared";
 import { AppError } from "../middleware/error";
@@ -31,6 +32,7 @@ import { mapPdfImageDataUris } from "../lib/pdfImage";
 import {
   htmlLaudoLiberacao,
   htmlLaudoRecebimento,
+  htmlOrcamentoComercialCorpo,
   mapPerguntasLaudo,
 } from "../lib/rmaOrcamentoPdfHtml";
 import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
@@ -1359,6 +1361,8 @@ export async function obterOrcamentoAgregadoRma(
         etapa: i.etapa,
         produto: i.produto,
         unidadeSerie: i.unidadeSerie,
+        substituicaoAutorizadaPorNome:
+          i.substituicaoAutorizadaPor?.nome ?? null,
         diagnostico: i.diagnostico,
         manutencaoPlano: i.manutencaoPlano,
         orcamento: i.orcamento
@@ -1590,6 +1594,11 @@ async function montarPdfOrcamentoRma(opts: {
       const stLabel = it.orcamento?.status
         ? ` <span class="muted">(${escHtml(it.orcamento.status)})</span>`
         : "";
+      const autorizadorHtml = it.substituicaoAutorizadaPorNome
+        ? `<p class="note">Troca autorizada por ${escHtml(
+            it.substituicaoAutorizadaPorNome
+          )}</p>`
+        : "";
       const linhasHtml = (it.linhas || [])
         .map((l) => {
           const sub = Number(l.quantidade) * Number(l.valorUnitario);
@@ -1611,6 +1620,7 @@ async function montarPdfOrcamentoRma(opts: {
         <section class="item">
           <h2>${escHtml(it.produto.codigo)}${sn}${stLabel}</h2>
           <p class="desc">${escHtml(it.produto.descricao)}</p>
+          ${autorizadorHtml}
           ${
             it.orcamento?.observacaoComercial
               ? `<p class="note"><strong>Obs. comercial:</strong> ${escHtml(
@@ -1738,6 +1748,80 @@ export async function exportarOrcamentoRmaPdf(
       ? "Este item não entra no PDF de negociação (verifique o status do orçamento)."
       : "Não há item em orçamento para o PDF. Feche o orçamento (ou gere com itens em rascunho). Itens já aprovados ou recusados não entram. Use o PDF arquivo na seção Documentos para histórico.",
   });
+}
+
+/** PDF comercial: só valor total (sem linhas, sem laudo). */
+export async function exportarOrcamentoRmaComercialPdf(
+  user: AuthUser,
+  processoId: string,
+  itemId?: string
+) {
+  const data = await obterOrcamentoAgregadoRma(user, processoId);
+  const short = data.processo.id.slice(0, 8);
+  let itensPdf = data.itens.filter((it) =>
+    rmaItemEntraNoPdfOrcamentoComercial({
+      etapa: it.etapa,
+      orcamentoStatus: it.orcamento?.status,
+    })
+  );
+  if (itemId) {
+    itensPdf = itensPdf.filter((it) => it.id === itemId);
+  }
+  if (itensPdf.length === 0) {
+    throw new AppError(
+      400,
+      itemId
+        ? "Este item não entra no PDF comercial (verifique o status do orçamento)."
+        : "Não há item em orçamento para o PDF comercial."
+    );
+  }
+  const totalGeral = itensPdf.reduce((a, i) => a + i.total, 0);
+  const observacoes = itensPdf
+    .map((it) => it.orcamento?.observacaoComercial?.trim() || "")
+    .filter(Boolean);
+  const geradoEm = stampSaoPaulo();
+  const p = data.processo;
+  const corpo = htmlOrcamentoComercialCorpo({
+    observacoes,
+    total: totalGeral,
+    money: moneyBr,
+  });
+  const html = `<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <title>Orçamento comercial RMA ${escHtml(short)}</title>
+  <style>${cssPdfRmaComum()}</style>
+</head>
+<body>
+  <div class="brand">
+    <div class="brand-left">
+      ${brandMarkHtml()}
+      <div>
+        <div style="font-size:12px;font-weight:600;">Orçamento comercial</div>
+      </div>
+    </div>
+    <div class="sub">
+      Gerado em ${escHtml(geradoEm)} (America/Sao_Paulo)
+    </div>
+  </div>
+  <div class="meta">
+    <div><strong>Cliente:</strong> ${escHtml(p.cliente.nome)}${
+      p.cliente.documento ? ` · ${escHtml(p.cliente.documento)}` : ""
+    }</div>
+    <div><strong>Processo:</strong> RMA ${escHtml(short)}</div>
+  </div>
+  ${corpo}
+  <div class="foot">Orçamento comercial</div>
+</body>
+</html>`;
+  const buffer = await htmlToPdf(html);
+  return {
+    buffer,
+    filename: itemId
+      ? `orcamento-comercial-rma-${short}-${itemId.slice(0, 8)}.pdf`
+      : `orcamento-comercial-rma-${short}.pdf`,
+  };
 }
 
 /**

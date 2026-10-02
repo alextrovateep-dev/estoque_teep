@@ -2,9 +2,12 @@ import {
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPAS_SAIDA,
   emailsAlertaDeUsuariosRma,
+  mensagemBloqueioFreteRma,
   mensagemBloqueioNfRetorno,
   mensagemBloqueioNfRetornoSemEntrada,
   parseYmd,
+  podeExcluirAberturaRma,
+  rmaListaWhereAba,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
 import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
@@ -98,6 +101,7 @@ const processoInclude = {
       unidadeSerieSubstituicao: {
         select: { id: true, numeroSerie: true, status: true, filialId: true },
       },
+      substituicaoAutorizadaPor: { select: { id: true, nome: true } },
       aprovacaoPor: { select: { id: true, nome: true } },
       anexos: {
         select: anexoSelect,
@@ -662,6 +666,7 @@ async function exigirDocumentosParaEnvioCliente(opts: {
       faltaArquivo ?? "Anexe o arquivo da NF de retorno antes de liberar o equipamento"
     );
   }
+  await exigirFreteRma(opts.processoId);
   return { numero, arquivo };
 }
 
@@ -676,6 +681,78 @@ export async function exigirNfRetornoParaLiberacao(opts: {
     temArquivoNfSaida: Boolean(arquivo),
   });
   if (msg) throw new AppError(400, msg);
+  await exigirFreteRma(opts.processoId);
+}
+
+async function exigirFreteRma(processoId: string) {
+  const proc = await prisma.rmaProcesso.findUnique({
+    where: { id: processoId },
+    select: {
+      freteModalidade: true,
+      transportadora: true,
+      freteCobrado: true,
+    },
+  });
+  const msg = mensagemBloqueioFreteRma({
+    freteModalidade: proc?.freteModalidade,
+    transportadora: proc?.transportadora,
+    freteCobrado: proc?.freteCobrado,
+  });
+  if (msg) throw new AppError(400, msg);
+}
+
+async function persistirFreteRma(
+  processoId: string,
+  input: {
+    freteModalidade?: string;
+    transportadora?: string | null;
+    freteCobrado?: boolean;
+  },
+  atual: {
+    freteModalidade?: string | null;
+    transportadora?: string | null;
+    freteCobrado?: boolean | null;
+  }
+) {
+  const merged = {
+    freteModalidade: input.freteModalidade ?? atual.freteModalidade,
+    transportadora:
+      input.transportadora !== undefined
+        ? input.transportadora
+        : atual.transportadora,
+    freteCobrado:
+      input.freteCobrado !== undefined ? input.freteCobrado : atual.freteCobrado,
+  };
+  const msg = mensagemBloqueioFreteRma(merged);
+  if (msg) throw new AppError(400, msg);
+  await prisma.rmaProcesso.update({
+    where: { id: processoId },
+    data: {
+      freteModalidade: merged.freteModalidade,
+      transportadora:
+        merged.freteModalidade === "TRANSPORTADORA"
+          ? merged.transportadora
+          : null,
+      freteCobrado: merged.freteCobrado,
+    },
+  });
+}
+
+export async function atualizarRmaFrete(
+  user: AuthUser,
+  id: string,
+  input: {
+    freteModalidade: string;
+    transportadora?: string | null;
+    freteCobrado: boolean;
+  }
+) {
+  const proc = await obterRma(user, id);
+  if (proc.status === "CANCELADO") {
+    throw new AppError(400, "Processo cancelado");
+  }
+  await persistirFreteRma(id, input, proc);
+  return obterRma(user, id);
 }
 
 async function fecharProcessoAgora(
@@ -742,6 +819,7 @@ async function maybeFecharAposRetornoAoCliente(
 export async function listarRma(
   user: AuthUser,
   q: {
+    aba?: string;
     status?: string;
     etapa?: string;
     clienteId?: string;
@@ -760,7 +838,9 @@ export async function listarRma(
     const ids = operadorFilialIds(user);
     where.filialId = { in: ids };
   }
-  if (q.status) where.status = q.status;
+  const abaWhere = rmaListaWhereAba(q.aba);
+  if (abaWhere) Object.assign(where, abaWhere);
+  else if (q.status) where.status = q.status;
   if (q.clienteId) where.clienteId = q.clienteId;
 
   const itemSome: Record<string, unknown> = {};
@@ -776,7 +856,15 @@ export async function listarRma(
   }
   if (Object.keys(itemSome).length > 0) {
     itemSome.status = { not: "CANCELADO" };
-    where.itens = { some: itemSome };
+    const extraItens = { itens: { some: itemSome } };
+    if (where.itens) {
+      const abaItens = where.itens;
+      delete where.itens;
+      const and = Array.isArray(where.AND) ? where.AND : [];
+      where.AND = [...and, { itens: abaItens }, extraItens];
+    } else {
+      Object.assign(where, extraItens);
+    }
   }
 
   const criadoEm: { gte?: Date; lte?: Date } = {};
@@ -1907,6 +1995,9 @@ export async function devolverRmaItens(
     itemIds?: string[];
     nfSaidaNumero?: string | null;
     observacao?: string | null;
+    freteModalidade?: string;
+    transportadora?: string | null;
+    freteCobrado?: boolean;
   }
 ) {
   const proc = await obterRma(user, id);
@@ -1920,6 +2011,14 @@ export async function devolverRmaItens(
   }
   if (proc.status === "FECHADO") {
     throw new AppError(400, "Processo fechado — não é possível devolver");
+  }
+
+  if (
+    input.freteModalidade ||
+    input.freteCobrado !== undefined ||
+    input.transportadora !== undefined
+  ) {
+    await persistirFreteRma(id, input, proc);
   }
 
   const tipoSaida = await tipoSaidaRma();
@@ -2142,6 +2241,97 @@ export async function marcarSemManutencaoRma(
   return obterRma(user, id);
 }
 
+/** Aprova o laudo/orçamento sem fatura: o item segue (não vai para recusa). */
+export async function aprovarSemCobrancaRma(
+  user: AuthUser,
+  id: string,
+  input: { itemIds: string[]; observacao: string }
+) {
+  const proc = await obterRma(user, id);
+  if (proc.status !== "ABERTO") {
+    throw new AppError(400, "Só é possível aprovar sem cobrança em RMA aberto");
+  }
+  if (!podeDecidirAprovacao(user, proc.responsavelComercialId)) {
+    throw new AppError(
+      403,
+      "Apenas o responsável comercial (ou Gerente/Admin) pode aprovar sem cobrança"
+    );
+  }
+  const obs = input.observacao.trim();
+  if (!obs) {
+    throw new AppError(400, "Informe a observação da aprovação sem cobrança");
+  }
+  if (!input.itemIds?.length) {
+    throw new AppError(400, "Informe ao menos um item");
+  }
+
+  const etapasOk = new Set(["AGUARDANDO_ORCAMENTO", "AGUARDANDO_APROVACAO"]);
+  const set = new Set(input.itemIds);
+  const itens = proc.itens.filter((i) => set.has(i.id));
+  if (itens.length !== input.itemIds.length) {
+    throw new AppError(400, "Item não encontrado neste processo");
+  }
+  for (const item of itens) {
+    if (item.status !== "EM_ESTOQUE") {
+      throw new AppError(
+        400,
+        `Item ${item.produto.codigo} não está em estoque RMA`
+      );
+    }
+    if (!etapasOk.has(item.etapa || "")) {
+      throw new AppError(
+        400,
+        `Item ${item.produto.codigo} não está aguardando orçamento/aprovação`
+      );
+    }
+  }
+
+  for (const item of itens) {
+    const orc = (
+      item as {
+        orcamento?: { id: string; status: string; observacaoComercial?: string | null } | null;
+      }
+    ).orcamento;
+    await prisma.$transaction(async (tx) => {
+      const claim = await tx.rmaItem.updateMany({
+        where: {
+          id: item.id,
+          processoId: id,
+          etapa: { in: ["AGUARDANDO_ORCAMENTO", "AGUARDANDO_APROVACAO"] },
+          status: "EM_ESTOQUE",
+        },
+        data: {
+          etapa: "AGUARDANDO_MANUTENCAO",
+          cobrou: false,
+          valorCobrado: null,
+          aprovacaoEm: new Date(),
+          aprovacaoPorId: user.id,
+          aprovacaoObs: obs,
+        },
+      });
+      if (claim.count === 0) {
+        throw new AppError(
+          409,
+          `Item ${item.produto.codigo} já foi movimentado — atualize a tela`
+        );
+      }
+      if (orc && (orc.status === "RASCUNHO" || orc.status === "ENVIADO")) {
+        await tx.rmaOrcamento.update({
+          where: { id: orc.id },
+          data: {
+            status: "APROVADO",
+            aprovadoEm: new Date(),
+            aprovadoPorId: user.id,
+            observacaoComercial: `${orc.observacaoComercial || ""}\n[Sem cobrança] ${obs}`.trim(),
+          },
+        });
+      }
+    });
+  }
+
+  return obterRma(user, id);
+}
+
 function movSaidaDaTransferencia(transf: {
   itens: Array<{
     movimentacoes: Array<{ id: string; tipo: { operacao: string; nome: string } }>;
@@ -2174,6 +2364,10 @@ export async function trocarRmaItem(
     destinoDescarteFilialId?: string;
     nfSaidaNumero?: string | null;
     observacao?: string | null;
+    substituicaoAutorizadaPorId: string;
+    freteModalidade?: string;
+    transportadora?: string | null;
+    freteCobrado?: boolean;
   }
 ) {
   const proc = await obterRma(user, processoId);
@@ -2184,6 +2378,14 @@ export async function trocarRmaItem(
     throw new AppError(400, "Processo fechado");
   }
 
+  const autorizador = await prisma.usuario.findFirst({
+    where: { id: input.substituicaoAutorizadaPorId, ativo: true },
+    select: { id: true, nome: true },
+  });
+  if (!autorizador) {
+    throw new AppError(400, "Informe o colaborador ativo que autorizou a troca");
+  }
+
   const item = proc.itens.find((i) => i.id === input.itemId);
   if (!item) throw new AppError(404, "Item não encontrado neste processo");
   assertEtapaPermiteSaida(item.etapa);
@@ -2192,6 +2394,14 @@ export async function trocarRmaItem(
   }
   if (!item.unidadeSerie?.numeroSerie) {
     throw new AppError(400, "Item sem número de série vinculado");
+  }
+
+  if (
+    input.freteModalidade ||
+    input.freteCobrado !== undefined ||
+    input.transportadora !== undefined
+  ) {
+    await persistirFreteRma(processoId, input, proc);
   }
 
   const serieRuim = item.unidadeSerie.numeroSerie.trim();
@@ -2392,9 +2602,10 @@ export async function trocarRmaItem(
         movSaidaId,
         movDescarteId,
         unidadeSerieSubstituicaoId: unidadeSerieBoaId,
+        substituicaoAutorizadaPorId: autorizador.id,
         observacao:
           input.observacao?.trim() ||
-          `Trocado: saiu ${serieBoa}; ${serieRuim} → descarte`,
+          `Trocado: saiu ${serieBoa}; ${serieRuim} → descarte (autorizado por ${autorizador.nome})`,
       },
     });
   } catch (e) {
@@ -2443,6 +2654,7 @@ export async function trocarRmaItem(
         movSaidaId: null,
         movDescarteId: null,
         unidadeSerieSubstituicaoId: null,
+        substituicaoAutorizadaPorId: null,
       },
     });
 
@@ -2587,6 +2799,24 @@ export async function cancelarRma(
     responsavelNome: user.nome,
   });
   return obterRma(user, id);
+}
+
+/** Estorna estoque como cancelar, mas só Admin — histórico permanece em Cancelados. */
+export async function excluirAberturaRma(
+  user: AuthUser,
+  id: string,
+  input: { observacao: string }
+) {
+  if (!podeExcluirAberturaRma(user.perfil)) {
+    throw new AppError(403, "Só Admin pode excluir a abertura do RMA");
+  }
+  const motivo = input.observacao.trim();
+  if (!motivo) {
+    throw new AppError(400, "Informe o motivo da exclusão da abertura");
+  }
+  return cancelarRma(user, id, {
+    observacao: `Abertura excluída: ${motivo}`,
+  });
 }
 
 

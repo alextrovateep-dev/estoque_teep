@@ -51,6 +51,7 @@ export type RmaDocumentoItem = {
       origem?: string;
     }>;
   } | null;
+  substituicaoAutorizadaPor?: { id: string; nome: string } | null;
 };
 
 type DocTipo = "entrada" | "liberacao" | "orcamento";
@@ -101,13 +102,11 @@ function money(n: number) {
 type Props = {
   processoId: string;
   itens: RmaDocumentoItem[];
-  processoAberto: boolean;
 };
 
 export function RmaDocumentosSection({
   processoId,
   itens,
-  processoAberto,
 }: Props) {
   const [viewer, setViewer] = useState<ViewerState>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -118,7 +117,10 @@ export function RmaDocumentosSection({
       itens.filter(
         (i) =>
           i.status !== "CANCELADO" &&
-          (temLaudoEntrada(i) || temLaudoLiberacao(i) || temOrcamento(i))
+          (temLaudoEntrada(i) ||
+            temLaudoLiberacao(i) ||
+            temOrcamento(i) ||
+            Boolean(i.substituicaoAutorizadaPor))
       ),
     [itens]
   );
@@ -149,10 +151,7 @@ export function RmaDocumentosSection({
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
           Documentos
         </h3>
-        <p className="mt-2 text-sm text-slate-500">
-          Quando houver laudo de inspeção, laudo de liberação ou orçamento, eles
-          aparecem aqui — inclusive depois do RMA fechado.
-        </p>
+        <p className="mt-2 text-sm text-slate-500">Nenhum documento ainda.</p>
       </section>
     );
   }
@@ -164,10 +163,6 @@ export function RmaDocumentosSection({
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             Documentos
           </h3>
-          <p className="mt-0.5 text-xs text-slate-500">
-            Laudos e orçamentos gerados — disponíveis para consulta e PDF
-            {processoAberto ? "" : " (processo fechado)"}.
-          </p>
         </div>
         {comDocs.some(temOrcamento) ? (
           <div className="flex flex-wrap gap-2">
@@ -188,7 +183,7 @@ export function RmaDocumentosSection({
               }
               className="rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-900 disabled:opacity-50"
             >
-              {busy === "orc-all" ? "Gerando…" : "PDF orçamento (arquivo)"}
+              {busy === "orc-all" ? "Gerando…" : "PDF arquivo"}
             </button>
           </div>
         ) : null}
@@ -222,6 +217,11 @@ export function RmaDocumentosSection({
               <p className="mt-0.5 truncate text-xs text-slate-500">
                 {item.produto.descricao}
               </p>
+              {item.substituicaoAutorizadaPor ? (
+                <p className="mt-1 text-xs text-slate-700">
+                  Troca autorizada por {item.substituicaoAutorizadaPor.nome}
+                </p>
+              ) : null}
               <div className="mt-2 flex flex-wrap gap-2">
                 {entrada ? (
                   <>
@@ -372,6 +372,11 @@ function DocumentoViewer({
                 ? ` · N/S ${item.unidadeSerie.numeroSerie}`
                 : ""}
             </p>
+            {item.substituicaoAutorizadaPor ? (
+              <p className="mt-1 text-xs text-slate-700">
+                Troca autorizada por {item.substituicaoAutorizadaPor.nome}
+              </p>
+            ) : null}
           </div>
           <div className="flex gap-2">
             <button
