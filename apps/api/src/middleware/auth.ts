@@ -16,10 +16,44 @@ export type AuthUser = {
   deveTrocarSenha?: boolean;
 };
 
+export type UsuarioSessaoDb = {
+  perfil: string;
+  ativo: boolean;
+  permissoes: unknown;
+  filialId: string | null;
+  filiaisVinculos: { filialId: string }[];
+};
+
 export type AuthedRequest = Request & {
   user?: AuthUser;
   permissoesResolved?: import("@teep/shared").PermissoesUsuario;
+  /** Cache por request: filial + permissões compartilham a mesma leitura. */
+  usuarioSessao?: UsuarioSessaoDb | null;
 };
+
+const usuarioSessaoSelect = {
+  perfil: true,
+  ativo: true,
+  permissoes: true,
+  filialId: true,
+  filiaisVinculos: { select: { filialId: true } },
+} as const;
+
+/** Uma query de usuário por request (reusada por filial e permissões). */
+export async function loadUsuarioSessao(
+  req: AuthedRequest
+): Promise<UsuarioSessaoDb | null> {
+  if (req.usuarioSessao !== undefined) return req.usuarioSessao;
+  if (!req.user) {
+    req.usuarioSessao = null;
+    return null;
+  }
+  req.usuarioSessao = await prisma.usuario.findUnique({
+    where: { id: req.user.id },
+    select: usuarioSessaoSelect,
+  });
+  return req.usuarioSessao;
+}
 
 const accessSecret = () => {
   const secret = process.env.JWT_ACCESS_SECRET;
@@ -134,10 +168,7 @@ export function requirePerfil(...perfis: Perfil[]) {
       return res.status(403).json({ error: "Acesso negado para este perfil" });
     }
     try {
-      const row = await prisma.usuario.findUnique({
-        where: { id: req.user.id },
-        select: { perfil: true, ativo: true },
-      });
+      const row = await loadUsuarioSessao(req);
       if (!row?.ativo) {
         return res.status(401).json({ error: "Usuário inativo" });
       }
@@ -161,14 +192,7 @@ export async function requireFilialOperador(
 ) {
   if (!req.user) return next();
   try {
-    const row = await prisma.usuario.findUnique({
-      where: { id: req.user.id },
-      select: {
-        perfil: true,
-        filialId: true,
-        filiaisVinculos: { select: { filialId: true } },
-      },
-    });
+    const row = await loadUsuarioSessao(req);
     if (!row) return next();
     req.user.perfil = row.perfil as Perfil;
     if (row.perfil !== "OPERADOR") return next();

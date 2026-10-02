@@ -49,7 +49,7 @@ Match de cliente: CNPJ do contato no eGestor (`/v1/contatos/{codContato}` ou `/v
 | Tela | Papel |
 |------|--------|
 | **Pedidos** (`/pedidos`) | Abas Em aberto / Separado / Enviados. Botão **Atualizar do eGestor** (só em aberto). |
-| **Detalhe** (`/pedidos/[id]`) | Em aberto: separar (séries + estoque). Separado: itens só leitura + Enviar (NF obrigatória). Enviados: consulta. |
+| **Detalhe** (`/pedidos/[id]`) | Em aberto: separar (séries + estoque). Separado/Enviados: itens só leitura com as séries baixadas. Separado: Enviar (NF obrigatória). |
 
 Permissão: `pedidos` (Gerente e Operador por padrão).
 
@@ -64,7 +64,7 @@ Operador só separa em acabados aos quais está vinculado. Gerente/Admin: qualqu
 3. Escolhe o acabado; informa série quando o produto controla série (`POST /series/validar-saida`).
 4. Marca usuários que recebem e-mail (IDs do cadastro, não lista livre). O e-mail é enviado quando a baixa de estoque conclui (`SEPARADO`).
 5. API chama `criarMovimentacao` (SAÍDA: saldo + séries + cliente), sempre com `grupoLancamentoId` (também em pedido de 1 SKU). Linhas do mesmo produto são agrupadas. A separação **conclui na hora** — não entra na fila de Aprovações (a flag «Requer aprovação» do tipo é ignorada / forçada off no tipo de saída de pedido).
-6. Status TEEP `ABERTO` → `SEPARADO` (aba **Separado**: embalado, aguardando envio). eGestor **não** muda.
+6. Status TEEP `ABERTO` → `SEPARADO` (aba **Separado**: embalado, aguardando envio). O detalhe lista as séries da baixa em cada item. eGestor **não** muda.
 7. No Separado, **Enviar** pede número e anexo da NF (transportadora opcional). Confirmar move para **Enviados** (`ENVIADO`). Só consulta.
 
 Pedidos antigos que tenham ficado com saída `PENDENTE` (tipo com aprovação ligada no passado) continuam aparecendo como aguardando em Aprovações até alguém aprovar ou rejeitar.

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   agruparItensSaidaPedido,
+  alocarSeriesSeparacao,
   alinharItensPedidoEgestor,
   codigoItemEgestor,
 } from "./pedidoSeparacaoItens";
@@ -24,6 +25,28 @@ describe("agruparItensSaidaPedido", () => {
     assert.equal(out.length, 1);
     assert.equal(out[0]?.quantidade, 2);
     assert.deepEqual(out[0]?.series, ["S1", "S2"]);
+  });
+});
+
+describe("alocarSeriesSeparacao", () => {
+  it("reparte séries do mesmo SKU entre as linhas", () => {
+    const out = alocarSeriesSeparacao(
+      [
+        { id: "i1", produtoId: "a", quantidade: 1 },
+        { id: "i2", produtoId: "a", quantidade: 1 },
+      ],
+      new Map([["a", ["S1", "S2"]]])
+    );
+    assert.deepEqual(out.i1, ["S1"]);
+    assert.deepEqual(out.i2, ["S2"]);
+  });
+
+  it("coloca sobra na última linha do produto", () => {
+    const out = alocarSeriesSeparacao(
+      [{ id: "i1", produtoId: "a", quantidade: 1 }],
+      new Map([["a", ["S1", "S2"]]])
+    );
+    assert.deepEqual(out.i1, ["S1", "S2"]);
   });
 });
 

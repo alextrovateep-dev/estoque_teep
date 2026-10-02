@@ -4,8 +4,7 @@ import {
   resolvePermissoes,
 } from "@teep/shared";
 import { Response, NextFunction } from "express";
-import { prisma } from "../lib/prisma";
-import { AuthedRequest } from "./auth";
+import { AuthedRequest, loadUsuarioSessao } from "./auth";
 
 type ReqPerm = AuthedRequest & {
   perfilDb?: string;
@@ -18,10 +17,7 @@ export async function loadPermissoes(
 ): Promise<PermissoesUsuario> {
   if (req.permissoesResolved) return req.permissoesResolved;
   const user = req.user!;
-  const row = await prisma.usuario.findUnique({
-    where: { id: user.id },
-    select: { permissoes: true, perfil: true, ativo: true },
-  });
+  const row = await loadUsuarioSessao(req);
   const r = req as ReqPerm;
   if (!row || !row.ativo) {
     r.usuarioAtivo = false;

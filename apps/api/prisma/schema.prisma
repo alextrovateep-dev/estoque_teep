@@ -923,6 +923,8 @@ model PedidoVenda {
   destinatarios      PedidoVendaDestinatario[]
 
   @@index([status])
+  @@index([status, atualizadoEm])
+  @@index([status, dtVenda])
   @@index([dtVenda])
   @@index([grupoLancamentoId])
   @@index([clienteId])

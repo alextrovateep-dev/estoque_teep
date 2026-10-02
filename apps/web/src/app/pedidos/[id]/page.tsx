@@ -33,6 +33,7 @@ type Item = {
   quantidade: string | number;
   produtoId: string | null;
   produto: Produto | null;
+  seriesSeparadas?: string[];
 };
 
 type Dest = { id: string; nome: string; email: string };
@@ -143,17 +144,39 @@ function qtdLabel(v: string | number) {
 function ItensSomenteLeitura({ itens }: { itens: Item[] }) {
   return (
     <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
-      {itens.map((it) => (
-        <li key={it.id} className="flex items-start justify-between gap-3 px-4 py-3">
-          <div className="min-w-0">
-            <p className="font-medium">{it.codigoProprio}</p>
-            <p className="text-sm text-slate-500">{it.descricao}</p>
-          </div>
-          <span className="shrink-0 text-sm tabular-nums text-slate-700">
-            {qtdLabel(it.quantidade)}
-          </span>
-        </li>
-      ))}
+      {itens.map((it) => {
+        const series = it.seriesSeparadas || [];
+        return (
+          <li
+            key={it.id}
+            className="flex items-start justify-between gap-3 px-4 py-3"
+          >
+            <div className="min-w-0">
+              <p className="font-medium">{it.codigoProprio}</p>
+              <p className="text-sm text-slate-500">{it.descricao}</p>
+              {series.length > 0 ? (
+                <ul className="mt-1.5 space-y-0.5">
+                  {series.map((sn, i) => (
+                    <li
+                      key={`${sn}-${i}`}
+                      className="font-mono text-sm text-slate-800"
+                    >
+                      N/S {sn}
+                    </li>
+                  ))}
+                </ul>
+              ) : it.produto?.controlaSerie ? (
+                <p className="mt-1 text-xs text-slate-400">
+                  Série não registrada na separação
+                </p>
+              ) : null}
+            </div>
+            <span className="shrink-0 text-sm tabular-nums text-slate-700">
+              {qtdLabel(it.quantidade)}
+            </span>
+          </li>
+        );
+      })}
     </ul>
   );
 }

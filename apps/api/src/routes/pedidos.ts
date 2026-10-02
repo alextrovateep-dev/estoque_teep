@@ -14,6 +14,7 @@ import {
   liberarPedido,
   listarEstoquesAcabados,
   listarPedidos,
+  listarPedidosAgrupados,
   listarUsuariosDestinatariosPedido,
   obterPedido,
   separarPedido,
@@ -27,6 +28,10 @@ pedidosRouter.get(
   requirePermissao("pedidos"),
   async (req: AuthedRequest, res, next) => {
     try {
+      if (String(req.query.todos || "") === "1") {
+        res.json(await listarPedidosAgrupados());
+        return;
+      }
       res.json(await listarPedidos(String(req.query.status || "ABERTO")));
     } catch (e) {
       next(e);

@@ -3,7 +3,10 @@ import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
 import { prisma } from "../lib/prisma";
 import { operadorFilialIds } from "../lib/filialScope";
-import { agruparItensSaidaPedido } from "../lib/pedidoSeparacaoItens";
+import {
+  agruparItensSaidaPedido,
+  alocarSeriesSeparacao,
+} from "../lib/pedidoSeparacaoItens";
 import {
   clienteIdPorDocumento,
   indexClientesPorCnpj,
@@ -49,21 +52,45 @@ function qtyEq(a: number, b: number) {
   return Math.abs(a - b) < 1e-6;
 }
 
-export async function listarPedidos(status?: string) {
-  const st = status && isPedidoStatus(status) ? status : "ABERTO";
+const listaSelect = {
+  id: true,
+  egestorCodigo: true,
+  nomeContato: true,
+  clienteId: true,
+  dtVenda: true,
+  status: true,
+  rastreio: true,
+  nfNumero: true,
+  filialAcabado: { select: { sigla: true } },
+  cliente: { select: { id: true, nome: true } },
+  _count: { select: { itens: true } },
+} as const;
+
+function queryLista(st: "ABERTO" | "SEPARADO" | "ENVIADO") {
   return prisma.pedidoVenda.findMany({
     where: { status: st },
-    include: {
-      filialAcabado: { select: { id: true, sigla: true, nome: true } },
-      cliente: { select: { id: true, nome: true, documento: true } },
-      _count: { select: { itens: true } },
-    },
+    select: listaSelect,
     orderBy:
       st === "ABERTO"
         ? { dtVenda: "desc" as const }
         : { atualizadoEm: "desc" as const },
     take: 200,
   });
+}
+
+export async function listarPedidos(status?: string) {
+  const st = status && isPedidoStatus(status) ? status : "ABERTO";
+  return queryLista(st);
+}
+
+/** Uma ida ao banco (3 queries em paralelo) para as três abas. */
+export async function listarPedidosAgrupados() {
+  const [ABERTO, SEPARADO, ENVIADO] = await Promise.all([
+    queryLista("ABERTO"),
+    queryLista("SEPARADO"),
+    queryLista("ENVIADO"),
+  ]);
+  return { ABERTO, SEPARADO, ENVIADO };
 }
 
 export async function obterPedido(id: string) {
@@ -95,12 +122,80 @@ export async function obterPedido(id: string) {
 
   // Regra de série do tipo de saída usado na separação (a tela não escolhe o tipo)
   const tipoSaida = await tipoSaidaPedidoAtivo();
+  const seriesPorItem = await seriesSeparadasDoPedido(fresh);
 
   return {
     ...fresh,
+    itens: fresh.itens.map((it) => ({
+      ...it,
+      seriesSeparadas: seriesPorItem[it.id] || [],
+    })),
     aguardandoAprovacao,
     controleSerieSaida: tipoSaida?.controleSerie ?? CONTROLE_SERIE_PADRAO,
   };
+}
+
+function seriesDeMovimentacao(m: {
+  series: Array<{ unidadeSerie: { numeroSerie: string } }>;
+  seriesInformadas: unknown;
+}): string[] {
+  const vinculadas = m.series
+    .map((s) => s.unidadeSerie.numeroSerie.trim())
+    .filter(Boolean);
+  if (vinculadas.length) return vinculadas;
+  if (!Array.isArray(m.seriesInformadas)) return [];
+  return m.seriesInformadas
+    .filter((s): s is string => typeof s === "string")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Séries efetivamente baixadas na separação, por linha do pedido. */
+async function seriesSeparadasDoPedido(pedido: {
+  status: string;
+  grupoLancamentoId: string | null;
+  itens: Array<{
+    id: string;
+    produtoId: string | null;
+    quantidade: unknown;
+  }>;
+}): Promise<Record<string, string[]>> {
+  if (
+    !pedido.grupoLancamentoId ||
+    (pedido.status !== "SEPARADO" && pedido.status !== "ENVIADO")
+  ) {
+    return {};
+  }
+  const movs = await prisma.movimentacao.findMany({
+    where: {
+      grupoLancamentoId: pedido.grupoLancamentoId,
+      movimentacaoMontagemId: null,
+      operacao: "SAIDA",
+      status: { in: ["CONCLUIDO", "PENDENTE"] },
+    },
+    select: {
+      produtoId: true,
+      seriesInformadas: true,
+      series: {
+        select: { unidadeSerie: { select: { numeroSerie: true } } },
+      },
+    },
+  });
+  const porProduto = new Map<string, string[]>();
+  for (const m of movs) {
+    const series = seriesDeMovimentacao(m);
+    if (!series.length) continue;
+    const prev = porProduto.get(m.produtoId) || [];
+    porProduto.set(m.produtoId, [...prev, ...series]);
+  }
+  return alocarSeriesSeparacao(
+    pedido.itens.map((it) => ({
+      id: it.id,
+      produtoId: it.produtoId,
+      quantidade: Number(it.quantidade),
+    })),
+    porProduto
+  );
 }
 
 export async function listarEstoquesAcabados(user: AuthUser) {

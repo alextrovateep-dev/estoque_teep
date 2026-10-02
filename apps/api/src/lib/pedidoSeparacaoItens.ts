@@ -99,3 +99,40 @@ export function agruparItensSaidaPedido(
   }
   return [...map.values()];
 }
+
+/**
+ * Redistribui as séries da baixa (agrupadas por SKU) nas linhas do pedido.
+ * Sobra fica na última linha daquele produto para não sumir da tela.
+ */
+export function alocarSeriesSeparacao(
+  itens: Array<{ id: string; produtoId: string | null; quantidade: number }>,
+  seriesPorProduto: Map<string, string[]>
+): Record<string, string[]> {
+  const pools = new Map<string, string[]>();
+  for (const [produtoId, series] of seriesPorProduto) {
+    pools.set(
+      produtoId,
+      series.map((s) => s.trim()).filter(Boolean)
+    );
+  }
+  const out: Record<string, string[]> = {};
+  const lastByProduto = new Map<string, string>();
+  for (const it of itens) {
+    if (!it.produtoId) {
+      out[it.id] = [];
+      continue;
+    }
+    const pool = pools.get(it.produtoId) || [];
+    const n = Math.max(0, Math.round(Number(it.quantidade) || 0));
+    out[it.id] = n > 0 ? pool.splice(0, Math.min(n, pool.length)) : [];
+    lastByProduto.set(it.produtoId, it.id);
+  }
+  for (const [produtoId, lastId] of lastByProduto) {
+    const leftover = pools.get(produtoId);
+    if (leftover?.length) {
+      out[lastId] = [...(out[lastId] || []), ...leftover];
+      leftover.length = 0;
+    }
+  }
+  return out;
+}

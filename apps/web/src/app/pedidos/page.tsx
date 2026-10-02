@@ -20,11 +20,19 @@ type Row = {
   dtVenda: string;
   status: string;
   filialAcabado?: { sigla: string } | null;
-  liberadoEm?: string | null;
   rastreio?: string | null;
   nfNumero?: string | null;
   _count: { itens: number };
 };
+
+type Buckets = Record<PedidoStatus, Row[]>;
+
+function emptyBuckets(): Buckets {
+  return { ABERTO: [], SEPARADO: [], ENVIADO: [] };
+}
+
+/** Cache em memória: troca de aba não refaz a consulta. */
+let cached: Buckets | null = null;
 
 function tabFromQuery(raw: string | null): PedidoStatus {
   if (raw === "AGUARDANDO") return "SEPARADO";
@@ -43,23 +51,59 @@ function dataCurta(iso: string) {
 
 function PedidosInner() {
   const searchParams = useSearchParams();
-  const tab = tabFromQuery(searchParams.get("status"));
-  const [lista, setLista] = useState<Row[]>([]);
+  const [tab, setTab] = useState<PedidoStatus>(() =>
+    tabFromQuery(searchParams.get("status"))
+  );
+  const [porStatus, setPorStatus] = useState<Buckets | null>(cached);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(!cached);
 
-  async function load(status: string) {
+  async function loadAll() {
     setError("");
-    const data = await api<Row[]>(`/pedidos?status=${status}`);
-    setLista(data);
+    const data = await api<Buckets>("/pedidos?todos=1", { silent: true });
+    const next: Buckets = {
+      ABERTO: data.ABERTO ?? [],
+      SEPARADO: data.SEPARADO ?? [],
+      ENVIADO: data.ENVIADO ?? [],
+    };
+    cached = next;
+    setPorStatus(next);
   }
 
   useEffect(() => {
-    load(tab).catch((e) =>
-      setError(e instanceof Error ? e.message : "Erro ao carregar")
-    );
-  }, [tab]);
+    let cancelled = false;
+    setLoading(!cached);
+    loadAll()
+      .catch((e) => {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Erro ao carregar");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const onPop = () => {
+      setTab(
+        tabFromQuery(new URLSearchParams(window.location.search).get("status"))
+      );
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  function goTab(st: PedidoStatus) {
+    if (st === tab) return;
+    setTab(st);
+    window.history.pushState(null, "", hrefTab(st));
+  }
 
   async function syncNow() {
     setSyncing(true);
@@ -73,13 +117,16 @@ function PedidosInner() {
       setMsg(
         `Sincronizado: ${r.upserted} atualizado(s), ${r.removed} removido(s).`
       );
-      await load(tab);
+      cached = null;
+      await loadAll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha no sync");
     } finally {
       setSyncing(false);
     }
   }
+
+  const lista = porStatus?.[tab] ?? emptyBuckets()[tab];
 
   return (
     <>
@@ -104,9 +151,10 @@ function PedidosInner() {
 
       <div className="mt-4 flex flex-wrap gap-2 text-sm">
         {PEDIDO_STATUS.map((st) => (
-          <Link
+          <button
             key={st}
-            href={hrefTab(st)}
+            type="button"
+            onClick={() => goTab(st)}
             className={
               tab === st
                 ? "rounded-lg bg-brand px-3 py-1.5 font-medium text-white"
@@ -114,7 +162,7 @@ function PedidosInner() {
             }
           >
             {PEDIDO_STATUS_LABELS[st]}
-          </Link>
+          </button>
         ))}
       </div>
 
@@ -130,7 +178,12 @@ function PedidosInner() {
       )}
 
       <ul className="mt-6 divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
-        {lista.length === 0 && (
+        {loading && !porStatus && (
+          <li className="px-4 py-8 text-center text-sm text-slate-500">
+            Carregando…
+          </li>
+        )}
+        {!loading && lista.length === 0 && (
           <li className="px-4 py-8 text-center text-sm text-slate-500">
             Nenhum pedido nesta lista.
           </li>
@@ -141,7 +194,10 @@ function PedidosInner() {
             tab === "SEPARADO"
               ? "Aguardando envio"
               : tab === "ENVIADO"
-                ? [p.rastreio ? `Rastreio ${p.rastreio}` : null, p.nfNumero ? `NF ${p.nfNumero}` : null]
+                ? [
+                    p.rastreio ? `Rastreio ${p.rastreio}` : null,
+                    p.nfNumero ? `NF ${p.nfNumero}` : null,
+                  ]
                     .filter(Boolean)
                     .join(" · ")
                 : dataCurta(p.dtVenda);
