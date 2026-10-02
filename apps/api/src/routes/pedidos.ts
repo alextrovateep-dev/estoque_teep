@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { enviarPedidoSchema, separarPedidoSchema } from "@teep/shared";
+import {
+  anexarNotaFiscalPedidoSchema,
+  enviarPedidoSchema,
+  separarPedidoSchema,
+} from "@teep/shared";
 import {
   authenticate,
   requireFilialOperador,
@@ -10,6 +14,7 @@ import { requireEstoqueParaOperar } from "../lib/estoqueGate";
 import { validateBody } from "../middleware/error";
 import { syncPedidosEgestor } from "../services/pedidoVendaSyncService";
 import {
+  anexarNotaFiscalPedido,
   enviarPedido,
   liberarPedido,
   listarEstoquesAcabados,
@@ -17,6 +22,7 @@ import {
   listarPedidosAgrupados,
   listarUsuariosDestinatariosPedido,
   obterPedido,
+  removerNotaFiscalPedido,
   separarPedido,
 } from "../services/pedidoVendaService";
 
@@ -119,6 +125,31 @@ pedidosRouter.post(
   async (req: AuthedRequest, res, next) => {
     try {
       res.json(await enviarPedido(req.user!, req.params.id, req.body));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+pedidosRouter.delete(
+  "/:id/nota-fiscal",
+  requirePermissao("pedidos"),
+  async (req, res, next) => {
+    try {
+      res.json(await removerNotaFiscalPedido(req.params.id));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+pedidosRouter.patch(
+  "/:id/nota-fiscal",
+  requirePermissao("pedidos"),
+  validateBody(anexarNotaFiscalPedidoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await anexarNotaFiscalPedido(req.user!, req.params.id, req.body));
     } catch (e) {
       next(e);
     }

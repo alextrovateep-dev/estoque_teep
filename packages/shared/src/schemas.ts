@@ -970,6 +970,15 @@ export const enviarPedidoSchema = z.object({
     .regex(/^\/uploads\/notas-fiscais\//, "Anexe a nota fiscal"),
 });
 
+/** Trocar NF de pedido já enviado. */
+export const anexarNotaFiscalPedidoSchema = z.object({
+  nfArquivo: z
+    .string()
+    .max(255)
+    .regex(/^\/uploads\/notas-fiscais\//, "Anexe a nota fiscal"),
+  nfNumero: z.string().trim().max(60).optional(),
+});
+
 /** NFs / observação do processo (cobrança de manutenção é por item). */
 export const updateRmaFinanceiroSchema = z.object({
   nfEntradaNumero: z.string().max(60).optional().nullable(),

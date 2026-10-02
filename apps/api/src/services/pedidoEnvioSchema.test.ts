@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  anexarNotaFiscalPedidoSchema,
   enviarPedidoSchema,
   isPedidoStatus,
   PEDIDO_STATUS,
@@ -46,6 +47,11 @@ describe("enviarPedidoSchema", () => {
       nfArquivo: "",
     });
     assert.equal(r.success, false);
+  });
+
+  it("aceita anexo em pedido enviado", () => {
+    const r = anexarNotaFiscalPedidoSchema.safeParse({ nfArquivo: nf });
+    assert.equal(r.success, true);
   });
 
   it("rejeita número da NF vazio", () => {

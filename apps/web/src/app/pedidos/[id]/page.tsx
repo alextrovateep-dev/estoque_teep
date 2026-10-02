@@ -344,11 +344,41 @@ export default function PedidoDetalhePage() {
       fd.append("file", file);
       fd.append("context", "nota-fiscal");
       const r = await apiUpload<{ url: string }>("/upload", fd);
+      if (row?.status === "ENVIADO") {
+        const atualizado = await api<Pedido>(`/pedidos/${row.id}/nota-fiscal`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            nfArquivo: r.url,
+            nfNumero: nfNumero.trim() || undefined,
+          }),
+        });
+        setRow(atualizado);
+        setNfArquivo(atualizado.nfArquivo || r.url);
+        return;
+      }
       setNfArquivo(r.url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha no upload da NF");
     } finally {
       setUploadingNf(false);
+    }
+  }
+
+  async function onExcluirNfEnviada() {
+    if (!row || row.status !== "ENVIADO") return;
+    if (!window.confirm("Excluir o anexo da nota fiscal deste pedido?")) return;
+    setError("");
+    setSaving(true);
+    try {
+      const atualizado = await api<Pedido>(`/pedidos/${row.id}/nota-fiscal`, {
+        method: "DELETE",
+      });
+      setRow(atualizado);
+      setNfArquivo("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao excluir a NF");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -465,33 +495,58 @@ export default function PedidoDetalhePage() {
               </label>
               <div className="text-sm">
                 <span className="mb-1 block font-medium">Nota fiscal</span>
-                <label className="inline-flex cursor-pointer rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50">
-                  {uploadingNf
-                    ? "Enviando…"
-                    : nfArquivo
-                      ? "Trocar arquivo"
-                      : "Anexar NF (PDF/imagem)"}
-                  <input
-                    type="file"
-                    accept=".pdf,image/*"
-                    className="hidden"
-                    disabled={uploadingNf}
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      e.target.value = "";
-                      if (file) void onNfFile(file);
-                    }}
-                  />
-                </label>
-                {nfArquivo && (
-                  <a
-                    href={nfHref || "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="ml-3 text-sm text-brand hover:underline"
-                  >
-                    Ver anexo
-                  </a>
+                {nfArquivo ? (
+                  <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2.5">
+                    <p className="font-medium text-emerald-900">
+                      Arquivo anexado
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                      <a
+                        href={nfHref || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-emerald-800 underline hover:text-emerald-950"
+                      >
+                        Abrir
+                      </a>
+                      <button
+                        type="button"
+                        className="font-medium text-slate-600 underline hover:text-slate-900"
+                        onClick={() => setNfArquivo("")}
+                      >
+                        Excluir
+                      </button>
+                      <label className="cursor-pointer font-medium text-brand underline hover:text-brand/80">
+                        {uploadingNf ? "Enviando…" : "Substituir"}
+                        <input
+                          type="file"
+                          accept=".pdf,image/*"
+                          className="sr-only"
+                          disabled={uploadingNf}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (file) void onNfFile(file);
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="inline-flex cursor-pointer rounded-lg border px-3 py-1.5 text-sm hover:bg-slate-50">
+                    {uploadingNf ? "Enviando…" : "Anexar NF (PDF/imagem)"}
+                    <input
+                      type="file"
+                      accept=".pdf,image/*"
+                      className="hidden"
+                      disabled={uploadingNf}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        e.target.value = "";
+                        if (file) void onNfFile(file);
+                      }}
+                    />
+                  </label>
                 )}
               </div>
               <button
@@ -524,16 +579,39 @@ export default function PedidoDetalhePage() {
                 <dt className="text-slate-500">Arquivo</dt>
                 <dd>
                   {row.nfArquivo ? (
-                    <a
-                      href={resolveAssetUrl(row.nfArquivo) || "#"}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-brand hover:underline"
-                    >
-                      Abrir nota fiscal
-                    </a>
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                      <a
+                        href={resolveAssetUrl(row.nfArquivo) || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-brand hover:underline"
+                      >
+                        Abrir nota fiscal
+                      </a>
+                      <button
+                        type="button"
+                        disabled={saving}
+                        className="text-slate-600 underline hover:text-slate-900 disabled:opacity-50"
+                        onClick={() => void onExcluirNfEnviada()}
+                      >
+                        Excluir
+                      </button>
+                    </span>
                   ) : (
-                    "—"
+                    <label className="inline-flex cursor-pointer text-brand hover:underline">
+                      {uploadingNf ? "Enviando…" : "Anexar NF"}
+                      <input
+                        type="file"
+                        accept=".pdf,image/*"
+                        className="sr-only"
+                        disabled={uploadingNf}
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = "";
+                          if (file) void onNfFile(file);
+                        }}
+                      />
+                    </label>
                   )}
                 </dd>
               </div>

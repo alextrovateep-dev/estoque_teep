@@ -20,7 +20,7 @@ import {
   exigeSerieNoLancamento,
   isPedidoStatus,
 } from "@teep/shared";
-import { isValidUploadPath } from "../lib/uploads";
+import { deleteUploadBestEffort, isValidUploadPath } from "../lib/uploads";
 
 const pedidoInclude = {
   filialAcabado: { select: { id: true, nome: true, sigla: true } },
@@ -618,6 +618,52 @@ export async function enviarPedido(
       rastreio: input.rastreio || null,
       nfNumero: input.nfNumero,
       nfArquivo: input.nfArquivo,
+    },
+  });
+  return obterPedido(pedidoId);
+}
+
+export async function removerNotaFiscalPedido(pedidoId: string) {
+  const pedido = await prisma.pedidoVenda.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, status: true, nfArquivo: true },
+  });
+  if (!pedido) throw new AppError(404, "Pedido não encontrado");
+  if (pedido.status !== "ENVIADO") {
+    throw new AppError(400, "Só é possível excluir a NF de pedido enviado");
+  }
+  if (pedido.nfArquivo) deleteUploadBestEffort(pedido.nfArquivo);
+  await prisma.pedidoVenda.update({
+    where: { id: pedidoId },
+    data: { nfArquivo: null },
+  });
+  return obterPedido(pedidoId);
+}
+
+export async function anexarNotaFiscalPedido(
+  user: AuthUser,
+  pedidoId: string,
+  input: { nfArquivo: string; nfNumero?: string }
+) {
+  const pedido = await prisma.pedidoVenda.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, status: true, nfArquivo: true },
+  });
+  if (!pedido) throw new AppError(404, "Pedido não encontrado");
+  if (pedido.status !== "ENVIADO") {
+    throw new AppError(400, "Só é possível anexar NF em pedido enviado");
+  }
+  if (!isValidUploadPath(input.nfArquivo, "nota-fiscal", user.id)) {
+    throw new AppError(400, "Anexe a nota fiscal");
+  }
+  if (pedido.nfArquivo && pedido.nfArquivo !== input.nfArquivo) {
+    deleteUploadBestEffort(pedido.nfArquivo);
+  }
+  await prisma.pedidoVenda.update({
+    where: { id: pedidoId },
+    data: {
+      nfArquivo: input.nfArquivo,
+      ...(input.nfNumero ? { nfNumero: input.nfNumero } : {}),
     },
   });
   return obterPedido(pedidoId);
