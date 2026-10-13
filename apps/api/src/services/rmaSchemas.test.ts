@@ -742,12 +742,14 @@ describe("rmaListaWhereAba", () => {
     assert.deepEqual(w.itens.some.etapa.in, ["AGUARDANDO_LIBERACAO"]);
   });
 
-  it("enviado inclui fechados e itens em envio", () => {
+  it("enviado é processo aberto aguardando envio", () => {
     const w = rmaListaWhereAba("enviado") as {
-      OR: Array<Record<string, unknown>>;
+      status: string;
+      itens: { some: { etapa: { in: string[] } } };
     };
-    assert.ok(Array.isArray(w.OR));
-    assert.equal(w.OR[0]?.status, "FECHADO");
+    assert.equal(w.status, "ABERTO");
+    assert.ok(w.itens.some.etapa.in.includes("AGUARDANDO_ENVIO"));
+    assert.deepEqual(rmaListaWhereAba("fechado"), { status: "FECHADO" });
   });
 });
 

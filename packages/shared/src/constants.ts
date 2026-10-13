@@ -210,6 +210,7 @@ export const RMA_LISTA_ABAS = [
   "aberto",
   "liberado",
   "enviado",
+  "fechado",
   "cancelado",
 ] as const;
 export type RmaListaAba = (typeof RMA_LISTA_ABAS)[number];
@@ -217,12 +218,14 @@ export const RMA_LISTA_ABA_LABELS: Record<RmaListaAba, string> = {
   aberto: "Em aberto",
   liberado: "Liberados",
   enviado: "Enviados",
+  fechado: "Fechados",
   cancelado: "Cancelados",
 };
 export const RMA_LISTA_ABA_HINTS: Record<RmaListaAba, string> = {
   aberto: "Diagnóstico, orçamento, aprovação e manutenção",
   liberado: "Aguardando liberação para devolver ao cliente",
-  enviado: "Aguardando envio ou RMA já fechado",
+  enviado: "Liberado: aguardando envio ao cliente",
+  fechado: "RMA concluído (equipamento já devolvido ou trocado)",
   cancelado: "Processos cancelados",
 };
 export function isRmaListaAba(v: string): v is RmaListaAba {
@@ -265,17 +268,16 @@ export function rmaListaWhereAba(
   }
   if (a === "enviado") {
     return {
-      OR: [
-        { status: "FECHADO" },
-        {
-          status: "ABERTO",
-          itens: {
-            some: { etapa: { in: [...RMA_ETAPAS_LISTA_ENVIADO] } },
-          },
+      status: "ABERTO",
+      itens: {
+        some: {
+          status: { not: "CANCELADO" },
+          etapa: { in: [...RMA_ETAPAS_LISTA_ENVIADO] },
         },
-      ],
+      },
     };
   }
+  if (a === "fechado") return { status: "FECHADO" };
   if (a === "cancelado") return { status: "CANCELADO" };
   return null;
 }
