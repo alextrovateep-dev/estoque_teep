@@ -206,18 +206,35 @@ export const RMA_ANEXO_TIPOS = [
 export type RmaAnexoTipo = (typeof RMA_ANEXO_TIPOS)[number];
 
 /** Abas da lista de RMA (cancelados fora de Em aberto). */
-export const RMA_LISTA_ABAS = ["aberto", "cancelado", "enviado"] as const;
+export const RMA_LISTA_ABAS = [
+  "aberto",
+  "liberado",
+  "enviado",
+  "cancelado",
+] as const;
 export type RmaListaAba = (typeof RMA_LISTA_ABAS)[number];
 export const RMA_LISTA_ABA_LABELS: Record<RmaListaAba, string> = {
   aberto: "Em aberto",
+  liberado: "Liberados",
+  enviado: "Enviados",
   cancelado: "Cancelados",
-  enviado: "Liberados / Enviado",
+};
+export const RMA_LISTA_ABA_HINTS: Record<RmaListaAba, string> = {
+  aberto: "Diagnóstico, orçamento, aprovação e manutenção",
+  liberado: "Aguardando liberação para devolver ao cliente",
+  enviado: "Aguardando envio ou RMA já fechado",
+  cancelado: "Processos cancelados",
 };
 export function isRmaListaAba(v: string): v is RmaListaAba {
   return (RMA_LISTA_ABAS as readonly string[]).includes(v);
 }
 
+const RMA_ETAPAS_LISTA_LIBERADO = ["AGUARDANDO_LIBERACAO"] as const;
 const RMA_ETAPAS_LISTA_ENVIADO = ["AGUARDANDO_ENVIO", "FINALIZADO"] as const;
+const RMA_ETAPAS_FORA_ABERTO = [
+  ...RMA_ETAPAS_LISTA_LIBERADO,
+  ...RMA_ETAPAS_LISTA_ENVIADO,
+] as const;
 
 /** Fragmento Prisma `where` da aba da lista (sem misturar cancelados no aberto). */
 export function rmaListaWhereAba(
@@ -230,12 +247,22 @@ export function rmaListaWhereAba(
       itens: {
         some: {
           status: { not: "CANCELADO" },
-          etapa: { notIn: [...RMA_ETAPAS_LISTA_ENVIADO] },
+          etapa: { notIn: [...RMA_ETAPAS_FORA_ABERTO] },
         },
       },
     };
   }
-  if (a === "cancelado") return { status: "CANCELADO" };
+  if (a === "liberado") {
+    return {
+      status: "ABERTO",
+      itens: {
+        some: {
+          status: { not: "CANCELADO" },
+          etapa: { in: [...RMA_ETAPAS_LISTA_LIBERADO] },
+        },
+      },
+    };
+  }
   if (a === "enviado") {
     return {
       OR: [
@@ -249,6 +276,7 @@ export function rmaListaWhereAba(
       ],
     };
   }
+  if (a === "cancelado") return { status: "CANCELADO" };
   return null;
 }
 

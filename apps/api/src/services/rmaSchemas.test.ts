@@ -721,15 +721,25 @@ describe("mensagemErroValidacao", () => {
 });
 
 describe("rmaListaWhereAba", () => {
-  it("aberto não inclui cancelados nem só envio", () => {
+  it("aberto não inclui cancelados, liberação nem envio", () => {
     const w = rmaListaWhereAba("aberto") as {
       status: string;
       itens: { some: { etapa: { notIn: string[] } } };
     };
     assert.equal(w.status, "ABERTO");
+    assert.ok(w.itens.some.etapa.notIn.includes("AGUARDANDO_LIBERACAO"));
     assert.ok(w.itens.some.etapa.notIn.includes("AGUARDANDO_ENVIO"));
     assert.ok(w.itens.some.etapa.notIn.includes("FINALIZADO"));
     assert.deepEqual(rmaListaWhereAba("cancelado"), { status: "CANCELADO" });
+  });
+
+  it("liberado é só aguardando liberação", () => {
+    const w = rmaListaWhereAba("liberado") as {
+      status: string;
+      itens: { some: { etapa: { in: string[] } } };
+    };
+    assert.equal(w.status, "ABERTO");
+    assert.deepEqual(w.itens.some.etapa.in, ["AGUARDANDO_LIBERACAO"]);
   });
 
   it("enviado inclui fechados e itens em envio", () => {

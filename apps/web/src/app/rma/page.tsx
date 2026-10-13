@@ -9,6 +9,7 @@ import {
   isRmaListaAba,
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPA_LABELS,
+  RMA_LISTA_ABA_HINTS,
   RMA_LISTA_ABA_LABELS,
   RMA_LISTA_ABAS,
   formatYmdBr,
@@ -231,6 +232,7 @@ function RmaListPageInner() {
           <button
             key={a}
             type="button"
+            title={RMA_LISTA_ABA_HINTS[a]}
             onClick={() => {
               setAba(a);
               setPage(1);
