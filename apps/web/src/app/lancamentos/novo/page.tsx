@@ -19,6 +19,10 @@ import {
   normalizarUnidade,
   usaSerieLivre,
 } from "@teep/shared";
+import {
+  consumoArvoreComFalta,
+  consumoBaixaArvoreOrigem,
+} from "@/lib/baixaArvoreSaldo";
 
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_ALERTA_EMAILS = 10;
@@ -189,6 +193,10 @@ function NovoLancamentoForm() {
   >([]);
   const [saldoOrigem, setSaldoOrigem] = useState<number | null>(null);
   const [saldoDestino, setSaldoDestino] = useState<number | null>(null);
+  /** Saldos na origem só dos componentes não-fantasma (baixa pela árvore). */
+  const [saldosComponentesOrigem, setSaldosComponentesOrigem] = useState<
+    Record<string, number>
+  >({});
   const [creditoDestino, setCreditoDestino] =
     useState<CreditoDestino>("AGUARDAR_RECEBIMENTO");
   const [clienteId, setClienteId] = useState("");
@@ -291,6 +299,7 @@ function NovoLancamentoForm() {
     setSeries([]);
     setSaldoOrigem(null);
     setSaldoDestino(null);
+    setSaldosComponentesOrigem({});
     setLinhas([newLancamentoLinha()]);
   }, [tipoId, retornoPrefill, transferPrefill]);
 
@@ -560,6 +569,17 @@ function NovoLancamentoForm() {
     let cancelled = false;
     async function loadSaldos() {
       try {
+        // Árvore: o pai não precisa ter saldo na origem — só componentes.
+        if (isBaixaArvore) {
+          setSaldoOrigem(null);
+          if (isTransf && filialDestinoId) {
+            const dest = await fetchSaldoProduto(produto!.id, filialDestinoId);
+            if (!cancelled) setSaldoDestino(dest);
+          } else {
+            setSaldoDestino(null);
+          }
+          return;
+        }
         const origem = await fetchSaldoProduto(produto!.id, filialId);
         if (cancelled) return;
         setSaldoOrigem(origem);
@@ -580,7 +600,7 @@ function NovoLancamentoForm() {
     return () => {
       cancelled = true;
     };
-  }, [multiSkuMode, produto, filialId, filialDestinoId, isTransf]);
+  }, [multiSkuMode, produto, filialId, filialDestinoId, isTransf, isBaixaArvore]);
 
   useEffect(() => {
     if (isRetorno) return;
@@ -639,6 +659,38 @@ function NovoLancamentoForm() {
       cancelled = true;
     };
   }, [isBaixaArvore, produto?.id]);
+
+  useEffect(() => {
+    if (!isBaixaArvore || !filialId || bomPreview.length === 0) {
+      setSaldosComponentesOrigem({});
+      return;
+    }
+    const ids = [
+      ...new Set(
+        bomPreview.filter((b) => !b.fantasma).map((b) => b.produtoFilhoId)
+      ),
+    ];
+    if (ids.length === 0) {
+      setSaldosComponentesOrigem({});
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(ids.map((id) => fetchSaldoProduto(id, filialId)))
+      .then((saldos) => {
+        if (cancelled) return;
+        const next: Record<string, number> = {};
+        ids.forEach((id, i) => {
+          next[id] = saldos[i] ?? 0;
+        });
+        setSaldosComponentesOrigem(next);
+      })
+      .catch(() => {
+        if (!cancelled) setSaldosComponentesOrigem({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isBaixaArvore, filialId, bomPreview]);
 
   useEffect(() => {
     // Prefill do atalho já carregou saídas — não zerar/recarregar.
@@ -1228,6 +1280,7 @@ function NovoLancamentoForm() {
       setSugestoes([]);
       setSaldoOrigem(null);
       setSaldoDestino(null);
+      setSaldosComponentesOrigem({});
       setQuantidade("1");
       setLinhas([newLancamentoLinha()]);
       setObservacao("");
@@ -1264,13 +1317,23 @@ function NovoLancamentoForm() {
   const maxRetornoAberto =
     saidaVinculada?.qtyRestante ?? saidaVinculada?.quantidade;
   const qtdDigitada = Number(quantidade);
+  const consumoArvoreOrigem = isBaixaArvore
+    ? consumoBaixaArvoreOrigem(bomPreview, qtdDigitada)
+    : [];
+  const componentesOrigemFaltantes = consumoArvoreComFalta(
+    consumoArvoreOrigem,
+    saldosComponentesOrigem
+  );
   const avisoSaldoInsuficiente =
     Boolean(produto) &&
+    !isBaixaArvore &&
     !pedeSerieDe(produto, tipo?.controleSerie) &&
     (tipo?.operacao === "SAIDA" || isTransf) &&
     saldoOrigem != null &&
     Number.isFinite(qtdDigitada) &&
     qtdDigitada > saldoOrigem + 1e-9;
+  const avisoComponentesArvore =
+    isBaixaArvore && componentesOrigemFaltantes.length > 0;
   const avisoSeriesSaldo =
     pedeSerieDe(produto, tipo?.controleSerie) &&
     (tipo?.operacao === "SAIDA" || (isTransf && !isBaixaArvore)) &&
@@ -2187,40 +2250,62 @@ function NovoLancamentoForm() {
                     / {normalizarUnidade(produto.unidade || "UN")}
                   </span>
                 </div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
-                  <span>
-                    {isTransf ? "Saldo origem" : "Saldo disponível"}
-                    {filialOrigemLabel
-                      ? ` (${filialOrigemLabel.sigla})`
-                      : ""}
-                    :{" "}
-                    <strong>
-                      {saldoOrigem === null
-                        ? "…"
-                        : formatQtyUnidade(
-                            saldoOrigem,
-                            produto.unidade || "UN"
-                          )}
-                    </strong>
-                  </span>
-                  {isTransf && (
+                {isBaixaArvore ? (
+                  isTransf ? (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
+                      <span>
+                        Saldo do item no destino
+                        {filialDestinoLabel
+                          ? ` (${filialDestinoLabel.sigla})`
+                          : ""}
+                        :{" "}
+                        <strong>
+                          {saldoDestino === null
+                            ? "…"
+                            : formatQtyUnidade(
+                                saldoDestino,
+                                produto.unidade || "UN"
+                              )}
+                        </strong>
+                      </span>
+                    </div>
+                  ) : null
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-slate-700">
                     <span>
-                      Saldo destino
-                      {filialDestinoLabel
-                        ? ` (${filialDestinoLabel.sigla})`
+                      {isTransf ? "Saldo origem" : "Saldo disponível"}
+                      {filialOrigemLabel
+                        ? ` (${filialOrigemLabel.sigla})`
                         : ""}
                       :{" "}
                       <strong>
-                        {saldoDestino === null
+                        {saldoOrigem === null
                           ? "…"
                           : formatQtyUnidade(
-                              saldoDestino,
+                              saldoOrigem,
                               produto.unidade || "UN"
                             )}
                       </strong>
                     </span>
-                  )}
-                </div>
+                    {isTransf && (
+                      <span>
+                        Saldo destino
+                        {filialDestinoLabel
+                          ? ` (${filialDestinoLabel.sigla})`
+                          : ""}
+                        :{" "}
+                        <strong>
+                          {saldoDestino === null
+                            ? "…"
+                            : formatQtyUnidade(
+                                saldoDestino,
+                                produto.unidade || "UN"
+                              )}
+                        </strong>
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2241,8 +2326,16 @@ function NovoLancamentoForm() {
                       {bomPreview.map((b) => {
                         const qtdMont = Number(quantidade) || 0;
                         const cons = b.quantidade * qtdMont;
+                        const disp = saldosComponentesOrigem[b.produtoFilhoId];
+                        const faltaOrigem =
+                          !b.fantasma &&
+                          disp != null &&
+                          cons > disp + 1e-9;
                         return (
-                          <li key={b.produtoFilhoId}>
+                          <li
+                            key={b.produtoFilhoId}
+                            className={faltaOrigem ? "text-amber-950" : undefined}
+                          >
                             {b.produtoFilho.codigo} ×{" "}
                             {formatQtyUnidade(
                               cons,
@@ -2250,7 +2343,12 @@ function NovoLancamentoForm() {
                             )}
                             {b.fantasma
                               ? " (fantasma — não baixa estoque)"
-                              : ""}
+                              : disp == null
+                                ? " — saldo origem…"
+                                : ` — disponível ${formatQtyUnidade(
+                                    disp,
+                                    b.produtoFilho.unidade || "UN"
+                                  )}${filialOrigemLabel ? ` em ${filialOrigemLabel.sigla}` : ""}`}
                           </li>
                         );
                       })}
@@ -2342,6 +2440,23 @@ function NovoLancamentoForm() {
               />
               )
             ) : null}
+
+            {avisoComponentesArvore && (
+              <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Na origem faltam componentes da árvore
+                {filialOrigemLabel
+                  ? ` em ${filialOrigemLabel.sigla}`
+                  : ""}
+                :{" "}
+                {componentesOrigemFaltantes
+                  .map((c) => {
+                    const tem = saldosComponentesOrigem[c.produtoFilhoId] ?? 0;
+                    return `${c.codigo} (precisa ${formatQty(c.quantidade)}, tem ${formatQty(tem)})`;
+                  })
+                  .join("; ")}
+                . O pai não precisa ter saldo neste estoque.
+              </p>
+            )}
 
             {avisoSaldoInsuficiente && (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
