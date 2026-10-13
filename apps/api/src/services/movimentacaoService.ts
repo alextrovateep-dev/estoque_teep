@@ -41,6 +41,7 @@ import {
 } from "./alertaRetornoService";
 import {
   mapaQtyOcupadaPorSaidas,
+  mapaSeriesEmAbertoPorSaidas,
   qtyRestanteSaida,
   saidaTemRetornoAtivo,
 } from "./retornoVinculoHelper";
@@ -182,6 +183,19 @@ export function deveFicarPendenteAprovacao(opts: {
     !opts.usoInternoRma &&
     opts.perfil === "OPERADOR" &&
     opts.requerAprovacao === true
+  );
+}
+
+/** Retorno demo/comodato (e RMA) reativa a mesma unidade SAIDO — não nasce série nova. */
+export function reativarSaidoNoLancamento(opts: {
+  permitirReativarSaido?: boolean;
+  serieLivre: boolean;
+  ehRetorno?: boolean;
+}): boolean {
+  return (
+    opts.permitirReativarSaido === true ||
+    opts.serieLivre ||
+    Boolean(opts.ehRetorno)
   );
 }
 
@@ -455,8 +469,11 @@ export async function criarMovimentacao(
               produtoId: item.produtoId,
               series: seriesNorm,
               quantidade: seriesNorm.length,
-              permitirReativarSaido:
-                input.permitirReativarSaido === true || serieLivre,
+              permitirReativarSaido: reativarSaidoNoLancamento({
+                permitirReativarSaido: input.permitirReativarSaido,
+                serieLivre,
+                ehRetorno: Boolean(tipo.ehRetornoDeId),
+              }),
             });
           }
         }
@@ -818,7 +835,11 @@ export async function criarMovimentacao(
           produtoId: input.produtoId!,
           series: seriesNorm,
           quantidade,
-          permitirReativarSaido: serieLivre,
+          permitirReativarSaido: reativarSaidoNoLancamento({
+            permitirReativarSaido: input.permitirReativarSaido,
+            serieLivre,
+            ehRetorno: Boolean(tipo.ehRetornoDeId || movimentacaoOrigemId),
+          }),
         });
       }
     }
@@ -891,8 +912,11 @@ export async function criarMovimentacao(
           filialId,
           series: seriesNorm,
           quantidade,
-          permitirReativarSaido:
-            input.permitirReativarSaido === true || serieLivre,
+          permitirReativarSaido: reativarSaidoNoLancamento({
+            permitirReativarSaido: input.permitirReativarSaido,
+            serieLivre,
+            ehRetorno: Boolean(tipo.ehRetornoDeId || movimentacaoOrigemId),
+          }),
         });
       } else if (serieLivre) {
         await aplicarSeriesSaidaLivre(tx, {
@@ -1091,7 +1115,12 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
           filialId: mov.filialId,
           series: seriesPend,
           quantidade: qtd,
-          permitirReativarSaido: usaSerieLivre(regraSerieAprov),
+          permitirReativarSaido: reativarSaidoNoLancamento({
+            serieLivre: usaSerieLivre(regraSerieAprov),
+            ehRetorno: Boolean(
+              mov.tipo.ehRetornoDeId || mov.movimentacaoOrigemId
+            ),
+          }),
         });
       } else if (mov.operacao === "SAIDA") {
         const aplicar = usaSerieLivre(regraSerieAprov)
@@ -1734,8 +1763,18 @@ export async function listarSaidasAbertas(opts: {
         id: true,
         codigo: true,
         descricao: true,
+        unidade: true,
         controlaSerie: true,
         precoUnitario: true,
+        configuracaoSerie: {
+          select: {
+            formato: true,
+            geracaoAutomatica: true,
+            tamanhoSequencial: true,
+            prefixoFixo: true,
+            sufixoFixo: true,
+          },
+        },
       },
     },
     filial: { select: { id: true, sigla: true, nome: true } },
@@ -1749,12 +1788,21 @@ export async function listarSaidasAbertas(opts: {
     quantidade: number;
     qtyRestante: number;
     notaFiscalNumero: string | null;
+    seriesEmAberto: string[];
     produto: {
       id: string;
       codigo: string;
       descricao: string;
+      unidade: string;
       controlaSerie: boolean;
       precoUnitario: Prisma.Decimal;
+      configuracaoSerie: {
+        formato: string;
+        geracaoAutomatica: boolean;
+        tamanhoSequencial: number;
+        prefixoFixo: string | null;
+        sufixoFixo: string | null;
+      } | null;
     };
     filial: { id: string; sigla: string; nome: string };
     tipo: { id: string; nome: string };
@@ -1776,21 +1824,27 @@ export async function listarSaidasAbertas(opts: {
     });
     if (rows.length === 0) break;
 
-    const ocupadaMap = await mapaQtyOcupadaPorSaidas(
-      prisma,
-      rows.map((r) => r.id)
-    );
+    const idsPagina = rows.map((r) => r.id);
+    const [ocupadaMap, seriesMap] = await Promise.all([
+      mapaQtyOcupadaPorSaidas(prisma, idsPagina),
+      mapaSeriesEmAbertoPorSaidas(prisma, idsPagina),
+    ]);
 
     for (const r of rows) {
       const qty = Number(r.quantidade);
       const qtyRestante = Math.max(0, qty - (ocupadaMap.get(r.id) || 0));
       if (qtyRestante <= 1e-9) continue;
+      const seriesDaSaida = seriesMap.get(r.id) || [];
+      const cap = Math.max(0, Math.floor(qtyRestante + 1e-9));
+      const seriesEmAberto =
+        cap < seriesDaSaida.length ? seriesDaSaida.slice(0, cap) : seriesDaSaida;
       abertas.push({
         id: r.id,
         dataMovimento: r.dataMovimento,
         quantidade: qty,
         qtyRestante,
         notaFiscalNumero: r.notaFiscalNumero,
+        seriesEmAberto,
         produto: r.produto,
         filial: r.filial,
         tipo: r.tipo,

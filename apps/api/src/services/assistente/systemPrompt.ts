@@ -272,6 +272,7 @@ Mapa de dados TEEP (PostgreSQL — só leitura via tools; sem SQL):
   · Tela Movimentações fica em /relatorios?aba=movimentacoes (não existe mais menu separado)
   · Com permissão: NUNCA diga que não consegue gerar relatório — chame a tool
 - Estoque (saldoAtual por produto×filial; mín/máx do produto) → get_product_stock | get_inventory_balance | list_stock_by_value
+  · “quantos TMP-1144-W no estoque de Vendas?” → get_product_stock com codigoOuNome e filialSigla=Vendas (NUNCA filialId=nome)
 - Números de série / N/S em estoque → list_product_series
 - Movimentacao (lista detalhada) → list_stock_movements; ranking por qty no período → rank_product_movements
 - Transferências entre estoques (cargas da tela Transferências) → list_transfers

@@ -18,6 +18,10 @@ import {
   PREFLIGHT_MESSAGES,
   preflightMicrophoneForSpeech,
 } from "@/lib/speechRecognitionBrowser";
+import {
+  ASSISTENTE_CHAT_MAX_CHARS,
+  clipAssistenteChatTexto,
+} from "@teep/shared";
 
 type ChatDownload = {
   token: string;
@@ -64,7 +68,41 @@ function composeInput(base: string, interim: string, recording: boolean) {
 }
 
 function historyForApi(turns: ChatTurn[]) {
-  return turns.map(({ role, content }) => ({ role, content }));
+  return turns.map(({ role, content }) => ({
+    role,
+    content: clipAssistenteChatTexto(content),
+  }));
+}
+
+function MensagemPaginada({
+  role,
+  content,
+}: {
+  role: "user" | "assistant";
+  content: string;
+}) {
+  const [expandido, setExpandido] = useState(false);
+  const longo = content.length > ASSISTENTE_CHAT_MAX_CHARS;
+  const shown =
+    !longo || expandido ? content : clipAssistenteChatTexto(content);
+  return (
+    <>
+      {role === "assistant" ? (
+        <MarkdownMessage content={shown} />
+      ) : (
+        shown
+      )}
+      {longo ? (
+        <button
+          type="button"
+          className="mt-1 block text-xs font-medium text-brand hover:underline"
+          onClick={() => setExpandido((v) => !v)}
+        >
+          {expandido ? "Ver menos" : "Ver restante"}
+        </button>
+      ) : null}
+    </>
+  );
 }
 
 export function AssistenteEstoque({
@@ -211,7 +249,7 @@ export function AssistenteEstoque({
       const r = await api<ChatResponse>("/assistente/chat", {
         method: "POST",
         body: JSON.stringify({
-          message: text,
+          message: clipAssistenteChatTexto(text),
           history: historyForApi(nextTurns.slice(0, -1).slice(-10)),
           filialId: filialId || null,
         }),
@@ -354,11 +392,7 @@ export function AssistenteEstoque({
                     : "mr-6 rounded-2xl rounded-bl-md bg-slate-50 px-3 py-2 text-sm text-slate-700 sm:mr-12"
                 }
               >
-                {t.role === "assistant" ? (
-                  <MarkdownMessage content={t.content} />
-                ) : (
-                  t.content
-                )}
+                <MensagemPaginada role={t.role} content={t.content} />
               </div>
               {t.role === "assistant" && t.downloads && t.downloads.length > 0 && (
                 <div className="mr-6 mt-1.5 flex flex-wrap gap-2 sm:mr-12">

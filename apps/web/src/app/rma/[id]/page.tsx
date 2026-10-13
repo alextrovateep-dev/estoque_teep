@@ -113,10 +113,6 @@ const ITEM_STATUS: Record<string, string> = {
   CANCELADO: "Cancelado",
 };
 
-const ETAPA_LABEL: Record<string, string> = {
-  ...RMA_ITEM_ETAPA_LABELS,
-};
-
 const ETAPAS_SAIDA = new Set(["AGUARDANDO_ENVIO", "NAO_APROVADO"]);
 
 function etapaBadgeClass(etapa: string) {
@@ -280,35 +276,45 @@ export default function RmaDetalhePage() {
   const addSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const addSearchAbort = useRef<AbortController | null>(null);
 
+  const applyRma = useCallback((r: Rma) => {
+    setRow(r);
+    setNfEnt(r.nfEntradaNumero || "");
+    setNfSai(r.nfSaidaNumero || "");
+    setObs(r.observacao || "");
+    setPrazoManutencao(ymdFromApi(r.prazoManutencao) || "");
+    setFreteModalidade(
+      r.freteModalidade === "TRANSPORTADORA" ||
+        r.freteModalidade === "RETIRO_PROPRIO" ||
+        r.freteModalidade === "ENTREGA_TEEP"
+        ? r.freteModalidade
+        : ""
+    );
+    setFreteTransportadora(r.transportadora || "");
+    setFreteCobrado(
+      r.freteCobrado === true ? "true" : r.freteCobrado === false ? "false" : ""
+    );
+  }, []);
+
   const load = useCallback(
     async (signal?: { cancelled: boolean }) => {
       setError("");
       try {
         const r = await api<Rma>(`/rma/${id}`);
         if (signal?.cancelled) return;
-        setRow(r);
-        setNfEnt(r.nfEntradaNumero || "");
-        setNfSai(r.nfSaidaNumero || "");
-        setObs(r.observacao || "");
-        setPrazoManutencao(ymdFromApi(r.prazoManutencao) || "");
-        setFreteModalidade(
-          r.freteModalidade === "TRANSPORTADORA" ||
-            r.freteModalidade === "RETIRO_PROPRIO" ||
-            r.freteModalidade === "ENTREGA_TEEP"
-            ? r.freteModalidade
-            : ""
-        );
-        setFreteTransportadora(r.transportadora || "");
-        setFreteCobrado(
-          r.freteCobrado === true ? "true" : r.freteCobrado === false ? "false" : ""
-        );
+        applyRma(r);
       } catch (e) {
         if (signal?.cancelled) return;
         setError(e instanceof Error ? e.message : "Erro");
       }
     },
-    [id]
+    [id, applyRma]
   );
+
+  async function persistRma(path: string, init: RequestInit) {
+    const r = await api<Rma>(path, init);
+    applyRma(r);
+    return r;
+  }
 
   useEffect(() => {
     const signal = { cancelled: false };
@@ -337,7 +343,7 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/frete`, {
+      await persistRma(`/rma/${id}/frete`, {
         method: "PATCH",
         body: JSON.stringify({
           freteModalidade,
@@ -349,7 +355,6 @@ export default function RmaDetalhePage() {
         }),
       });
       setMsg("Frete salvo");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -399,7 +404,7 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/financeiro`, {
+      await persistRma(`/rma/${id}/financeiro`, {
         method: "PATCH",
         body: JSON.stringify({
           nfEntradaNumero: nfEnt.trim() || null,
@@ -411,7 +416,6 @@ export default function RmaDetalhePage() {
         }),
       });
       setMsg("Dados do processo salvos");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -429,12 +433,11 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/financeiro`, {
+      await persistRma(`/rma/${id}/financeiro`, {
         method: "PATCH",
         body: JSON.stringify({ prazoManutencao: ymd.trim() || null }),
       });
       setMsg("Prazo da manutenção salvo");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -475,13 +478,12 @@ export default function RmaDetalhePage() {
       } else {
         body.cobrou = null;
       }
-      await api(`/rma/${id}/itens/${itemId}/financeiro`, {
+      await persistRma(`/rma/${id}/itens/${itemId}/financeiro`, {
         method: "PATCH",
         body: JSON.stringify(body),
       });
       setMsg("Cobrança do item salva");
       setItemFinEditId(null);
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -559,7 +561,7 @@ export default function RmaDetalhePage() {
             : labelRaw.slice(0, 120);
         }
       }
-      await api(`/rma/${id}/anexos`, {
+      await persistRma(`/rma/${id}/anexos`, {
         method: "POST",
         body: JSON.stringify({
           tipo,
@@ -575,7 +577,6 @@ export default function RmaDetalhePage() {
             ? "Nota atualizada"
             : "Anexo enviado"
       );
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -613,7 +614,7 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/devolver`, {
+      await persistRma(`/rma/${id}/devolver`, {
         method: "POST",
         body: JSON.stringify({
           itemIds,
@@ -631,7 +632,6 @@ export default function RmaDetalhePage() {
       setTrocaItemId(null);
       setPainelAcao(null);
       setMotivoAcao("");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -648,14 +648,13 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/cancelar`, {
+      await persistRma(`/rma/${id}/cancelar`, {
         method: "POST",
         body: JSON.stringify({ observacao: motivo }),
       });
       setMsg("RMA cancelado. Entradas estornadas quando havia estoque.");
       setPainelAcao(null);
       setMotivoAcao("");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -672,14 +671,13 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/excluir-abertura`, {
+      await persistRma(`/rma/${id}/excluir-abertura`, {
         method: "POST",
         body: JSON.stringify({ observacao: motivo }),
       });
       setMsg("Abertura excluída. Histórico permanece em Cancelados.");
       setPainelAcao(null);
       setMotivoAcao("");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -700,14 +698,13 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/sem-cobranca`, {
+      await persistRma(`/rma/${id}/sem-cobranca`, {
         method: "POST",
         body: JSON.stringify({ itemIds: [itemId], observacao: obs }),
       });
       setMsg("Laudo aprovado sem cobrança. O item segue o fluxo.");
       setSemCobrancaItemId(null);
       setSemCobrancaObs("");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -723,13 +720,12 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/cliente`, {
+      await persistRma(`/rma/${id}/cliente`, {
         method: "PATCH",
         body: JSON.stringify({ clienteId: clienteIdEdit }),
       });
       setMsg("Cliente atualizado");
       setEditCliente(false);
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -746,14 +742,13 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/itens/${removerItemId}/remover`, {
+      await persistRma(`/rma/${id}/itens/${removerItemId}/remover`, {
         method: "POST",
         body: JSON.stringify({ observacao: motivo }),
       });
       setMsg("Item removido. Entrada estornada.");
       setRemoverItemId(null);
       setMotivoAcao("");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -802,7 +797,7 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/itens`, {
+      await persistRma(`/rma/${id}/itens`, {
         method: "POST",
         body: JSON.stringify({
           produtoId: addProdutoId,
@@ -815,7 +810,6 @@ export default function RmaDetalhePage() {
       setAddProdutoQuery("");
       setAddProdutoSugestoes([]);
       setAddSerie("");
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -851,13 +845,12 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/destinatarios`, {
+      await persistRma(`/rma/${id}/destinatarios`, {
         method: "PATCH",
         body: JSON.stringify({ destinatarioIds: destIdsEdit }),
       });
       setMsg("Destinatários atualizados");
       setEditDest(false);
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -921,13 +914,12 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/comercial`, {
+      await persistRma(`/rma/${id}/comercial`, {
         method: "PATCH",
         body: JSON.stringify({ responsavelComercialId: comercialIdEdit }),
       });
       setMsg("Responsável comercial atualizado");
       setEditComercial(false);
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -955,13 +947,12 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/modalidade`, {
+      await persistRma(`/rma/${id}/modalidade`, {
         method: "PATCH",
         body: JSON.stringify({ modalidadeAquisicao: modalidadeEdit }),
       });
       setMsg("Modalidade de aquisição atualizada");
       setEditModalidade(false);
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -977,7 +968,7 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      const updated = await api<Rma>(
+      const updated = await persistRma(
         `/rma/${id}/itens/${itemId}/manutencao-realizada`,
         { method: "POST" }
       );
@@ -987,7 +978,6 @@ export default function RmaDetalhePage() {
           ? "Manutenção marcada — item liberado para devolver/trocar"
           : "Manutenção marcada — item aguarda checklist de liberação"
       );
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro");
     } finally {
@@ -1005,13 +995,18 @@ export default function RmaDetalhePage() {
     setAutorizadorId("");
     setSeriesDisp([]);
     try {
-      const [list, defs] = await Promise.all([
-        api<FilialOpt[]>("/filiais"),
-        api<RmaDefaults>("/rma/defaults"),
-      ]);
-      const ativas = (list || []).filter((f) => f.ativo !== false);
-      setFiliais(ativas);
-      setRmaDefaults(defs);
+      let ativas = filiais;
+      let defs = rmaDefaults;
+      if (ativas.length === 0 || !defs) {
+        const [list, loaded] = await Promise.all([
+          api<FilialOpt[]>("/filiais"),
+          api<RmaDefaults>("/rma/defaults"),
+        ]);
+        ativas = (list || []).filter((f) => f.ativo !== false);
+        defs = loaded;
+        setFiliais(ativas);
+        setRmaDefaults(defs);
+      }
 
       // Defaults vêm da API (env / flag estoqueRma / descarte) — sem estoque chumbado
       const descarteId = defs.filialDescarteId || "";
@@ -1121,7 +1116,7 @@ export default function RmaDetalhePage() {
     setError("");
     setMsg("");
     try {
-      await api(`/rma/${id}/trocar`, {
+      await persistRma(`/rma/${id}/trocar`, {
         method: "POST",
         body: JSON.stringify({
           itemId: trocaItemId,
@@ -1139,7 +1134,6 @@ export default function RmaDetalhePage() {
       setMsg("Troca concluída — série boa enviada ao cliente; série ruim no descarte.");
       setTrocaItemId(null);
       setTrocaErro("");
-      await load();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Erro ao confirmar troca";
       falhaLocal(msg);
@@ -2280,7 +2274,9 @@ export default function RmaDetalhePage() {
                         i.etapa || "AGUARDANDO_RECEBIMENTO"
                       )}`}
                     >
-                      {ETAPA_LABEL[i.etapa || ""] ||
+                      {(RMA_ITEM_ETAPA_LABELS as Record<string, string>)[
+                        i.etapa || "AGUARDANDO_RECEBIMENTO"
+                      ] ||
                         i.etapa ||
                         "Aguardando inspeção / diagnóstico"}
                     </span>
@@ -2357,8 +2353,12 @@ export default function RmaDetalhePage() {
                     numeroSerie={i.unidadeSerie?.numeroSerie || null}
                     bloqueioNfRetorno={bloqueioNfRetorno}
                     bloqueioFrete={faltaFrete}
-                    onUpdated={async () => {
-                      await load();
+                    onUpdated={async (proc) => {
+                      if (proc && typeof proc === "object" && "itens" in proc) {
+                        applyRma(proc as Rma);
+                      } else {
+                        await load();
+                      }
                     }}
                     onError={(msg) => setError(msg)}
                   />
@@ -2774,11 +2774,6 @@ export default function RmaDetalhePage() {
                 )}
                 {i.observacao && i.status === "DESCARTADO" && (
                   <p className="mt-1 text-xs text-slate-600">{i.observacao}</p>
-                )}
-                {i.substituicaoAutorizadaPor && (
-                  <p className="mt-1 text-xs text-slate-600">
-                    Troca autorizada por {i.substituicaoAutorizadaPor.nome}
-                  </p>
                 )}
               </li>
             );

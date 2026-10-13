@@ -32,7 +32,6 @@ type Row = {
   filial: { id: string; sigla: string; nome: string };
   responsavelComercial?: { id: string; nome: string } | null;
   itens?: Array<{ id: string; status: string; etapa?: string; cobrou?: boolean | null }>;
-  _count: { itens: number };
 };
 
 type Cliente = {
@@ -421,7 +420,8 @@ function RmaListPageInner() {
                 </span>
               </div>
               <div className="mt-1 text-slate-600">
-                {r._count.itens} item{r._count.itens === 1 ? "" : "s"}
+                {(r.itens?.length ?? 0)} item
+                {(r.itens?.length ?? 0) === 1 ? "" : "s"}
                 {r.nfEntradaNumero ? ` · NF ent. ${r.nfEntradaNumero}` : ""}
                 {r.nfSaidaNumero ? ` · NF saí. ${r.nfSaidaNumero}` : ""}
                 {(() => {

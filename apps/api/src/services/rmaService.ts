@@ -497,13 +497,6 @@ export function podeDecidirAprovacaoRma(
   return Boolean(responsavelComercialId && user.id === responsavelComercialId);
 }
 
-function podeDecidirAprovacao(
-  user: AuthUser,
-  responsavelComercialId: string | null | undefined
-) {
-  return podeDecidirAprovacaoRma(user, responsavelComercialId);
-}
-
 
 function emailsAlertaDoProcessoRma(
   proc: {
@@ -889,7 +882,6 @@ export async function listarRma(
         itens: {
           select: { id: true, status: true, etapa: true, cobrou: true },
         },
-        _count: { select: { itens: true } },
       },
       orderBy: { criadoEm: "desc" },
       skip: (page - 1) * pageSize,
@@ -907,6 +899,33 @@ export async function obterRma(user: AuthUser, id: string) {
   });
   if (!row) throw new AppError(404, "Processo RMA não encontrado");
   assertPodeVerProcesso(user, row.filialId);
+  return row;
+}
+
+const rmaAcessoSelect = {
+  id: true,
+  status: true,
+  filialId: true,
+  responsavelComercialId: true,
+  nfSaidaNumero: true,
+} as const;
+
+/** Acesso + status, sem o grafo de itens/checklists/orçamentos. */
+export async function assertRmaVisivel(user: AuthUser, id: string) {
+  const row = await prisma.rmaProcesso.findUnique({
+    where: { id },
+    select: rmaAcessoSelect,
+  });
+  if (!row) throw new AppError(404, "Processo RMA não encontrado");
+  assertPodeVerProcesso(user, row.filialId);
+  return row;
+}
+
+export async function assertRmaAberto(user: AuthUser, id: string) {
+  const row = await assertRmaVisivel(user, id);
+  if (row.status !== "ABERTO") {
+    throw new AppError(400, "Só permitido em RMA aberto");
+  }
   return row;
 }
 
@@ -1329,7 +1348,7 @@ export async function registrarAprovacaoManutencaoRmaItem(
   if (proc.status !== "ABERTO") {
     throw new AppError(400, "Só é possível decidir em RMA aberto");
   }
-  if (!podeDecidirAprovacao(user, proc.responsavelComercialId)) {
+  if (!podeDecidirAprovacaoRma(user, proc.responsavelComercialId)) {
     throw new AppError(
       403,
       "Apenas o responsável comercial (ou Gerente/Admin) pode registrar a decisão"
@@ -1350,7 +1369,8 @@ export async function registrarAprovacaoManutencaoRmaItem(
       processoId,
       itemId,
       input.decisao === "APROVADA" ? "APROVADO" : "RECUSADO",
-      input.observacao
+      input.observacao,
+      { resposta: "rma" }
     );
   }
   await aplicarAprovacaoItem(user, processoId, itemId, input);
@@ -2251,7 +2271,7 @@ export async function aprovarSemCobrancaRma(
   if (proc.status !== "ABERTO") {
     throw new AppError(400, "Só é possível aprovar sem cobrança em RMA aberto");
   }
-  if (!podeDecidirAprovacao(user, proc.responsavelComercialId)) {
+  if (!podeDecidirAprovacaoRma(user, proc.responsavelComercialId)) {
     throw new AppError(
       403,
       "Apenas o responsável comercial (ou Gerente/Admin) pode aprovar sem cobrança"

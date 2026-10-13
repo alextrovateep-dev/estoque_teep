@@ -39,6 +39,8 @@ import { produtoTemChecklistAtivo } from "../lib/rmaChecklist";
 import {
   exigirNfRetornoParaLiberacao,
   destinatarioIdsAlertaRma,
+  assertRmaAberto,
+  assertRmaVisivel,
   obterRma,
   podeDecidirAprovacaoRma,
 } from "./rmaService";
@@ -63,12 +65,6 @@ const pecaProdutoSelect = {
   descricao: true,
   precoUnitario: true,
 } as const;
-
-function assertProcessoAberto(status: string) {
-  if (status !== "ABERTO") {
-    throw new AppError(400, "Só permitido em RMA aberto");
-  }
-}
 
 async function produtoTemChecklistRecebimento(produtoId: string) {
   return produtoTemChecklistAtivo(produtoId, "RECEBIMENTO");
@@ -384,8 +380,7 @@ export async function iniciarOuObterChecklist(
   itemId: string,
   tipo: RmaChecklistTipo
 ) {
-  const proc = await obterRma(user, processoId);
-  assertProcessoAberto(proc.status);
+  await assertRmaAberto(user, processoId);
   const item = await loadItemNoProcesso(processoId, itemId);
 
   if (tipo === "RECEBIMENTO") {
@@ -588,8 +583,7 @@ export async function salvarChecklistRespostas(
   },
   concluir: boolean
 ) {
-  const proc = await obterRma(user, processoId);
-  assertProcessoAberto(proc.status);
+  const proc = await assertRmaAberto(user, processoId);
   const item = await loadItemNoProcesso(processoId, itemId);
 
   if (tipo === "RECEBIMENTO") {
@@ -731,8 +725,7 @@ export async function salvarDiagnosticoEPlano(
   },
   concluir: boolean
 ) {
-  const proc = await obterRma(user, processoId);
-  assertProcessoAberto(proc.status);
+  await assertRmaAberto(user, processoId);
   const item = await loadItemNoProcesso(processoId, itemId);
 
   if (!rmaEtapaEmRecebimento(item.etapa)) {
@@ -862,10 +855,10 @@ export async function salvarOrcamentoRmaItem(
       origem: "SERVICO" | "PECA" | "EXTRA";
       tempoMinutos?: number | null;
     }>;
-  }
+  },
+  opts?: { skipAcesso?: boolean; devolverProcesso?: boolean }
 ) {
-  const proc = await obterRma(user, processoId);
-  assertProcessoAberto(proc.status);
+  if (!opts?.skipAcesso) await assertRmaAberto(user, processoId);
   const item = await loadItemNoProcesso(processoId, itemId);
 
   if (
@@ -1013,6 +1006,7 @@ export async function salvarOrcamentoRmaItem(
     throw e;
   }
 
+  if (opts?.devolverProcesso === false) return null;
   return obterRma(user, processoId);
 }
 
@@ -1021,10 +1015,13 @@ export async function enviarOrcamentoRmaItem(
   user: AuthUser,
   processoId: string,
   itemId: string,
-  opts?: { silenciarAlerta?: boolean }
+  opts?: {
+    silenciarAlerta?: boolean;
+    devolverProcesso?: boolean;
+    skipAcesso?: boolean;
+  }
 ) {
-  const proc = await obterRma(user, processoId);
-  assertProcessoAberto(proc.status);
+  if (!opts?.skipAcesso) await assertRmaAberto(user, processoId);
   const item = await loadItemNoProcesso(processoId, itemId);
   if (item.etapa !== "AGUARDANDO_ORCAMENTO") {
     throw new AppError(400, "Item não está aguardando orçamento");
@@ -1059,6 +1056,7 @@ export async function enviarOrcamentoRmaItem(
     avisarOrcamentoFechado(user, processoId, [itemId]);
   }
 
+  if (opts?.devolverProcesso === false) return null;
   return obterRma(user, processoId);
 }
 
@@ -1067,10 +1065,10 @@ export async function decidirOrcamentoRmaItem(
   processoId: string,
   itemId: string,
   decisao: "APROVADO" | "RECUSADO",
-  observacao?: string | null
+  observacao?: string | null,
+  opts?: { resposta?: "rma" | "orcamento" }
 ) {
-  const proc = await obterRma(user, processoId);
-  assertProcessoAberto(proc.status);
+  const proc = await assertRmaAberto(user, processoId);
   if (!podeDecidirAprovacaoRma(user, proc.responsavelComercialId)) {
     throw new AppError(
       403,
@@ -1140,26 +1138,17 @@ export async function decidirOrcamentoRmaItem(
     }
   });
 
-  const atualizado = await obterRma(user, processoId);
-  const itemAtual = (atualizado.itens || []).find((i) => i.id === itemId);
-  const destIds = destinatarioIdsAlertaRma(atualizado);
-  if (destIds.length > 0 && itemAtual) {
-    const sn = itemAtual.unidadeSerie?.numeroSerie
-      ? ` · N/S ${itemAtual.unidadeSerie.numeroSerie}`
-      : "";
-    notificarRmaOrcamentoDecisao({
-      processoId,
-      clienteNome: atualizado.cliente.nome,
-      destinatarioIds: destIds,
-      decisao,
-      itemResumo: `${itemAtual.produto.codigo}${sn}`,
-      total: decisao === "APROVADO" ? total : null,
-      responsavelNome: user.nome,
-      observacao: observacao?.trim() || null,
-    });
-  }
+  avisarOrcamentoDecisao(
+    user,
+    processoId,
+    itemId,
+    decisao,
+    total,
+    observacao
+  );
 
-  return atualizado;
+  if (opts?.resposta === "rma") return obterRma(user, processoId);
+  return obterOrcamentoAgregadoRma(user, processoId);
 }
 
 export async function reabrirOrcamentoRmaItem(
@@ -1167,8 +1156,7 @@ export async function reabrirOrcamentoRmaItem(
   processoId: string,
   itemId: string
 ) {
-  const proc = await obterRma(user, processoId);
-  assertProcessoAberto(proc.status);
+  await assertRmaAberto(user, processoId);
   const item = await loadItemNoProcesso(processoId, itemId);
   const bloqueio = mensagemBloqueioReabrirOrcamento({
     orcamentoStatus: item.orcamento?.status,
@@ -1197,7 +1185,7 @@ export async function reabrirOrcamentoRmaItem(
     }
   });
 
-  return obterRma(user, processoId);
+  return obterOrcamentoAgregadoRma(user, processoId);
 }
 
 /** Monta linhas iniciais do orçamento a partir do plano (preços do cadastro). */
@@ -1206,45 +1194,15 @@ export async function sugerirLinhasOrcamentoDoPlano(
   processoId: string,
   itemId: string
 ) {
-  await obterRma(user, processoId);
+  await assertRmaVisivel(user, processoId);
   const item = await loadItemNoProcesso(processoId, itemId);
   if (!item.manutencaoPlano) {
     throw new AppError(400, "Plano de manutenção ausente");
   }
-  const linhas: Array<{
-    descricao: string;
-    produtoId: string | null;
-    quantidade: number;
-    valorUnitario: number;
-    origem: "SERVICO" | "PECA";
-    tempoMinutos: number | null;
-  }> = [];
-
-  for (const s of item.manutencaoPlano.servicos) {
-    const tempo = (s as { tempoMinutos?: number | null }).tempoMinutos ?? null;
-    linhas.push({
-      descricao: s.descricao,
-      produtoId: null,
-      quantidade: 1,
-      valorUnitario: 0,
-      origem: "SERVICO",
-      tempoMinutos: tempo,
-    });
-  }
-  for (const p of item.manutencaoPlano.pecas) {
-    linhas.push({
-      descricao: `${p.produto.codigo} — ${p.produto.descricao}`,
-      produtoId: p.produtoId,
-      quantidade: Number(p.quantidade),
-      valorUnitario: Number(p.produto.precoUnitario),
-      origem: "PECA",
-      tempoMinutos: null,
-    });
-  }
   return {
     diagnostico: item.diagnostico,
     plano: item.manutencaoPlano,
-    linhas,
+    linhas: linhasSugeridasDoPlano(item.manutencaoPlano),
     orcamento: item.orcamento,
   };
 }
@@ -1255,6 +1213,57 @@ const ETAPAS_ORCAMENTO_PAGE = new Set([
   "AGUARDANDO_MANUTENCAO",
   "NAO_APROVADO",
 ]);
+
+function linhasSugeridasDoPlano(plano: {
+  servicos?: Array<{ descricao: string; tempoMinutos?: number | null }>;
+  pecas?: Array<{
+    produtoId: string;
+    quantidade: unknown;
+    produto: { codigo: string; descricao: string; precoUnitario: unknown };
+  }>;
+}) {
+  return [
+    ...(plano.servicos || []).map((s) => ({
+      descricao: s.descricao,
+      produtoId: null as string | null,
+      quantidade: 1,
+      valorUnitario: 0,
+      origem: "SERVICO" as const,
+      tempoMinutos: s.tempoMinutos ?? null,
+    })),
+    ...(plano.pecas || []).map((p) => ({
+      descricao: `${p.produto.codigo} — ${p.produto.descricao}`,
+      produtoId: p.produtoId as string | null,
+      quantidade: Number(p.quantidade),
+      valorUnitario: Number(p.produto.precoUnitario),
+      origem: "PECA" as const,
+      tempoMinutos: null as number | null,
+    })),
+  ];
+}
+
+function itemEntraOrcamentoAgregado(
+  i: {
+    status: string;
+    etapa?: string | null;
+    orcamento?: unknown;
+    diagnostico?: unknown;
+    manutencaoPlano?: unknown;
+  },
+  arquivo: boolean
+) {
+  if (i.status === "CANCELADO") return false;
+  if (arquivo) return Boolean(i.orcamento);
+  if (!["EM_ESTOQUE", "SEM_MANUTENCAO"].includes(i.status)) return false;
+  if (
+    !(
+      ETAPAS_ORCAMENTO_PAGE.has(i.etapa || "") || Boolean(i.orcamento)
+    )
+  ) {
+    return false;
+  }
+  return Boolean(i.diagnostico || i.manutencaoPlano || i.orcamento);
+}
 
 function moneyBr(n: number) {
   return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
@@ -1291,49 +1300,20 @@ export async function obterOrcamentoAgregadoRma(
   processoId: string,
   opts?: { arquivo?: boolean }
 ) {
-  const arquivo = Boolean(opts?.arquivo);
+  const arquivoPedido = Boolean(opts?.arquivo);
   const proc = await obterRma(user, processoId);
-  const itens = (proc.itens || [])
-    .filter((i) => {
-      if (i.status === "CANCELADO") return false;
-      if (arquivo) {
-        return Boolean(i.orcamento);
-      }
-      return (
-        ["EM_ESTOQUE", "SEM_MANUTENCAO"].includes(i.status) &&
-        (ETAPAS_ORCAMENTO_PAGE.has(i.etapa || "") || Boolean(i.orcamento))
-      );
-    })
-    .filter((i) => {
-      if (arquivo) return true;
-      return (
-        Boolean(i.diagnostico) ||
-        Boolean(i.manutencaoPlano) ||
-        Boolean(i.orcamento)
-      );
-    })
+  const todos = proc.itens || [];
+  let filtrados = todos.filter((i) =>
+    itemEntraOrcamentoAgregado(i, arquivoPedido)
+  );
+  if (!arquivoPedido && (proc.status !== "ABERTO" || filtrados.length === 0)) {
+    filtrados = todos.filter((i) => itemEntraOrcamentoAgregado(i, true));
+  }
+  const itens = filtrados
     .map((i) => {
       const sugeridas =
         i.manutencaoPlano && (!i.orcamento || i.orcamento.linhas.length === 0)
-          ? [
-              ...(i.manutencaoPlano.servicos || []).map((s) => ({
-                descricao: s.descricao,
-                produtoId: null as string | null,
-                quantidade: 1,
-                valorUnitario: 0,
-                origem: "SERVICO" as const,
-                tempoMinutos:
-                  (s as { tempoMinutos?: number | null }).tempoMinutos ?? null,
-              })),
-              ...(i.manutencaoPlano.pecas || []).map((p) => ({
-                descricao: `${p.produto.codigo} — ${p.produto.descricao}`,
-                produtoId: p.produtoId as string | null,
-                quantidade: Number(p.quantidade),
-                valorUnitario: Number(p.produto.precoUnitario),
-                origem: "PECA" as const,
-                tempoMinutos: null as number | null,
-              })),
-            ]
+          ? linhasSugeridasDoPlano(i.manutencaoPlano)
           : null;
 
       const linhas =
@@ -1426,13 +1406,20 @@ export async function salvarOrcamentoAgregadoRma(
     }>;
   }
 ) {
+  await assertRmaAberto(user, processoId);
   for (const row of input.itens) {
-    await salvarOrcamentoRmaItem(user, processoId, row.itemId, {
-      maoDeObra: 0,
-      desconto: row.desconto ?? 0,
-      observacaoComercial: row.observacaoComercial,
-      linhas: row.linhas,
-    });
+    await salvarOrcamentoRmaItem(
+      user,
+      processoId,
+      row.itemId,
+      {
+        maoDeObra: 0,
+        desconto: row.desconto ?? 0,
+        observacaoComercial: row.observacaoComercial,
+        linhas: row.linhas,
+      },
+      { skipAcesso: true, devolverProcesso: false }
+    );
   }
   return obterOrcamentoAgregadoRma(user, processoId);
 }
@@ -1443,9 +1430,12 @@ export async function enviarOrcamentoAgregadoRma(
   itemIds: string[]
 ) {
   const uniq = [...new Set(itemIds)];
+  if (uniq.length > 0) await assertRmaAberto(user, processoId);
   for (const itemId of uniq) {
     await enviarOrcamentoRmaItem(user, processoId, itemId, {
       silenciarAlerta: true,
+      devolverProcesso: false,
+      skipAcesso: true,
     });
   }
   if (uniq.length > 0) {
@@ -1488,24 +1478,101 @@ function resumoItemOrcamento(item: {
   return `${item.produto.codigo}${sn}${valor}`;
 }
 
+function avisarOrcamentoDecisao(
+  user: AuthUser,
+  processoId: string,
+  itemId: string,
+  decisao: "APROVADO" | "RECUSADO",
+  total: number,
+  observacao?: string | null
+) {
+  void prisma.rmaProcesso
+    .findUnique({
+      where: { id: processoId },
+      select: {
+        criadoPorId: true,
+        criadoPor: { select: { id: true } },
+        responsavelComercialId: true,
+        cliente: { select: { nome: true } },
+        destinatarios: {
+          select: { usuario: { select: { id: true } } },
+        },
+        itens: {
+          where: { id: itemId },
+          take: 1,
+          select: {
+            produto: { select: { codigo: true } },
+            unidadeSerie: { select: { numeroSerie: true } },
+          },
+        },
+      },
+    })
+    .then((proc) => {
+      if (!proc) return;
+      const destIds = destinatarioIdsAlertaRma(proc);
+      const itemAtual = proc.itens[0];
+      if (destIds.length === 0 || !itemAtual) return;
+      const sn = itemAtual.unidadeSerie?.numeroSerie
+        ? ` · N/S ${itemAtual.unidadeSerie.numeroSerie}`
+        : "";
+      notificarRmaOrcamentoDecisao({
+        processoId,
+        clienteNome: proc.cliente.nome,
+        destinatarioIds: destIds,
+        decisao,
+        itemResumo: `${itemAtual.produto.codigo}${sn}`,
+        total: decisao === "APROVADO" ? total : null,
+        responsavelNome: user.nome,
+        observacao: observacao?.trim() || null,
+      });
+    })
+    .catch(() => {
+      /* alerta não bloqueia o fluxo */
+    });
+}
+
 function avisarOrcamentoFechado(
   user: AuthUser,
   processoId: string,
   itemIds: string[]
 ) {
-  void obterRma(user, processoId)
+  void prisma.rmaProcesso
+    .findUnique({
+      where: { id: processoId },
+      select: {
+        criadoPorId: true,
+        criadoPor: { select: { id: true } },
+        responsavelComercialId: true,
+        cliente: { select: { nome: true } },
+        destinatarios: {
+          select: { usuario: { select: { id: true } } },
+        },
+        itens: {
+          where: { id: { in: itemIds } },
+          select: {
+            id: true,
+            produto: { select: { codigo: true } },
+            unidadeSerie: { select: { numeroSerie: true } },
+            orcamento: {
+              select: {
+                maoDeObra: true,
+                desconto: true,
+                linhas: { select: { quantidade: true, valorUnitario: true } },
+              },
+            },
+          },
+        },
+      },
+    })
     .then((proc) => {
+      if (!proc) return;
       const destIds = destinatarioIdsAlertaRma(proc);
       if (destIds.length === 0) return;
-      const idSet = new Set(itemIds);
-      const itensResumo = (proc.itens || [])
-        .filter((i) => idSet.has(i.id))
-        .map((i) => resumoItemOrcamento(i));
       notificarRmaOrcamentoPronto({
         processoId,
         clienteNome: proc.cliente.nome,
         destinatarioIds: destIds,
-        itensResumo,
+        itensResumo: (proc.itens || []).map((i) => resumoItemOrcamento(i)),
         responsavelNome: user.nome,
       });
     })
@@ -1868,7 +1935,8 @@ export async function exportarLaudoRmaItemPdf(
   tipo: "RECEBIMENTO" | "LIBERACAO"
 ) {
   const proc = await obterRma(user, processoId);
-  const item = await loadItemNoProcesso(processoId, itemId);
+  const item = (proc.itens || []).find((i) => i.id === itemId);
+  if (!item) throw new AppError(404, "Item do RMA não encontrado");
   const short = processoId.slice(0, 8);
   const exec = (item.checklistExecucoes || []).find((e) => e.tipo === tipo);
   const temDiag = Boolean(item.diagnostico);

@@ -100,6 +100,9 @@ function formatApiError(body: unknown, status: number): string {
     return "Serviço temporariamente indisponível. Tente de novo em instantes.";
   }
   if (status === 400) return MSG_VALIDACAO_GENERICA;
+  if (status === 500) {
+    return "A IA não conseguiu concluir a consulta. Tente de novo em instantes.";
+  }
   if (status === 0) {
     return "Não foi possível contactar a API. Verifique sua conexão.";
   }

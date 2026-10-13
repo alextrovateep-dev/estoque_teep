@@ -6,6 +6,10 @@ import { operadorFilialIds } from "../../lib/filialScope";
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 /**
  * Resolve filial de trabalho para tools do assistente.
  * OPERADOR: nunca retorna null se houver vínculo (usa principal ou a 1ª).

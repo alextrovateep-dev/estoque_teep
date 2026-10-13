@@ -145,7 +145,7 @@ type Props = {
   bloqueioNfRetorno?: string | null;
   /** Frete do processo — obrigatório para concluir a liberação / envio */
   bloqueioFrete?: string | null;
-  onUpdated: () => Promise<void> | void;
+  onUpdated: (processo?: unknown) => Promise<void> | void;
   onError: (msg: string) => void;
 };
 
@@ -452,7 +452,7 @@ export function RmaItemWorkflowPanel({
       if (execSalva?.template?.itens?.length) {
         setRespMap(respMapFromExec(execSalva));
       }
-      await onUpdated();
+      await onUpdated(saved);
       reportOk(
         concluir ? "Checklist concluído." : "Checklist salvo."
       );
@@ -547,11 +547,11 @@ export function RmaItemWorkflowPanel({
       const path = concluir
         ? `/rma/${processoId}/itens/${item.id}/diagnostico-plano/concluir`
         : `/rma/${processoId}/itens/${item.id}/diagnostico-plano`;
-      await api(path, {
+      const saved = await api(path, {
         method: concluir ? "POST" : "PUT",
         body: JSON.stringify(body),
       });
-      await onUpdated();
+      await onUpdated(saved);
       return true;
     } catch (e) {
       reportError(e instanceof Error ? e.message : "Erro ao salvar plano");

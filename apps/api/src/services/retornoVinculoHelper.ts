@@ -115,3 +115,100 @@ export async function mapaQtyOcupadaPorSaidas(
   }
   return map;
 }
+
+function addNumeroSerie(set: Set<string>, raw: unknown) {
+  const t = String(raw ?? "").trim();
+  if (t) set.add(t.toUpperCase());
+}
+
+/**
+ * S/N da saída ainda não cobertos por retorno PENDENTE/CONCLUIDO e ainda SAIDO.
+ * A tela de retorno usa essa lista em vez de pedir nascimento de série nova.
+ */
+export function seriesEmAbertoDaSaida(opts: {
+  seriesSaida: Array<{ numeroSerie: string; status: string }>;
+  seriesOcupadas: string[];
+}): string[] {
+  const ocupadas = new Set<string>();
+  for (const s of opts.seriesOcupadas) addNumeroSerie(ocupadas, s);
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const u of opts.seriesSaida) {
+    const sn = String(u.numeroSerie || "").trim();
+    if (!sn) continue;
+    const key = sn.toUpperCase();
+    if (seen.has(key) || ocupadas.has(key)) continue;
+    if (u.status !== "SAIDO") continue;
+    seen.add(key);
+    out.push(sn);
+  }
+  return out;
+}
+
+/** Mapa saidaId → S/N ainda em aberto (uma query de links + uma de retornos). */
+export async function mapaSeriesEmAbertoPorSaidas(
+  db: Db,
+  saidaIds: string[]
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (saidaIds.length === 0) return result;
+
+  const [linksSaida, retornos] = await Promise.all([
+    db.movimentacaoSerie.findMany({
+      where: { movimentacaoId: { in: saidaIds } },
+      select: {
+        movimentacaoId: true,
+        unidadeSerie: { select: { numeroSerie: true, status: true } },
+      },
+    }),
+    db.movimentacao.findMany({
+      where: {
+        movimentacaoOrigemId: { in: saidaIds },
+        status: { in: [...STATUS_OCUPA] },
+      },
+      select: {
+        movimentacaoOrigemId: true,
+        seriesInformadas: true,
+        series: {
+          select: { unidadeSerie: { select: { numeroSerie: true } } },
+        },
+      },
+    }),
+  ]);
+
+  const ocupadasPorSaida = new Map<string, string[]>();
+  for (const r of retornos) {
+    if (!r.movimentacaoOrigemId) continue;
+    const acc = ocupadasPorSaida.get(r.movimentacaoOrigemId) || [];
+    const informadas = Array.isArray(r.seriesInformadas)
+      ? (r.seriesInformadas as string[])
+      : [];
+    for (const s of informadas) acc.push(String(s));
+    for (const l of r.series) acc.push(l.unidadeSerie.numeroSerie);
+    ocupadasPorSaida.set(r.movimentacaoOrigemId, acc);
+  }
+
+  const saidaPorId = new Map<
+    string,
+    Array<{ numeroSerie: string; status: string }>
+  >();
+  for (const l of linksSaida) {
+    const acc = saidaPorId.get(l.movimentacaoId) || [];
+    acc.push({
+      numeroSerie: l.unidadeSerie.numeroSerie,
+      status: l.unidadeSerie.status,
+    });
+    saidaPorId.set(l.movimentacaoId, acc);
+  }
+
+  for (const id of saidaIds) {
+    result.set(
+      id,
+      seriesEmAbertoDaSaida({
+        seriesSaida: saidaPorId.get(id) || [],
+        seriesOcupadas: ocupadasPorSaida.get(id) || [],
+      })
+    );
+  }
+  return result;
+}

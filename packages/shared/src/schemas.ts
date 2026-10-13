@@ -825,18 +825,65 @@ export const conferirTransferenciaSchema = z.object({
   itens: z.array(conferirTransferenciaItemSchema).min(1),
 });
 
+/** Limite do POST /assistente/chat (mensagem + cada turno do histórico). */
+export const ASSISTENTE_CHAT_MAX_CHARS = 2000;
+
+export function clipAssistenteChatTexto(
+  texto: string,
+  max = ASSISTENTE_CHAT_MAX_CHARS
+): string {
+  if (texto.length <= max) return texto;
+  return texto.slice(0, max);
+}
+
+const RODAPE_RESPOSTA_CORTADA =
+  "\n\n(Resposta cortada no limite. Peça um filtro — hoje, um estoque — ou continue a pergunta.)";
+
+/** Pagina a resposta da IA para caber no limite sem estourar o POST seguinte. */
+export function paginarTextoAssistente(
+  texto: string,
+  max = ASSISTENTE_CHAT_MAX_CHARS
+): string {
+  if (texto.length <= max) return texto;
+  const reserva = RODAPE_RESPOSTA_CORTADA.length;
+  const budget = Math.max(80, max - reserva);
+  let cut = texto.slice(0, budget);
+  const nl = cut.lastIndexOf("\n");
+  if (nl >= Math.floor(budget * 0.5)) cut = cut.slice(0, nl);
+  const out = `${cut}${RODAPE_RESPOSTA_CORTADA}`;
+  return out.length <= max ? out : out.slice(0, max);
+}
+
 export const assistenteChatSchema = z.object({
-  message: z.string().min(1).max(2000),
-  history: z
-    .array(
-      z.object({
-        role: z.enum(["user", "assistant"]),
-        content: z.string().max(2000),
-      })
-    )
-    .max(10)
-    .optional()
-    .default([]),
+  message: z.preprocess(
+    (v) =>
+      typeof v === "string" ? clipAssistenteChatTexto(v.trim()) : v,
+    z.string().min(1).max(ASSISTENTE_CHAT_MAX_CHARS)
+  ),
+  history: z.preprocess(
+    (v) => {
+      if (v == null) return [];
+      if (!Array.isArray(v)) return v;
+      return v.slice(-10).map((h) => {
+        if (!h || typeof h !== "object") return h;
+        const row = h as { role?: unknown; content?: unknown };
+        return {
+          role: row.role,
+          content: clipAssistenteChatTexto(String(row.content ?? "")),
+        };
+      });
+    },
+    z
+      .array(
+        z.object({
+          role: z.enum(["user", "assistant"]),
+          content: z.string().max(ASSISTENTE_CHAT_MAX_CHARS),
+        })
+      )
+      .max(10)
+      .optional()
+      .default([])
+  ),
   filialId: z.string().uuid().optional().nullable(),
 });
 

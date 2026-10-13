@@ -10,7 +10,19 @@ import {
 } from "./llm";
 import { buildSystemPrompt, suggestedLinksFor, navAllowlist } from "./systemPrompt";
 import { executeTool, toolsForUser } from "./tools";
-import { resolvePermissoes, PermissoesUsuario } from "@teep/shared";
+import {
+  escolherReplyTransferencias,
+  inferConsultaTransferencias,
+} from "./consultaTransferenciasIntent";
+import {
+  escolherReplySaldo,
+  inferConsultaSaldo,
+} from "./consultaSaldoIntent";
+import {
+  paginarTextoAssistente,
+  resolvePermissoes,
+  PermissoesUsuario,
+} from "@teep/shared";
 import type { AssistenteExportFormat } from "./assistenteExportTokenStore";
 
 export type AssistenteDownload = {
@@ -257,16 +269,69 @@ export async function runAssistenteChat(input: {
     navAllowlist(perfilEfetivo, permissoes).map((l) => l.href)
   );
   const started = Date.now();
+  let listTransfersPayload: unknown = null;
+  let stockPayload: unknown = null;
+  const temToolTransfers = tools.some((t) => t.name === "list_transfers");
+  const ctxTool = {
+    user: input.user,
+    filialHint: input.filialId,
+    permissoes,
+  };
 
   for (let round = 0; round < cfg.maxRounds; round++) {
     const roundStart = Date.now();
-    const result = await provider.chatWithTools({
-      system,
-      messages,
-      tools,
-      temperature: cfg.temperature,
-      maxTokens: cfg.maxTokens,
-    });
+    let result: Awaited<ReturnType<typeof provider.chatWithTools>>;
+    try {
+      result = await provider.chatWithTools({
+        system,
+        messages,
+        tools,
+        temperature: cfg.temperature,
+        maxTokens: cfg.maxTokens,
+      });
+    } catch (e) {
+      console.error("[assistente] falha no LLM", e);
+      const inferredSaldo = inferConsultaSaldo(message);
+      if (inferredSaldo) {
+        stockPayload = await executeTool(
+          "get_product_stock",
+          inferredSaldo,
+          ctxTool
+        );
+        toolsUsed.push("get_product_stock");
+      }
+      const inferredT = inferConsultaTransferencias(message);
+      if (inferredT && temToolTransfers && !listTransfersPayload) {
+        listTransfersPayload = await executeTool(
+          "list_transfers",
+          inferredT,
+          ctxTool
+        );
+        toolsUsed.push("list_transfers");
+        collectActionLink(
+          listTransfersPayload,
+          actionLinks,
+          allowedActionHrefs
+        );
+      }
+      const reply =
+        escolherReplySaldo("", stockPayload, true) ||
+        escolherReplyTransferencias("", listTransfersPayload, true) ||
+        (e instanceof Error
+          ? `Não consegui falar com o serviço de IA agora (${e.message}). Tente de novo em instantes.`
+          : "Não consegui falar com o serviço de IA agora. Tente de novo em instantes.");
+      return {
+        reply: paginarTextoAssistente(reply),
+        suggestedLinks: suggestedLinksFor(
+          perfilEfetivo,
+          toolsUsed,
+          permissoes
+        ),
+        actionLinks,
+        toolsUsed,
+        downloads,
+      };
+    }
 
     console.log(
       JSON.stringify({
@@ -282,9 +347,47 @@ export async function runAssistenteChat(input: {
     );
 
     if (!result.toolCalls.length) {
+      let injetouConsulta = false;
+      let injetouSaldo = false;
+      if (!stockPayload) {
+        const inferredSaldo = inferConsultaSaldo(message);
+        if (inferredSaldo) {
+          stockPayload = await executeTool(
+            "get_product_stock",
+            inferredSaldo,
+            ctxTool
+          );
+          toolsUsed.push("get_product_stock");
+          injetouSaldo = true;
+        }
+      }
+      if (!listTransfersPayload && temToolTransfers) {
+        const inferred = inferConsultaTransferencias(message);
+        if (inferred) {
+          listTransfersPayload = await executeTool("list_transfers", inferred, {
+            user: input.user,
+            filialHint: input.filialId,
+            permissoes,
+          });
+          toolsUsed.push("list_transfers");
+          collectActionLink(
+            listTransfersPayload,
+            actionLinks,
+            allowedActionHrefs
+          );
+          injetouConsulta = true;
+        }
+      }
       const reply =
-        result.content?.trim() ||
-        "Não consegui montar uma resposta. Tente reformular a pergunta.";
+        escolherReplySaldo(
+          escolherReplyTransferencias(
+            result.content?.trim() || "",
+            listTransfersPayload,
+            injetouConsulta
+          ),
+          stockPayload,
+          injetouSaldo
+        ) || "Não consegui montar uma resposta. Tente reformular a pergunta.";
       console.log(
         JSON.stringify({
           event: "assistente_llm_done",
@@ -295,7 +398,7 @@ export async function runAssistenteChat(input: {
         })
       );
       return {
-        reply,
+        reply: paginarTextoAssistente(reply),
         suggestedLinks: suggestedLinksFor(
           perfilEfetivo,
           toolsUsed,
@@ -332,6 +435,8 @@ export async function runAssistenteChat(input: {
           };
         }
       }
+      if (tc.name === "list_transfers") listTransfersPayload = toolResult;
+      if (tc.name === "get_product_stock") stockPayload = toolResult;
       collectDownload(toolResult, downloads);
       collectActionLink(toolResult, actionLinks, allowedActionHrefs);
       console.log(
@@ -385,10 +490,18 @@ export async function runAssistenteChat(input: {
       temperature: cfg.temperature,
       maxTokens: cfg.maxTokens,
     });
-    const reply = final.content?.trim();
+    const reply = escolherReplySaldo(
+      escolherReplyTransferencias(
+        final.content?.trim() || "",
+        listTransfersPayload,
+        false
+      ),
+      stockPayload,
+      false
+    );
     if (reply) {
       return {
-        reply,
+        reply: paginarTextoAssistente(reply),
         suggestedLinks: suggestedLinksFor(
           perfilEfetivo,
           toolsUsed,
@@ -403,11 +516,42 @@ export async function runAssistenteChat(input: {
     console.error("[assistente] falha na síntese final", e);
   }
 
+  if (!stockPayload) {
+    const inferredSaldo = inferConsultaSaldo(message);
+    if (inferredSaldo) {
+      stockPayload = await executeTool(
+        "get_product_stock",
+        inferredSaldo,
+        ctxTool
+      );
+      toolsUsed.push("get_product_stock");
+    }
+  }
+  if (!listTransfersPayload && temToolTransfers) {
+    const inferred = inferConsultaTransferencias(message);
+    if (inferred) {
+      listTransfersPayload = await executeTool("list_transfers", inferred, {
+        user: input.user,
+        filialHint: input.filialId,
+        permissoes,
+      });
+      toolsUsed.push("list_transfers");
+      collectActionLink(listTransfersPayload, actionLinks, allowedActionHrefs);
+    }
+  }
+  const formattedFinal = escolherReplySaldo(
+    escolherReplyTransferencias("", listTransfersPayload, true),
+    stockPayload,
+    true
+  );
+
   return {
-    reply:
-      toolsUsed.length > 0
-        ? "Consultei o estoque, mas não consegui montar a resposta final. Tente de novo ou pergunte de outra forma."
-        : "Não consegui consultar os dados. Tente novamente em instantes.",
+    reply: paginarTextoAssistente(
+      formattedFinal ||
+        (toolsUsed.length > 0
+          ? "Consultei o estoque, mas não consegui montar a resposta final. Tente de novo ou pergunte de outra forma."
+          : "Não consegui consultar os dados. Tente novamente em instantes.")
+    ),
     suggestedLinks: suggestedLinksFor(
       perfilEfetivo,
       toolsUsed,

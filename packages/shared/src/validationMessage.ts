@@ -32,7 +32,9 @@ function mensagemInutil(raw: string): boolean {
     t.startsWith("expected ") ||
     t.includes("received") ||
     t.startsWith("invalid enum") ||
-    t === "invalid_type"
+    t === "invalid_type" ||
+    t.includes("too_big") ||
+    t.includes("at most")
   );
 }
 

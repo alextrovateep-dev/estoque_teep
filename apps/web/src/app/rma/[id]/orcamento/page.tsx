@@ -2,6 +2,7 @@
 
 import { api, apiDownload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
+import { formatMoney } from "@/lib/money";
 import {
   rmaOrcamentoPodeEditar,
   rmaOrcamentoStatusLabel,
@@ -51,10 +52,6 @@ type OrcPayload = {
   };
   itens: ItemOrc[];
 };
-
-function money(n: number) {
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
 
 function formatTempo(min: number | null | undefined) {
   if (min == null || min < 0) return "—";
@@ -119,14 +116,12 @@ export default function RmaOrcamentoPage() {
     (data?.processo.responsavelComercial?.id != null &&
       user?.id === data.processo.responsavelComercial.id);
 
-  const load = useCallback(async () => {
-    let row = await api<OrcPayload>(`/rma/${id}/orcamento`);
-    if (row.itens.length === 0 || row.processo.status !== "ABERTO") {
-      const arquivo = await api<OrcPayload>(`/rma/${id}/orcamento?arquivo=1`);
-      if (arquivo.itens.length > 0) row = arquivo;
-    }
+  const applyOrcamento = useCallback((row: OrcPayload) => {
     setData(row);
-    const next: typeof drafts = {};
+    const next: Record<
+      string,
+      { linhas: LinhaDraft[]; desconto: string; obs: string }
+    > = {};
     for (const it of row.itens) {
       next[it.id] = {
         linhas: it.linhas.map((l) => ({ ...l })),
@@ -135,7 +130,12 @@ export default function RmaOrcamentoPage() {
       };
     }
     setDrafts(next);
-  }, [id]);
+  }, []);
+
+  const load = useCallback(async () => {
+    const row = await api<OrcPayload>(`/rma/${id}/orcamento`);
+    applyOrcamento(row);
+  }, [id, applyOrcamento]);
 
   useEffect(() => {
     if (!can || !id) {
@@ -204,12 +204,13 @@ export default function RmaOrcamentoPage() {
     setError("");
     setMsg("");
     try {
-      await api<OrcPayload>(`/rma/${id}/orcamento`, {
+      const row = await api<OrcPayload>(`/rma/${id}/orcamento`, {
         method: "PUT",
         body: JSON.stringify({ itens }),
       });
+      applyOrcamento(row);
       const negociando = itens.some((rowItem) => {
-        const it = data.itens.find((i) => i.id === rowItem.itemId);
+        const it = row.itens.find((i) => i.id === rowItem.itemId);
         return it?.orcamento?.status === "ENVIADO";
       });
       setMsg(
@@ -217,7 +218,6 @@ export default function RmaOrcamentoPage() {
           ? "Valores atualizados. Gere o PDF de novo para enviar ao cliente."
           : "Orçamento salvo."
       );
-      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao salvar");
     } finally {
@@ -283,16 +283,16 @@ export default function RmaOrcamentoPage() {
         method: "PUT",
         body: JSON.stringify({ itens: itensPayload }),
       });
-      await api(`/rma/${id}/orcamento/fechar`, {
+      const row = await api<OrcPayload>(`/rma/${id}/orcamento/fechar`, {
         method: "POST",
         body: JSON.stringify({
           itemIds: itensPayload.map((i) => i.itemId),
         }),
       });
+      applyOrcamento(row);
       setMsg(
         "Orçamento fechado (aguardando aprovação). Equipe avisada. Gere o PDF e envie ao cliente pelo e-mail do comercial."
       );
-      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao fechar");
       await load().catch(() => undefined);
@@ -359,18 +359,21 @@ export default function RmaOrcamentoPage() {
     setBusy(true);
     setError("");
     try {
-      await api(`/rma/${id}/itens/${itemId}/orcamento/${decisao}`, {
-        method: "POST",
-        body: JSON.stringify({
-          observacao: (decisaoObs[itemId] || "").trim() || null,
-        }),
-      });
+      const row = await api<OrcPayload>(
+        `/rma/${id}/itens/${itemId}/orcamento/${decisao}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            observacao: (decisaoObs[itemId] || "").trim() || null,
+          }),
+        }
+      );
+      applyOrcamento(row);
       setMsg(
         decisao === "aprovar"
           ? "Item aprovado. Equipe avisada por e-mail/sino."
           : "Item recusado. Equipe avisada por e-mail/sino."
       );
-      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro na decisão");
     } finally {
@@ -382,11 +385,12 @@ export default function RmaOrcamentoPage() {
     setBusy(true);
     setError("");
     try {
-      await api(`/rma/${id}/itens/${itemId}/orcamento/reabrir`, {
-        method: "POST",
-      });
+      const row = await api<OrcPayload>(
+        `/rma/${id}/itens/${itemId}/orcamento/reabrir`,
+        { method: "POST" }
+      );
+      applyOrcamento(row);
       setMsg("Orçamento reaberto.");
-      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro ao reabrir");
     } finally {
@@ -663,7 +667,7 @@ export default function RmaOrcamentoPage() {
                     </label>
                     <div className="flex items-end justify-end gap-2 sm:col-span-2">
                       <p className="text-sm font-medium">
-                        {money(Number(l.quantidade) * Number(l.valorUnitario))}
+                        {formatMoney(Number(l.quantidade) * Number(l.valorUnitario))}
                       </p>
                       {l.origem === "EXTRA" && editavel ? (
                         <button
@@ -749,7 +753,7 @@ export default function RmaOrcamentoPage() {
                 </label>
               </div>
               <p className="mt-2 text-right text-sm font-semibold">
-                Total item: {money(tot)}
+                Total item: {formatMoney(tot)}
               </p>
             </section>
           );
@@ -758,7 +762,7 @@ export default function RmaOrcamentoPage() {
 
       <div className="sticky bottom-0 mt-6 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-white/95 py-3 backdrop-blur">
         <p className="mr-auto text-sm font-semibold">
-          Total geral: {money(totalGeral)}
+          Total geral: {formatMoney(totalGeral)}
         </p>
         <button
           type="button"

@@ -47,6 +47,7 @@ type SaidaAberta = {
   quantidade: number;
   qtyRestante?: number;
   notaFiscalNumero: string | null;
+  seriesEmAberto?: string[];
   produto: {
     id: string;
     codigo: string;
@@ -54,6 +55,13 @@ type SaidaAberta = {
     unidade?: string;
     controlaSerie?: boolean;
     precoUnitario?: string | number;
+    configuracaoSerie?: {
+      formato?: string;
+      geracaoAutomatica?: boolean;
+      tamanhoSequencial?: number;
+      prefixoFixo?: string | null;
+      sufixoFixo?: string | null;
+    } | null;
   };
   filial: { id: string; sigla: string; nome: string };
   tipo: { id: string; nome: string };
@@ -575,8 +583,9 @@ function NovoLancamentoForm() {
   }, [multiSkuMode, produto, filialId, filialDestinoId, isTransf]);
 
   useEffect(() => {
+    if (isRetorno) return;
     setSeries([]);
-  }, [produto?.id]);
+  }, [produto?.id, isRetorno]);
 
   /** Qty primeiro → N caixas (entrada, retorno, transferência com árvore). */
   useEffect(() => {
@@ -700,6 +709,7 @@ function NovoLancamentoForm() {
   }
 
   function aplicarProdutoDaSaida(s: SaidaAberta) {
+    const sns = (s.seriesEmAberto || []).map((x) => x.trim()).filter(Boolean);
     setProduto({
       id: s.produto.id,
       codigo: s.produto.codigo,
@@ -707,10 +717,13 @@ function NovoLancamentoForm() {
       unidade: s.produto.unidade,
       controlaSerie: Boolean(s.produto.controlaSerie),
       precoUnitario: s.produto.precoUnitario,
+      configuracaoSerie: s.produto.configuracaoSerie,
     });
     setCodigo(s.produto.codigo);
-    setQuantidade(String(s.qtyRestante ?? s.quantidade));
-    setSeries([]);
+    const qtd =
+      sns.length > 0 ? sns.length : (s.qtyRestante ?? s.quantidade);
+    setQuantidade(String(qtd));
+    setSeries(sns);
     setSugestoes([]);
   }
 
@@ -1730,8 +1743,9 @@ function NovoLancamentoForm() {
                   })}
                 </select>
                 <span className="mt-1 block text-xs text-slate-500">
-                  O sistema pré-preenche produto, quantidade restante e filial
-                  da saída.
+                  Produto, filial e números de série vêm da saída vinculada
+                  (cliente e NF daquela operação). Remova um S/N só se o
+                  retorno for parcial.
                 </span>
               </label>
             )}
@@ -2270,9 +2284,8 @@ function NovoLancamentoForm() {
               />
               {pedeSerieDe(produto, tipo?.controleSerie) && isRetorno ? (
                 <span className="mt-1 block text-xs text-slate-500">
-                  {serieLivreDe(produto, tipo?.controleSerie)
-                    ? "Informe a quantidade — depois o número de série de cada unidade."
-                    : "Informe a quantidade — depois só o sequencial de cada série (código sem traço + ano já aparecem)."}
+                  Os S/N abaixo são os que saíram nesta operação e ainda estão
+                  em aberto. A quantidade acompanha as séries.
                 </span>
               ) : produto &&
                 pedeSerieDe(produto, tipo?.controleSerie) &&
@@ -2317,6 +2330,7 @@ function NovoLancamentoForm() {
                 config={produto.configuracaoSerie}
                 series={series}
                 validarNascimento={!isRetorno}
+                validarComoRetorno={isRetorno}
                 onChangeSerie={(i, full) => {
                   setSeries((prev) => {
                     const next = [...prev];

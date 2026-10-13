@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { conferirSerieProduto } from "@teep/shared";
 import { AppError } from "../middleware/error";
 import {
@@ -6,7 +6,7 @@ import {
   prepararEntradaComAlocacoes,
 } from "./geracaoSerieService";
 
-type Tx = Prisma.TransactionClient;
+type Tx = Prisma.TransactionClient | PrismaClient;
 
 export const SERIE_STATUS = {
   EM_ESTOQUE: "EM_ESTOQUE",
@@ -83,22 +83,41 @@ export async function assertFormatoSeriesNascimento(
   }
 }
 
+/** Lookup único produto+S/N (ignora maiúsculas). Evita findUnique case-sensitive. */
+export async function encontrarUnidadeSerieNoProduto(
+  tx: Tx,
+  produtoId: string,
+  numeroSerie: string
+) {
+  return tx.unidadeSerie.findFirst({
+    where: {
+      produtoId,
+      numeroSerie: { equals: numeroSerie, mode: "insensitive" },
+    },
+    include: { filial: { select: { sigla: true } } },
+  });
+}
+
+/** Entrada pode reaproveitar a mesma unidade que saiu (demo/comodato/RMA). */
+export function serieEntradaAceitaExistente(opts: {
+  permitirReativarSaido?: boolean;
+  status: string;
+}): boolean {
+  return (
+    opts.permitirReativarSaido === true && opts.status === SERIE_STATUS.SAIDO
+  );
+}
+
 export async function assertSerieNaoExisteNoProduto(
   tx: Tx,
   produtoId: string,
   numeroSerie: string
 ) {
-  const existente = await tx.unidadeSerie.findFirst({
-    where: {
-      produtoId,
-      numeroSerie: { equals: numeroSerie, mode: "insensitive" },
-    },
-    select: {
-      numeroSerie: true,
-      status: true,
-      filial: { select: { sigla: true } },
-    },
-  });
+  const existente = await encontrarUnidadeSerieNoProduto(
+    tx,
+    produtoId,
+    numeroSerie
+  );
   if (existente) {
     throw new AppError(
       400,
@@ -239,20 +258,20 @@ export async function aplicarSeriesEntrada(
   });
 
   for (const numeroSerie of series) {
-    const existente = await tx.unidadeSerie.findFirst({
-      where: {
-        produtoId: opts.produtoId,
-        numeroSerie: { equals: numeroSerie, mode: "insensitive" },
-      },
-      include: { filial: { select: { sigla: true } } },
-    });
+    const existente = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
 
     let unidadeId: string;
 
     if (existente) {
       if (
-        opts.permitirReativarSaido &&
-        existente.status === SERIE_STATUS.SAIDO
+        serieEntradaAceitaExistente({
+          permitirReativarSaido: opts.permitirReativarSaido,
+          status: existente.status,
+        })
       ) {
         const updated = await tx.unidadeSerie.update({
           where: { id: existente.id },
@@ -328,14 +347,11 @@ export async function validarSeriesRetorno(
 
   for (const numeroSerie of series) {
     const key = numeroSerie.toUpperCase();
-    const unidade = await tx.unidadeSerie.findUnique({
-      where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
-      },
-    });
+    const unidade = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
 
     if (!unidade) {
       throw new AppError(400, `Série não encontrada: ${numeroSerie}`);
@@ -392,14 +408,11 @@ export async function aplicarSeriesRetorno(
   const series = normalizarSeries(opts.series);
 
   for (const numeroSerie of series) {
-    const unidade = await tx.unidadeSerie.findUnique({
-      where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
-      },
-    });
+    const unidade = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
     if (!unidade) {
       throw new AppError(400, `Série não encontrada: ${numeroSerie}`);
     }
@@ -453,14 +466,11 @@ export async function aplicarSeriesSaida(
       );
     }
 
-    const unidade = await tx.unidadeSerie.findUnique({
-      where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
-      },
-    });
+    const unidade = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
     if (!unidade) {
       throw new AppError(400, `Série não encontrada: ${numeroSerie}`);
     }
@@ -501,13 +511,11 @@ async function resolverSerieSaidaLivre(
   tx: Tx,
   opts: { produtoId: string; filialId: string; numeroSerie: string }
 ) {
-  const existente = await tx.unidadeSerie.findFirst({
-    where: {
-      produtoId: opts.produtoId,
-      numeroSerie: { equals: opts.numeroSerie, mode: "insensitive" },
-    },
-    include: { filial: { select: { sigla: true } } },
-  });
+  const existente = await encontrarUnidadeSerieNoProduto(
+    tx,
+    opts.produtoId,
+    opts.numeroSerie
+  );
   if (!existente) return null;
   if (existente.status === SERIE_STATUS.SAIDO) {
     throw new AppError(
@@ -664,14 +672,11 @@ export async function validarSeriesSaidaDisponiveis(
         `Série ${numeroSerie} está reservada em outro lançamento pendente`
       );
     }
-    const unidade = await tx.unidadeSerie.findUnique({
-      where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
-      },
-    });
+    const unidade = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
     if (
       !unidade ||
       unidade.status !== SERIE_STATUS.EM_ESTOQUE ||
@@ -702,17 +707,17 @@ export async function validarSeriesEntradaNovas(
   }
 
   for (const numeroSerie of series) {
-    const existente = await tx.unidadeSerie.findFirst({
-      where: {
-        produtoId: opts.produtoId,
-        numeroSerie: { equals: numeroSerie, mode: "insensitive" },
-      },
-      include: { filial: { select: { sigla: true } } },
-    });
+    const existente = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
     if (!existente) continue;
     if (
-      opts.permitirReativarSaido &&
-      existente.status === SERIE_STATUS.SAIDO
+      serieEntradaAceitaExistente({
+        permitirReativarSaido: opts.permitirReativarSaido,
+        status: existente.status,
+      })
     ) {
       continue;
     }
@@ -727,6 +732,119 @@ export async function validarSeriesEntradaNovas(
     );
   }
   return series;
+}
+
+/** Tela de lançamento: nascimento (série nova) ou retorno (reativa SAIDO). */
+export async function validarNumeroSerieParaEntrada(
+  tx: Tx,
+  opts: { produtoId: string; numero: string; retorno?: boolean }
+): Promise<{
+  ok: boolean;
+  numeroSerie: string;
+  motivo: string | null;
+  status?: string;
+}> {
+  const numero = String(opts.numero || "").trim();
+  if (!opts.produtoId || !numero) {
+    throw new AppError(400, "produtoId e numero são obrigatórios");
+  }
+  const produto = await tx.produto.findFirst({
+    where: { id: opts.produtoId, ativo: true },
+    include: { configuracaoSerie: true },
+  });
+  if (!produto) throw new AppError(404, "Produto não encontrado");
+  if (!produto.controlaSerie) {
+    throw new AppError(400, "Produto não controla série");
+  }
+
+  let normalizado = numero;
+  if (!opts.retorno) {
+    const cfg = produto.configuracaoSerie;
+    const conferencia = conferirSerieProduto(numero, {
+      codigoProduto: produto.codigo,
+      formato: cfg?.formato,
+      tamanhoSequencial: cfg?.tamanhoSequencial,
+      prefixoFixo: cfg?.prefixoFixo,
+      sufixoFixo: cfg?.sufixoFixo,
+    });
+    if (!conferencia.ok) {
+      return { ok: false, numeroSerie: numero, motivo: conferencia.motivo };
+    }
+    normalizado = conferencia.numeroSerie;
+  }
+
+  const existente = await encontrarUnidadeSerieNoProduto(
+    tx,
+    opts.produtoId,
+    normalizado
+  );
+
+  if (opts.retorno) {
+    if (!existente) {
+      return {
+        ok: false,
+        numeroSerie: normalizado,
+        motivo:
+          "Série não encontrada. Use o S/N da unidade que já saiu (demonstração/comodato).",
+      };
+    }
+    if (
+      serieEntradaAceitaExistente({
+        permitirReativarSaido: true,
+        status: existente.status,
+      })
+    ) {
+      return {
+        ok: true,
+        numeroSerie: existente.numeroSerie,
+        motivo: null,
+        status: existente.status,
+      };
+    }
+    return {
+      ok: false,
+      numeroSerie: existente.numeroSerie,
+      motivo: mensagemSerieJaCadastrada({
+        numeroSerie: existente.numeroSerie,
+        status: existente.status,
+        filialSigla: existente.filial?.sigla,
+        paraRma: true,
+      }),
+      status: existente.status,
+    };
+  }
+
+  if (existente) {
+    return {
+      ok: false,
+      numeroSerie: existente.numeroSerie,
+      motivo: mensagemSerieJaCadastrada({
+        numeroSerie: existente.numeroSerie,
+        status: existente.status,
+        filialSigla: existente.filial?.sigla,
+      }),
+      status: existente.status,
+    };
+  }
+
+  const alocPend = await tx.serieAlocacao.findMany({
+    where: { produtoId: opts.produtoId, status: "PENDENTE" },
+    select: { series: true },
+    take: 50,
+  });
+  const key = normalizado.toUpperCase();
+  for (const a of alocPend) {
+    const arr = Array.isArray(a.series) ? (a.series as string[]) : [];
+    if (arr.some((s) => String(s).trim().toUpperCase() === key)) {
+      return {
+        ok: false,
+        numeroSerie: normalizado,
+        motivo: `Série ${normalizado} está reservada em alocação pendente`,
+      };
+    }
+  }
+
+  return { ok: true, numeroSerie: normalizado, motivo: null };
 }
 
 /**
@@ -830,14 +948,11 @@ export async function aplicarSeriesTransferenciaEnvio(
       );
     }
 
-    const unidade = await tx.unidadeSerie.findUnique({
-      where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
-      },
-    });
+    const unidade = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
     if (
       !unidade ||
       unidade.status !== SERIE_STATUS.EM_ESTOQUE ||
@@ -995,14 +1110,11 @@ export async function reservarSeriesTransferenciaPendente(
         `Série ${numeroSerie} está reservada em outro lançamento pendente`
       );
     }
-    const unidade = await tx.unidadeSerie.findUnique({
-      where: {
-        uniq_produto_serie: {
-          produtoId: opts.produtoId,
-          numeroSerie,
-        },
-      },
-    });
+    const unidade = await encontrarUnidadeSerieNoProduto(
+      tx,
+      opts.produtoId,
+      numeroSerie
+    );
     if (
       !unidade ||
       unidade.status !== SERIE_STATUS.EM_ESTOQUE ||

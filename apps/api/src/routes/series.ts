@@ -1,7 +1,6 @@
 import { Router } from "express";
 import {
   alocarSeriesSchema,
-  conferirSerieProduto,
   desfazerAlocacaoSerieSchema,
 } from "@teep/shared";
 import { prisma } from "../lib/prisma";
@@ -18,6 +17,7 @@ import {
   consultarContadorSerie,
   desfazerAlocacaoSerie,
 } from "../services/geracaoSerieService";
+import { validarNumeroSerieParaEntrada } from "../services/serieService";
 import { historicoTransformacaoPorSerie } from "../services/transformacaoService";
 
 export const seriesRouter = Router();
@@ -211,79 +211,19 @@ seriesRouter.post("/validar-saida", async (req: AuthedRequest, res, next) => {
 });
 
 /**
- * Valida nascimento de série (entrada / montagem):
- * formato (seqüência com N dígitos do produto) + ainda não usada no produto.
+ * Valida série na entrada: nascimento (nova) ou retorno (reativa SAIDO).
  */
 seriesRouter.post(
   "/validar-nascimento",
   async (req: AuthedRequest, res, next) => {
     try {
-      const produtoId = String(req.body?.produtoId || "");
-      const numero = String(req.body?.numero || "").trim();
-      if (!produtoId || !numero) {
-        throw new AppError(400, "produtoId e numero são obrigatórios");
-      }
-
-      const produto = await prisma.produto.findFirst({
-        where: { id: produtoId, ativo: true },
-        include: { configuracaoSerie: true },
-      });
-      if (!produto) throw new AppError(404, "Produto não encontrado");
-      if (!produto.controlaSerie) {
-        throw new AppError(400, "Produto não controla série");
-      }
-
-      const cfg = produto.configuracaoSerie;
-      const conferencia = conferirSerieProduto(numero, {
-        codigoProduto: produto.codigo,
-        formato: cfg?.formato,
-        tamanhoSequencial: cfg?.tamanhoSequencial,
-        prefixoFixo: cfg?.prefixoFixo,
-        sufixoFixo: cfg?.sufixoFixo,
-      });
-      if (!conferencia.ok) {
-        return res.json({
-          ok: false,
-          numeroSerie: numero,
-          motivo: conferencia.motivo,
-        });
-      }
-      const normalizado = conferencia.numeroSerie;
-
-      const existente = await prisma.unidadeSerie.findFirst({
-        where: {
-          produtoId,
-          numeroSerie: { equals: normalizado, mode: "insensitive" },
-        },
-        select: { id: true, numeroSerie: true, status: true },
-      });
-      if (existente) {
-        return res.json({
-          ok: false,
-          numeroSerie: existente.numeroSerie,
-          status: existente.status,
-          motivo: `Número de série já cadastrado para este produto: ${existente.numeroSerie}`,
-        });
-      }
-
-      const alocPend = await prisma.serieAlocacao.findMany({
-        where: { produtoId, status: "PENDENTE" },
-        select: { series: true },
-        take: 50,
-      });
-      const key = normalizado.toUpperCase();
-      for (const a of alocPend) {
-        const arr = Array.isArray(a.series) ? (a.series as string[]) : [];
-        if (arr.some((s) => String(s).trim().toUpperCase() === key)) {
-          return res.json({
-            ok: false,
-            numeroSerie: normalizado,
-            motivo: `Série ${normalizado} está reservada em alocação pendente`,
-          });
-        }
-      }
-
-      res.json({ ok: true, numeroSerie: normalizado, motivo: null });
+      res.json(
+        await validarNumeroSerieParaEntrada(prisma, {
+          produtoId: String(req.body?.produtoId || ""),
+          numero: String(req.body?.numero || "").trim(),
+          retorno: Boolean(req.body?.retorno),
+        })
+      );
     } catch (e) {
       next(e);
     }

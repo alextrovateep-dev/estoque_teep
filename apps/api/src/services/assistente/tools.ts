@@ -20,6 +20,8 @@ import {
 import { mapaQtyOcupadaPorSaidas } from "../retornoVinculoHelper";
 import { listarRma, obterRma } from "../rmaService";
 import { listarTransferencias } from "../transferenciaService";
+import { normalizeListTransfersRaw } from "./consultaTransferenciasIntent";
+import { normalizeFilialToolArgs } from "./consultaSaldoIntent";
 import { gerarExportDossieProduto } from "./assistenteExportService";
 import { putAssistenteExport } from "./assistenteExportTokenStore";
 import {
@@ -109,6 +111,7 @@ const getProductTreeArgs = z.object({
 const getProductStockArgs = z.object({
   codigoOuNome: z.string().min(1).max(120),
   filialId: z.string().uuid().optional().nullable(),
+  filialSigla: z.string().min(1).max(80).optional().nullable(),
 });
 
 const listProductSeriesArgs = z.object({
@@ -403,14 +406,22 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_product_stock",
     description:
-      "Saldos e valor (saldo×preço) de um produto por filial. Se o produto existe mas não tem posição, retorna saldo 0. NÃO lista números de série — para N/S use list_product_series.",
+      "Saldos de um produto por estoque. USE para ‘quantos TMP-1144-W no estoque de Vendas?’. Passar filialSigla com o nome/sigla citado (Vendas, PLN). Se o produto existe sem posição, qty 0. NÃO lista N/S — use list_product_series.",
     parameters: {
       type: "object",
       properties: {
-        codigoOuNome: { type: "string" },
+        codigoOuNome: {
+          type: "string",
+          description: "Código ou nome (ex.: TMP-1144-W)",
+        },
+        filialSigla: {
+          type: "string",
+          description:
+            "Sigla ou nome do estoque citado (ex.: Vendas, PLN). Preferir em vez de UUID.",
+        },
         filialId: {
           type: "string",
-          description: "UUID da filial; omitir para consolidado (Admin/Gerente)",
+          description: "UUID da filial; omitir se usou filialSigla",
         },
       },
       required: ["codigoOuNome"],
@@ -717,7 +728,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "list_transfers",
     description:
-      "Lista CARGAS de transferência entre estoques (tela Transferências). USE para ‘quais transferências’, ‘transferências efetuadas/realizadas no período’, ‘teve transferência hoje/este mês’. periodo=hoje|mes_atual|mes_passado. Uma carga = 1 registro (não dobre Enviada+Recebida). Exige permissão transferencias. Só leitura. NÃO use prepare_transfer nem list_stock_movements no lugar desta lista.",
+      "Lista CARGAS de transferência entre estoques (tela Transferências). USE para ‘quais transferências’, ‘transferências efetuadas/realizadas no período’, ‘teve transferência hoje/este mês’. periodo=hoje|mes_atual|mes_passado (omisso = mes_atual). Sem status, ou status inválido (ex. efetuadas), lista as cargas ativas. Uma carga = 1 registro (não dobre Enviada+Recebida). Exige permissão transferencias. Só leitura. NÃO use prepare_transfer nem list_stock_movements no lugar desta lista.",
     parameters: {
       type: "object",
       properties: {
@@ -920,8 +931,18 @@ export async function executeTool(
       return getProductTree(getProductTreeArgs.parse(rawArgs), ctx);
     case "search_products":
       return searchProducts(searchProductsArgs.parse(rawArgs), ctx);
-    case "get_product_stock":
-      return getProductStock(getProductStockArgs.parse(rawArgs), ctx);
+    case "get_product_stock": {
+      const parsed = getProductStockArgs.safeParse(
+        normalizeFilialToolArgs(rawArgs)
+      );
+      if (!parsed.success) {
+        return {
+          encontrado: false,
+          mensagem: "Informe o código do produto para consultar o saldo.",
+        };
+      }
+      return getProductStock(parsed.data, ctx);
+    }
     case "list_product_series":
       return listProductSeries(listProductSeriesArgs.parse(rawArgs), ctx);
     case "list_stock_movements":
@@ -946,8 +967,20 @@ export async function executeTool(
       return exportMovimentacoesReport(exportMovimentacoesReportArgs.parse(rawArgs), ctx);
     case "prepare_transfer":
       return prepareTransfer(prepareTransferArgs.parse(rawArgs), ctx);
-    case "list_transfers":
-      return listTransfers(listTransfersArgs.parse(rawArgs), ctx);
+    case "list_transfers": {
+      const parsed = listTransfersArgs.safeParse(
+        normalizeListTransfersRaw(rawArgs)
+      );
+      if (!parsed.success) {
+        return {
+          ok: false as const,
+          encontrados: 0,
+          error:
+            "Não entendi o filtro da consulta. Use periodo hoje, mes_atual ou mes_passado.",
+        };
+      }
+      return listTransfers(parsed.data, ctx);
+    }
     case "list_rma_processes":
       return listRmaProcesses(listRmaProcessesArgs.parse(rawArgs), ctx);
     case "get_rma_process":
@@ -2260,7 +2293,36 @@ async function getProductStock(
   args: z.infer<typeof getProductStockArgs>,
   ctx: ToolContext
 ) {
-  const filialId = resolveFilialId(ctx.user, args.filialId, ctx.filialHint);
+  try {
+  let filialId = resolveFilialId(
+    ctx.user,
+    args.filialId,
+    args.filialSigla?.trim() ? null : ctx.filialHint
+  );
+  let filialResolvida: { id: string; sigla: string; nome: string } | null =
+    null;
+
+  if (args.filialSigla?.trim()) {
+    const f = await findFilialBySiglaOuNome(args.filialSigla);
+    if (!f) {
+      return {
+        encontrado: false,
+        mensagem: `Estoque não encontrado: “${args.filialSigla.trim()}”`,
+      };
+    }
+    if (ctx.user.perfil === "OPERADOR") {
+      const ids = operadorFilialIds(ctx.user);
+      if (!ids.includes(f.id)) {
+        return {
+          encontrado: false,
+          mensagem: "Sem acesso a este estoque",
+        };
+      }
+    }
+    filialId = f.id;
+    filialResolvida = f;
+  }
+
   if (filialId) await assertFilialAtiva(filialId);
 
   const produto = await findProdutoByCodigoOuNome(args.codigoOuNome);
@@ -2303,6 +2365,13 @@ async function getProductStock(
         : {}),
     };
   });
+  if (filialResolvida && saldos.length === 0) {
+    saldos.push({
+      filialSigla: filialResolvida.sigla,
+      filialNome: filialResolvida.nome,
+      qty: 0,
+    });
+  }
   const qtyTotal = saldos.reduce((s, r) => s + r.qty, 0);
   const valorTotal = Math.round(qtyTotal * preco * 100) / 100;
 
@@ -2326,6 +2395,12 @@ async function getProductStock(
           ? "Para listar os números de série, use list_product_series."
           : undefined,
   };
+  } catch (e) {
+    if (e instanceof AppError) {
+      return { encontrado: false, mensagem: e.message };
+    }
+    throw e;
+  }
 }
 
 async function listProductSeries(

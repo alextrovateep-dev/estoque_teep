@@ -2,6 +2,7 @@
 
 import { apiDownload } from "@/lib/api";
 import { resolveAssetUrl } from "@/lib/assets";
+import { formatMoney } from "@/lib/money";
 import { rmaOrcamentoStatusLabel } from "@teep/shared";
 import Link from "next/link";
 import { useMemo, useState } from "react";
@@ -93,10 +94,6 @@ function temLaudoLiberacao(item: RmaDocumentoItem): boolean {
 
 function temOrcamento(item: RmaDocumentoItem): boolean {
   return Boolean(item.orcamento);
-}
-
-function money(n: number) {
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
 type Props = {
@@ -422,7 +419,7 @@ function DocumentoViewer({
                     <td className="py-1.5">{l.descricao}</td>
                     <td className="py-1.5 text-right">{l.quantidade}</td>
                     <td className="py-1.5 text-right">
-                      {money(Number(l.valorUnitario))}
+                      {formatMoney(Number(l.valorUnitario))}
                     </td>
                   </tr>
                 ))}

@@ -39,6 +39,8 @@ type Props = {
    * Valida tamanho da seq. + unicidade no produto (não pode repetir série já gerada).
    */
   validarNascimento?: boolean;
+  /** Retorno demo/comodato: a série já existe (SAIDO) e pode reentrar. */
+  validarComoRetorno?: boolean;
 };
 
 function formatAno2(n: number): string {
@@ -57,7 +59,9 @@ export function SerieCamposPrefixo({
   onStatusSerie,
   validarEstoque,
   validarNascimento,
+  validarComoRetorno,
 }: Props) {
+  const validaRemoto = Boolean(validarNascimento || validarComoRetorno);
   const tamanho = clampTamanhoSequencial(config?.tamanhoSequencial);
   const sufixo = config?.sufixoFixo ?? null;
   const anoPadrao = anoDoisDigitos();
@@ -191,7 +195,7 @@ export function SerieCamposPrefixo({
   }
 
   async function validarNascimentoCampo(idx: number, full: string) {
-    if (!validarNascimento || !produtoId) return;
+    if (!validaRemoto || !produtoId) return;
     const parsed = interpretarEntradaSerie(full, {
       ...optsSerie,
       ano2Atual: anoDaLinha(idx, full),
@@ -223,7 +227,11 @@ export function SerieCamposPrefixo({
         numeroSerie?: string;
       }>("/series/validar-nascimento", {
         method: "POST",
-        body: JSON.stringify({ produtoId, numero }),
+        body: JSON.stringify({
+          produtoId,
+          numero,
+          retorno: Boolean(validarComoRetorno),
+        }),
       });
       setStatus(
         idx,
@@ -243,7 +251,7 @@ export function SerieCamposPrefixo({
   }
 
   function agendarValidacao(idx: number, full: string, seqLen: number) {
-    if (!validarNascimento) return;
+    if (!validaRemoto) return;
     if (timers.current[idx]) clearTimeout(timers.current[idx]);
     if (seqLen < tamanho) {
       setStatus(idx, "idle", "");
@@ -386,9 +394,11 @@ export function SerieCamposPrefixo({
                 <p className="mt-0.5 text-[11px] text-emerald-700">
                   Disponível no estoque
                 </p>
-              ) : st === "ok" && validarNascimento ? (
+              ) : st === "ok" && validaRemoto ? (
                 <p className="mt-0.5 text-[11px] text-emerald-700">
-                  Série disponível
+                  {validarComoRetorno
+                    ? "Série da saída — pode retornar"
+                    : "Série disponível"}
                 </p>
               ) : null}
             </div>
