@@ -12,6 +12,7 @@ import {
   RMA_LISTA_ABA_HINTS,
   RMA_LISTA_ABA_LABELS,
   RMA_LISTA_ABAS,
+  RMA_LISTA_SELO,
   formatYmdBr,
   rmaModalidadeAquisicaoLabel,
   type RmaListaAba,
@@ -43,12 +44,6 @@ type Cliente = {
   ativo: boolean;
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  ABERTO: "Aberto",
-  FECHADO: "Fechado",
-  CANCELADO: "Cancelado",
-};
-
 function abaFromQuery(raw: string | null): RmaListaAba {
   return raw && isRmaListaAba(raw) ? raw : "aberto";
 }
@@ -72,41 +67,47 @@ function resumoEtapasItens(
 
 const MS_8_DIAS = 8 * 24 * 60 * 60 * 1000;
 
-/** Tom lúdico/sutil: fechado verde · aberto neutro · aberto >8d âmbar (atrasado). */
-function tomCardRma(status: string, criadoEm: string) {
-  if (status === "FECHADO") {
+/** Tom do card pela aba da lista (não pelo status cru ABERTO/FECHADO). */
+function tomCardRma(aba: RmaListaAba, criadoEm: string) {
+  if (aba === "fechado") {
     return {
       card: "border-emerald-200/80 bg-emerald-50/50 hover:border-emerald-300",
       badge: "bg-emerald-100 text-emerald-800",
       dot: "bg-emerald-500",
     };
   }
-  if (status === "CANCELADO") {
+  if (aba === "cancelado") {
     return {
       card: "border-slate-200 bg-slate-50/70 hover:border-slate-300",
       badge: "bg-slate-200 text-slate-700",
       dot: "bg-slate-400",
     };
   }
-  if (status === "ABERTO") {
-    const atrasado = Date.now() - new Date(criadoEm).getTime() > MS_8_DIAS;
-    if (atrasado) {
-      return {
-        card: "border-amber-200/70 bg-amber-50/40 hover:border-amber-300",
-        badge: "bg-amber-100 text-amber-900",
-        dot: "bg-amber-400",
-      };
-    }
+  if (aba === "liberado") {
     return {
-      card: "border-slate-200 bg-white hover:border-brand/40",
-      badge: "bg-slate-100 text-slate-700",
-      dot: "bg-slate-400",
+      card: "border-indigo-200/70 bg-indigo-50/40 hover:border-indigo-300",
+      badge: "bg-indigo-100 text-indigo-900",
+      dot: "bg-indigo-500",
     };
   }
-  // CANCELADO e outros
+  if (aba === "enviado") {
+    return {
+      card: "border-emerald-200/70 bg-emerald-50/30 hover:border-emerald-300",
+      badge: "bg-emerald-100 text-emerald-800",
+      dot: "bg-emerald-500",
+    };
+  }
+  const atrasado = Date.now() - new Date(criadoEm).getTime() > MS_8_DIAS;
+  if (atrasado) {
+    return {
+      card: "border-amber-200/70 bg-amber-50/40 hover:border-amber-300",
+      badge: "bg-amber-100 text-amber-900",
+      dot: "bg-amber-400",
+    };
+  }
   return {
-    card: "border-slate-200 bg-slate-50/40 hover:border-slate-300",
-    badge: "bg-slate-200/80 text-slate-700",
+    card: "border-slate-200 bg-white hover:border-brand/40",
+    badge: "bg-slate-100 text-slate-700",
     dot: "bg-slate-400",
   };
 }
@@ -392,7 +393,7 @@ function RmaListPageInner() {
           </p>
         )}
         {data.map((r) => {
-          const tom = tomCardRma(r.status, r.criadoEm);
+          const tom = tomCardRma(aba, r.criadoEm);
           const etapas = r.status === "ABERTO" ? resumoEtapasItens(r.itens) : "";
           return (
             <Link
@@ -408,7 +409,7 @@ function RmaListPageInner() {
                     className={`h-1.5 w-1.5 shrink-0 rounded-full ${tom.dot}`}
                     aria-hidden
                   />
-                  {STATUS_LABEL[r.status] || r.status}
+                  {RMA_LISTA_SELO[aba]}
                 </span>
                 <span className="font-medium text-slate-900">
                   {r.cliente.nome}

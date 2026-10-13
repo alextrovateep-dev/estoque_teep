@@ -228,6 +228,14 @@ export const RMA_LISTA_ABA_HINTS: Record<RmaListaAba, string> = {
   fechado: "RMA concluído (equipamento já devolvido ou trocado)",
   cancelado: "Processos cancelados",
 };
+/** Selo do card na lista — segue a aba (etapa), não o status cru do processo. */
+export const RMA_LISTA_SELO: Record<RmaListaAba, string> = {
+  aberto: "Aberto",
+  liberado: "Liberado",
+  enviado: "Aguardando envio",
+  fechado: "Fechado",
+  cancelado: "Cancelado",
+};
 export function isRmaListaAba(v: string): v is RmaListaAba {
   return (RMA_LISTA_ABAS as readonly string[]).includes(v);
 }
