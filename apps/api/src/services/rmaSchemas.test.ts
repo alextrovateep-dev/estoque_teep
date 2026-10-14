@@ -721,35 +721,66 @@ describe("mensagemErroValidacao", () => {
 });
 
 describe("rmaListaWhereAba", () => {
-  it("aberto não inclui cancelados, liberação nem envio", () => {
-    const w = rmaListaWhereAba("aberto") as {
+  it("laudo é só entrada/diagnóstico (alias aberto aponta para laudo)", () => {
+    const w = rmaListaWhereAba("laudo") as {
       status: string;
-      itens: { some: { etapa: { notIn: string[] } } };
+      itens: { some: { etapa: { in: string[] } } };
     };
     assert.equal(w.status, "ABERTO");
-    assert.ok(w.itens.some.etapa.notIn.includes("AGUARDANDO_LIBERACAO"));
-    assert.ok(w.itens.some.etapa.notIn.includes("AGUARDANDO_ENVIO"));
-    assert.ok(w.itens.some.etapa.notIn.includes("FINALIZADO"));
+    assert.deepEqual(w.itens.some.etapa.in, [
+      "AGUARDANDO_RECEBIMENTO",
+      "AGUARDANDO_LAUDO",
+    ]);
+    assert.deepEqual(rmaListaWhereAba("aberto"), w);
     assert.deepEqual(rmaListaWhereAba("cancelado"), { status: "CANCELADO" });
+    assert.equal(rmaListaWhereAba(undefined), null);
   });
 
-  it("liberado é só aguardando liberação", () => {
-    const w = rmaListaWhereAba("liberado") as {
+  it("orçamento inclui rascunho, aprovação e recusa", () => {
+    const w = rmaListaWhereAba("orcamento") as {
+      status: string;
+      itens: { some: { etapa: { in: string[] } } };
+    };
+    assert.deepEqual(w.itens.some.etapa.in, [
+      "AGUARDANDO_ORCAMENTO",
+      "AGUARDANDO_APROVACAO",
+      "NAO_APROVADO",
+    ]);
+  });
+
+  it("manutenção é só execução técnica", () => {
+    const w = rmaListaWhereAba("manutencao") as {
+      itens: { some: { etapa: { in: string[] } } };
+    };
+    assert.deepEqual(w.itens.some.etapa.in, ["AGUARDANDO_MANUTENCAO"]);
+  });
+
+  it("envio inclui liberação interna (alias liberado/enviado)", () => {
+    const w = rmaListaWhereAba("envio") as {
       status: string;
       itens: { some: { etapa: { in: string[] } } };
     };
     assert.equal(w.status, "ABERTO");
-    assert.deepEqual(w.itens.some.etapa.in, ["AGUARDANDO_LIBERACAO"]);
+    assert.deepEqual(w.itens.some.etapa.in, [
+      "AGUARDANDO_LIBERACAO",
+      "AGUARDANDO_ENVIO",
+    ]);
+    assert.deepEqual(rmaListaWhereAba("liberado"), w);
+    assert.deepEqual(rmaListaWhereAba("enviado"), w);
   });
 
-  it("enviado é processo aberto aguardando envio", () => {
-    const w = rmaListaWhereAba("enviado") as {
+  it("finalizado é FECHADO ou item já enviado (alias fechado)", () => {
+    const w = rmaListaWhereAba("finalizado") as {
+      OR: Array<Record<string, unknown>>;
+    };
+    assert.equal(w.OR[0]?.status, "FECHADO");
+    const aberto = w.OR[1] as {
       status: string;
       itens: { some: { etapa: { in: string[] } } };
     };
-    assert.equal(w.status, "ABERTO");
-    assert.ok(w.itens.some.etapa.in.includes("AGUARDANDO_ENVIO"));
-    assert.deepEqual(rmaListaWhereAba("fechado"), { status: "FECHADO" });
+    assert.equal(aberto.status, "ABERTO");
+    assert.deepEqual(aberto.itens.some.etapa.in, ["FINALIZADO"]);
+    assert.deepEqual(rmaListaWhereAba("fechado"), w);
   });
 });
 

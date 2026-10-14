@@ -205,87 +205,116 @@ export const RMA_ANEXO_TIPOS = [
 ] as const;
 export type RmaAnexoTipo = (typeof RMA_ANEXO_TIPOS)[number];
 
-/** Abas da lista de RMA (cancelados fora de Em aberto). */
+/**
+ * Abas da lista = fila de trabalho do item (não status da nota).
+ * Aprovação e checklist de liberação continuam no detalhe, sem aba própria.
+ */
 export const RMA_LISTA_ABAS = [
-  "aberto",
-  "liberado",
-  "enviado",
-  "fechado",
+  "laudo",
+  "orcamento",
+  "manutencao",
+  "envio",
+  "finalizado",
   "cancelado",
 ] as const;
 export type RmaListaAba = (typeof RMA_LISTA_ABAS)[number];
 export const RMA_LISTA_ABA_LABELS: Record<RmaListaAba, string> = {
-  aberto: "Em aberto",
-  liberado: "Liberados",
-  enviado: "Enviados",
-  fechado: "Fechados",
+  laudo: "Aguardando laudo",
+  orcamento: "Aguardando orçamento",
+  manutencao: "Aguardando manutenção",
+  envio: "Aguardando envio",
+  finalizado: "Finalizados",
   cancelado: "Cancelados",
 };
 export const RMA_LISTA_ABA_HINTS: Record<RmaListaAba, string> = {
-  aberto: "Diagnóstico, orçamento, aprovação e manutenção",
-  liberado: "Aguardando liberação para devolver ao cliente",
-  enviado: "Liberado: aguardando envio ao cliente",
-  fechado: "RMA concluído (equipamento já devolvido ou trocado)",
+  laudo: "Entrada feita — inspeção e diagnóstico",
+  orcamento: "Laudo pronto — montar, negociar ou aprovar orçamento",
+  manutencao: "Orçamento aprovado — execução técnica",
+  envio: "Manutenção feita — devolver ou trocar (liberação interna, se houver)",
+  finalizado: "Já enviado ao cliente (ou RMA fechado)",
   cancelado: "Processos cancelados",
 };
-/** Selo do card na lista — segue a aba (etapa), não o status cru do processo. */
 export const RMA_LISTA_SELO: Record<RmaListaAba, string> = {
-  aberto: "Aberto",
-  liberado: "Liberado",
-  enviado: "Aguardando envio",
-  fechado: "Fechado",
+  laudo: "Aguardando laudo",
+  orcamento: "Aguardando orçamento",
+  manutencao: "Aguardando manutenção",
+  envio: "Aguardando envio",
+  finalizado: "Finalizado",
   cancelado: "Cancelado",
 };
+
+/** URLs antigas da lista. */
+const RMA_LISTA_ABA_ALIAS: Record<string, RmaListaAba> = {
+  aberto: "laudo",
+  liberado: "envio",
+  enviado: "envio",
+  fechado: "finalizado",
+};
+
 export function isRmaListaAba(v: string): v is RmaListaAba {
   return (RMA_LISTA_ABAS as readonly string[]).includes(v);
 }
 
-const RMA_ETAPAS_LISTA_LIBERADO = ["AGUARDANDO_LIBERACAO"] as const;
-const RMA_ETAPAS_LISTA_ENVIADO = ["AGUARDANDO_ENVIO", "FINALIZADO"] as const;
-const RMA_ETAPAS_FORA_ABERTO = [
-  ...RMA_ETAPAS_LISTA_LIBERADO,
-  ...RMA_ETAPAS_LISTA_ENVIADO,
+export function normalizeRmaListaAba(
+  v?: string | null
+): RmaListaAba {
+  const a = (v || "").trim().toLowerCase();
+  if (!a) return "laudo";
+  if (RMA_LISTA_ABA_ALIAS[a]) return RMA_LISTA_ABA_ALIAS[a]!;
+  if (isRmaListaAba(a)) return a;
+  return "laudo";
+}
+
+const RMA_ETAPAS_LISTA_LAUDO = [
+  "AGUARDANDO_RECEBIMENTO",
+  "AGUARDANDO_LAUDO",
+] as const;
+const RMA_ETAPAS_LISTA_ORCAMENTO = [
+  "AGUARDANDO_ORCAMENTO",
+  "AGUARDANDO_APROVACAO",
+  "NAO_APROVADO",
+] as const;
+const RMA_ETAPAS_LISTA_MANUTENCAO = ["AGUARDANDO_MANUTENCAO"] as const;
+/** Liberação é portão interno — na lista entra na fila de envio. */
+const RMA_ETAPAS_LISTA_ENVIO = [
+  "AGUARDANDO_LIBERACAO",
+  "AGUARDANDO_ENVIO",
 ] as const;
 
-/** Fragmento Prisma `where` da aba da lista (sem misturar cancelados no aberto). */
+function processoAbertoNaEtapa(etapas: readonly string[]) {
+  return {
+    status: "ABERTO" as const,
+    itens: {
+      some: {
+        status: { not: "CANCELADO" },
+        etapa: { in: [...etapas] },
+      },
+    },
+  };
+}
+
+/** Fragmento Prisma `where` da aba da lista. Sem `aba` ou valor desconhecido: sem filtro. */
 export function rmaListaWhereAba(
   aba?: string | null
 ): Record<string, unknown> | null {
-  const a = (aba || "").trim().toLowerCase();
-  if (a === "aberto") {
+  const raw = (aba || "").trim().toLowerCase();
+  if (!raw) return null;
+  const a = RMA_LISTA_ABA_ALIAS[raw] ?? (isRmaListaAba(raw) ? raw : null);
+  if (!a) return null;
+  if (a === "laudo") return processoAbertoNaEtapa(RMA_ETAPAS_LISTA_LAUDO);
+  if (a === "orcamento") return processoAbertoNaEtapa(RMA_ETAPAS_LISTA_ORCAMENTO);
+  if (a === "manutencao") {
+    return processoAbertoNaEtapa(RMA_ETAPAS_LISTA_MANUTENCAO);
+  }
+  if (a === "envio") return processoAbertoNaEtapa(RMA_ETAPAS_LISTA_ENVIO);
+  if (a === "finalizado") {
     return {
-      status: "ABERTO",
-      itens: {
-        some: {
-          status: { not: "CANCELADO" },
-          etapa: { notIn: [...RMA_ETAPAS_FORA_ABERTO] },
-        },
-      },
+      OR: [
+        { status: "FECHADO" },
+        processoAbertoNaEtapa(["FINALIZADO"]),
+      ],
     };
   }
-  if (a === "liberado") {
-    return {
-      status: "ABERTO",
-      itens: {
-        some: {
-          status: { not: "CANCELADO" },
-          etapa: { in: [...RMA_ETAPAS_LISTA_LIBERADO] },
-        },
-      },
-    };
-  }
-  if (a === "enviado") {
-    return {
-      status: "ABERTO",
-      itens: {
-        some: {
-          status: { not: "CANCELADO" },
-          etapa: { in: [...RMA_ETAPAS_LISTA_ENVIADO] },
-        },
-      },
-    };
-  }
-  if (a === "fechado") return { status: "FECHADO" };
   if (a === "cancelado") return { status: "CANCELADO" };
   return null;
 }

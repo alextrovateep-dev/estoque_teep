@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
-  isRmaListaAba,
+  normalizeRmaListaAba,
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPA_LABELS,
   RMA_LISTA_ABA_HINTS,
@@ -45,7 +45,7 @@ type Cliente = {
 };
 
 function abaFromQuery(raw: string | null): RmaListaAba {
-  return raw && isRmaListaAba(raw) ? raw : "aberto";
+  return normalizeRmaListaAba(raw);
 }
 
 function resumoEtapasItens(
@@ -69,7 +69,7 @@ const MS_8_DIAS = 8 * 24 * 60 * 60 * 1000;
 
 /** Tom do card pela aba da lista (não pelo status cru ABERTO/FECHADO). */
 function tomCardRma(aba: RmaListaAba, criadoEm: string) {
-  if (aba === "fechado") {
+  if (aba === "finalizado") {
     return {
       card: "border-emerald-200/80 bg-emerald-50/50 hover:border-emerald-300",
       badge: "bg-emerald-100 text-emerald-800",
@@ -83,14 +83,21 @@ function tomCardRma(aba: RmaListaAba, criadoEm: string) {
       dot: "bg-slate-400",
     };
   }
-  if (aba === "liberado") {
+  if (aba === "orcamento") {
     return {
-      card: "border-indigo-200/70 bg-indigo-50/40 hover:border-indigo-300",
-      badge: "bg-indigo-100 text-indigo-900",
-      dot: "bg-indigo-500",
+      card: "border-orange-200/70 bg-orange-50/40 hover:border-orange-300",
+      badge: "bg-orange-100 text-orange-900",
+      dot: "bg-orange-500",
     };
   }
-  if (aba === "enviado") {
+  if (aba === "manutencao") {
+    return {
+      card: "border-sky-200/70 bg-sky-50/40 hover:border-sky-300",
+      badge: "bg-sky-100 text-sky-900",
+      dot: "bg-sky-500",
+    };
+  }
+  if (aba === "envio") {
     return {
       card: "border-emerald-200/70 bg-emerald-50/30 hover:border-emerald-300",
       badge: "bg-emerald-100 text-emerald-800",
@@ -238,7 +245,7 @@ function RmaListPageInner() {
               setAba(a);
               setPage(1);
               const q = new URLSearchParams(searchParams.toString());
-              if (a === "aberto") q.delete("aba");
+              if (a === "laudo") q.delete("aba");
               else q.set("aba", a);
               const qs = q.toString();
               router.replace(qs ? `/rma?${qs}` : "/rma", { scroll: false });
