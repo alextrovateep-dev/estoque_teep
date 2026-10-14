@@ -32,6 +32,7 @@ import {
   estornarMovimentacao,
   rejeitarMovimentacao,
 } from "./movimentacaoService";
+import { serieLivreDeRmaAtivo } from "./serieService";
 import {
   criarTransferenciaImediata,
   reverterTransferenciaImediata,
@@ -330,6 +331,73 @@ async function desfazerMovimentacaoEntradaRma(
   }
 }
 
+/**
+ * RMA cancelado com entrada ainda CONCLUIDO: estorna para a série sair do
+ * estoque. A reabertura cria movimentação e item novos — não reaproveita o antigo.
+ */
+async function estornarEntradaRmaCanceladaSeAindaNoEstoque(
+  user: AuthUser,
+  produtoId: string,
+  numeroSerie: string
+) {
+  const unidade = await prisma.unidadeSerie.findFirst({
+    where: {
+      produtoId,
+      numeroSerie: { equals: numeroSerie, mode: "insensitive" },
+    },
+    select: { id: true, numeroSerie: true, status: true },
+  });
+  if (!unidade || unidade.status !== "EM_ESTOQUE") return;
+
+  const vinculos = await prisma.rmaItem.findMany({
+    where: { unidadeSerieId: unidade.id },
+    select: {
+      status: true,
+      movEntradaId: true,
+      processo: { select: { status: true } },
+    },
+  });
+  if (
+    !serieLivreDeRmaAtivo(
+      vinculos.map((v) => ({
+        status: v.status,
+        processoStatus: v.processo.status,
+      }))
+    )
+  ) {
+    return;
+  }
+
+  const movIds = [
+    ...new Set(
+      vinculos
+        .map((v) => v.movEntradaId)
+        .filter((id): id is string => Boolean(id))
+    ),
+  ];
+  const motivo = `Reabertura de RMA após cancelamento — S/N ${unidade.numeroSerie}`;
+  for (const movId of movIds) {
+    const mov = await prisma.movimentacao.findUnique({
+      where: { id: movId },
+      include: { estornos: { select: { id: true } } },
+    });
+    if (!mov || mov.estornos.length > 0) continue;
+    if (mov.status !== "CONCLUIDO" || mov.estornoDeId) continue;
+    await estornarMovimentacao(user, movId, motivo, { bypassPerfil: true });
+  }
+
+  const ainda = await prisma.unidadeSerie.findUnique({
+    where: { id: unidade.id },
+    select: { status: true },
+  });
+  if (ainda?.status === "EM_ESTOQUE") {
+    throw new AppError(
+      400,
+      `S/N ${unidade.numeroSerie} ainda está em estoque após o RMA cancelado. Estorne a entrada em Movimentações e abra o RMA de novo.`
+    );
+  }
+}
+
 /** Entrada no Estoque RMA + item do processo (abertura e inclusão). */
 async function lancarEntradaSerieRma(
   user: AuthUser,
@@ -347,6 +415,12 @@ async function lancarEntradaSerieRma(
     observacaoMov: string;
   }
 ): Promise<EntradaRmaFeita> {
+  await estornarEntradaRmaCanceladaSeAindaNoEstoque(
+    user,
+    opts.produtoId,
+    opts.numeroSerie
+  );
+
   const result = await criarMovimentacao(user, {
     tipoId: opts.tipoEntradaId,
     produtoId: opts.produtoId,
@@ -2753,9 +2827,25 @@ export async function cancelarRma(
       }
 
       try {
-        await estornarMovimentacao(user, item.movEntradaId, notaEstorno, {
-          bypassPerfil: true,
+        const movEntrada = await prisma.movimentacao.findUnique({
+          where: { id: item.movEntradaId },
+          include: { estornos: { select: { id: true } } },
         });
+        if (!movEntrada) {
+          throw new AppError(
+            400,
+            `Item ${item.produto.codigo} sem movimentação de entrada — não dá para estornar`
+          );
+        }
+        const jaEstornada =
+          movEntrada.status === "ESTORNADO" ||
+          movEntrada.status === "REJEITADO" ||
+          movEntrada.estornos.length > 0;
+        if (!jaEstornada) {
+          await estornarMovimentacao(user, item.movEntradaId, notaEstorno, {
+            bypassPerfil: true,
+          });
+        }
         cancelados += 1;
       } catch (inner) {
         await prisma.rmaItem.update({
@@ -2778,8 +2868,11 @@ export async function cancelarRma(
     });
     if (restantes === 0) {
       await prisma.rmaItem.updateMany({
-        where: { processoId: id, status: "ABERTO" },
-        data: { status: "CANCELADO" },
+        where: {
+          processoId: id,
+          status: { notIn: ["CANCELADO", "DEVOLVIDO", "DESCARTADO"] },
+        },
+        data: { status: "CANCELADO", etapa: "FINALIZADO" },
       });
       await prisma.rmaProcesso.update({
         where: { id },
@@ -2804,8 +2897,11 @@ export async function cancelarRma(
   }
 
   await prisma.rmaItem.updateMany({
-    where: { processoId: id, status: "ABERTO" },
-    data: { status: "CANCELADO" },
+    where: {
+      processoId: id,
+      status: { notIn: ["CANCELADO", "DEVOLVIDO", "DESCARTADO"] },
+    },
+    data: { status: "CANCELADO", etapa: "FINALIZADO" },
   });
   await prisma.rmaProcesso.update({
     where: { id },

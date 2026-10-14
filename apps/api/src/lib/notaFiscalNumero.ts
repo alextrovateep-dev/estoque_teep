@@ -147,9 +147,11 @@ async function notaFiscalNumeroEmUso(opts: {
     existeId(Prisma.sql`
       SELECT i.id
       FROM rma_itens i
+      INNER JOIN rma_processos p ON p.id = i.processo_id
       WHERE ${sqlNfPreenchida("i.nf_cobranca_numero")}
         AND ${sqlEqChaveNf("i.nf_cobranca_numero", chave)}
         AND i.status <> 'CANCELADO'
+        AND p.status <> 'CANCELADO'
         ${sqlNotUuid("i.id", exclude?.rmaItemId)}
         ${sqlNotUuid("i.processo_id", exclude?.rmaProcessoId)}
       LIMIT 1

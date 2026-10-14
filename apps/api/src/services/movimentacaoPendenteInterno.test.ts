@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { deveFicarPendenteAprovacao, reativarSaidoNoLancamento } from "./movimentacaoService";
-import { serieEntradaAceitaExistente } from "./serieService";
+import {
+  serieEntradaAceitaExistente,
+  serieLivreDeRmaAtivo,
+} from "./serieService";
 
 describe("deveFicarPendenteAprovacao", () => {
   it("operador + tipo com aprovação → pendente no lançamento manual", () => {
@@ -84,6 +87,68 @@ describe("serieEntradaAceitaExistente", () => {
         permitirReativarSaido: false,
         status: "SAIDO",
       }),
+      false
+    );
+  });
+
+  it("aceita SAIDO de RMA cancelado mesmo sem flag de retorno", () => {
+    assert.equal(
+      serieEntradaAceitaExistente({
+        permitirReativarSaido: false,
+        status: "SAIDO",
+        somenteRmaCancelado: true,
+      }),
+      true
+    );
+    assert.equal(
+      serieEntradaAceitaExistente({
+        permitirReativarSaido: false,
+        status: "EM_ESTOQUE",
+        somenteRmaCancelado: true,
+      }),
+      false
+    );
+  });
+});
+
+describe("serieLivreDeRmaAtivo", () => {
+  it("libera série só quando todos os vínculos RMA estão cancelados", () => {
+    assert.equal(serieLivreDeRmaAtivo([]), false);
+    assert.equal(
+      serieLivreDeRmaAtivo([
+        { status: "CANCELADO", processoStatus: "CANCELADO" },
+      ]),
+      true
+    );
+    assert.equal(
+      serieLivreDeRmaAtivo([
+        { status: "EM_ESTOQUE", processoStatus: "CANCELADO" },
+      ]),
+      true
+    );
+    assert.equal(
+      serieLivreDeRmaAtivo([
+        { status: "CANCELADO", processoStatus: "ABERTO" },
+      ]),
+      false
+    );
+    assert.equal(
+      serieLivreDeRmaAtivo([
+        { status: "EM_ESTOQUE", processoStatus: "ABERTO" },
+      ]),
+      false
+    );
+    assert.equal(
+      serieLivreDeRmaAtivo([
+        { status: "DEVOLVIDO", processoStatus: "FECHADO" },
+      ]),
+      false
+    );
+    assert.equal(
+      serieLivreDeRmaAtivo([
+        { status: "CANCELADO", processoStatus: "CANCELADO" },
+        { status: "EM_ESTOQUE", processoStatus: "ABERTO" },
+      ]),
       false
     );
   });

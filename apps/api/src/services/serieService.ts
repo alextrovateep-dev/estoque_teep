@@ -98,14 +98,74 @@ export async function encontrarUnidadeSerieNoProduto(
   });
 }
 
+/**
+ * Itens de RMA desta série: se só há cancelado, a série/NF podem reentrar
+ * (abertura ou lançamento) como se o RMA errado não existisse.
+ */
+export function serieLivreDeRmaAtivo(
+  vinculos: Array<{ status: string; processoStatus: string }>
+): boolean {
+  if (vinculos.length === 0) return false;
+  return vinculos.every((v) => v.processoStatus === "CANCELADO");
+}
+
 /** Entrada pode reaproveitar a mesma unidade que saiu (demo/comodato/RMA). */
 export function serieEntradaAceitaExistente(opts: {
   permitirReativarSaido?: boolean;
   status: string;
+  /** Passou só por RMA cancelado — não trava série na reabertura/lançamento. */
+  somenteRmaCancelado?: boolean;
 }): boolean {
+  if (opts.status !== SERIE_STATUS.SAIDO) return false;
   return (
-    opts.permitirReativarSaido === true && opts.status === SERIE_STATUS.SAIDO
+    opts.permitirReativarSaido === true || opts.somenteRmaCancelado === true
   );
+}
+
+async function unidadeSomenteEmRmaCancelado(
+  tx: Tx,
+  unidadeSerieId: string
+): Promise<boolean> {
+  const vinculos = await tx.rmaItem.findMany({
+    where: { unidadeSerieId },
+    select: {
+      status: true,
+      processo: { select: { status: true } },
+    },
+  });
+  return serieLivreDeRmaAtivo(
+    vinculos.map((v) => ({
+      status: v.status,
+      processoStatus: v.processo.status,
+    }))
+  );
+}
+
+async function aceitaReentradaSerieExistente(
+  tx: Tx,
+  opts: {
+    unidadeId: string;
+    status: string;
+    permitirReativarSaido?: boolean;
+  }
+): Promise<boolean> {
+  if (
+    serieEntradaAceitaExistente({
+      permitirReativarSaido: opts.permitirReativarSaido,
+      status: opts.status,
+    })
+  ) {
+    return true;
+  }
+  if (opts.status !== SERIE_STATUS.SAIDO) return false;
+  const somenteRmaCancelado = await unidadeSomenteEmRmaCancelado(
+    tx,
+    opts.unidadeId
+  );
+  return serieEntradaAceitaExistente({
+    status: opts.status,
+    somenteRmaCancelado,
+  });
 }
 
 export async function assertSerieNaoExisteNoProduto(
@@ -249,7 +309,18 @@ export async function aplicarSeriesEntrada(
   assertQuantidadeInteiraSerie(opts.quantidade, series.length);
 
   if (!opts.permitirReativarSaido) {
-    await assertFormatoSeriesNascimento(tx, opts.produtoId, series);
+    const nascimento: string[] = [];
+    for (const numeroSerie of series) {
+      const existente = await encontrarUnidadeSerieNoProduto(
+        tx,
+        opts.produtoId,
+        numeroSerie
+      );
+      if (!existente) nascimento.push(numeroSerie);
+    }
+    if (nascimento.length > 0) {
+      await assertFormatoSeriesNascimento(tx, opts.produtoId, nascimento);
+    }
   }
 
   const alocacoesParaConfirmar = await prepararEntradaComAlocacoes(tx, {
@@ -268,9 +339,10 @@ export async function aplicarSeriesEntrada(
 
     if (existente) {
       if (
-        serieEntradaAceitaExistente({
-          permitirReativarSaido: opts.permitirReativarSaido,
+        await aceitaReentradaSerieExistente(tx, {
+          unidadeId: existente.id,
           status: existente.status,
+          permitirReativarSaido: opts.permitirReativarSaido,
         })
       ) {
         const updated = await tx.unidadeSerie.update({
@@ -703,7 +775,18 @@ export async function validarSeriesEntradaNovas(
   const series = normalizarSeries(opts.series);
   assertQuantidadeInteiraSerie(opts.quantidade, series.length);
   if (!opts.permitirReativarSaido) {
-    await assertFormatoSeriesNascimento(tx, opts.produtoId, series);
+    const nascimento: string[] = [];
+    for (const numeroSerie of series) {
+      const existente = await encontrarUnidadeSerieNoProduto(
+        tx,
+        opts.produtoId,
+        numeroSerie
+      );
+      if (!existente) nascimento.push(numeroSerie);
+    }
+    if (nascimento.length > 0) {
+      await assertFormatoSeriesNascimento(tx, opts.produtoId, nascimento);
+    }
   }
 
   for (const numeroSerie of series) {
@@ -714,9 +797,10 @@ export async function validarSeriesEntradaNovas(
     );
     if (!existente) continue;
     if (
-      serieEntradaAceitaExistente({
-        permitirReativarSaido: opts.permitirReativarSaido,
+      await aceitaReentradaSerieExistente(tx, {
+        unidadeId: existente.id,
         status: existente.status,
+        permitirReativarSaido: opts.permitirReativarSaido,
       })
     ) {
       continue;
@@ -768,6 +852,26 @@ export async function validarNumeroSerieParaEntrada(
       sufixoFixo: cfg?.sufixoFixo,
     });
     if (!conferencia.ok) {
+      const jaCadastrada = await encontrarUnidadeSerieNoProduto(
+        tx,
+        opts.produtoId,
+        numero
+      );
+      if (
+        jaCadastrada &&
+        (await aceitaReentradaSerieExistente(tx, {
+          unidadeId: jaCadastrada.id,
+          status: jaCadastrada.status,
+          permitirReativarSaido: false,
+        }))
+      ) {
+        return {
+          ok: true,
+          numeroSerie: jaCadastrada.numeroSerie,
+          motivo: null,
+          status: jaCadastrada.status,
+        };
+      }
       return { ok: false, numeroSerie: numero, motivo: conferencia.motivo };
     }
     normalizado = conferencia.numeroSerie;
@@ -789,9 +893,10 @@ export async function validarNumeroSerieParaEntrada(
       };
     }
     if (
-      serieEntradaAceitaExistente({
-        permitirReativarSaido: true,
+      await aceitaReentradaSerieExistente(tx, {
+        unidadeId: existente.id,
         status: existente.status,
+        permitirReativarSaido: true,
       })
     ) {
       return {
@@ -815,6 +920,20 @@ export async function validarNumeroSerieParaEntrada(
   }
 
   if (existente) {
+    if (
+      await aceitaReentradaSerieExistente(tx, {
+        unidadeId: existente.id,
+        status: existente.status,
+        permitirReativarSaido: false,
+      })
+    ) {
+      return {
+        ok: true,
+        numeroSerie: existente.numeroSerie,
+        motivo: null,
+        status: existente.status,
+      };
+    }
     return {
       ok: false,
       numeroSerie: existente.numeroSerie,
