@@ -1,3 +1,16 @@
+/** Explode BOM só se a flag do tipo estiver ligada — nunca por ser SAIDA. */
+export function tipoUsaBaixaArvore(opts: {
+  baixaPorArvore?: boolean | null;
+  saidaPedidoVenda?: boolean | null;
+  usoInternoPedido?: boolean;
+}): boolean {
+  return (
+    opts.baixaPorArvore === true &&
+    opts.saidaPedidoVenda !== true &&
+    !opts.usoInternoPedido
+  );
+}
+
 export type TipoParaFiltroMovimentacoes = {
   sistema?: boolean | null;
   rmaEntradaEstoque?: boolean | null;

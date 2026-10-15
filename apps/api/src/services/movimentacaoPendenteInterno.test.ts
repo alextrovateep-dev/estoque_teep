@@ -71,6 +71,13 @@ describe("tipoUsaBaixaArvore", () => {
       }),
       true
     );
+    assert.equal(
+      tipoUsaBaixaArvore({
+        baixaPorArvore: false,
+        saidaPedidoVenda: false,
+      }),
+      false
+    );
   });
 });
 

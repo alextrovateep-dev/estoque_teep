@@ -17,6 +17,7 @@ import {
   exigeSerieNoLancamento,
   formatQtyUnidade,
   normalizarUnidade,
+  tipoUsaBaixaArvore,
   usaSerieLivre,
 } from "@teep/shared";
 import {
@@ -38,6 +39,7 @@ type Tipo = {
   ehRetornoDeId?: string | null;
   requerTermoComodato?: boolean;
   baixaPorArvore?: boolean;
+  saidaPedidoVenda?: boolean;
   controleSerie?: string | null;
   filialId?: string | null;
   filialDestinoId?: string | null;
@@ -240,7 +242,10 @@ function NovoLancamentoForm() {
   const isRetorno = Boolean(tipo?.ehRetornoDeId);
   const precisaAlerta = Boolean(tipo?.geraAlertaRetorno);
   const precisaTermo = Boolean(tipo?.requerTermoComodato);
-  const isBaixaArvore = Boolean(tipo?.baixaPorArvore);
+  const isBaixaArvore = tipoUsaBaixaArvore({
+    baixaPorArvore: tipo?.baixaPorArvore,
+    saidaPedidoVenda: tipo?.saidaPedidoVenda,
+  });
   const multiSkuMode = !isRetorno && !isBaixaArvore;
   const precisaCliente =
     Boolean(tipo?.requerCliente) ||

@@ -1,9 +1,28 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  tipoUsaBaixaArvore,
   tipoVisivelFiltroMovimentacoes,
   tipoVisivelLancamento,
 } from "@teep/shared";
+
+describe("tipoUsaBaixaArvore", () => {
+  it("só explode BOM com a flag ligada", () => {
+    assert.equal(tipoUsaBaixaArvore({ baixaPorArvore: false }), false);
+    assert.equal(tipoUsaBaixaArvore({}), false);
+    assert.equal(tipoUsaBaixaArvore({ baixaPorArvore: true }), true);
+  });
+
+  it("saída de pedido nunca explode BOM", () => {
+    assert.equal(
+      tipoUsaBaixaArvore({
+        baixaPorArvore: true,
+        saidaPedidoVenda: true,
+      }),
+      false
+    );
+  });
+});
 
 describe("tipoVisivelFiltroMovimentacoes", () => {
   it("aceita tipo de negócio", () => {

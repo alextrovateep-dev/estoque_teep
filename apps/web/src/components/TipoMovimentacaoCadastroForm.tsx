@@ -261,7 +261,8 @@ export function TipoMovimentacaoCadastroForm({
           ehRetornoDeId: t.ehRetornoDeId || "",
           requerTermoComodato: Boolean(t.requerTermoComodato),
           controleSerie: t.controleSerie || CONTROLE_SERIE_PADRAO,
-          baixaPorArvore: Boolean(t.baixaPorArvore),
+          baixaPorArvore:
+            Boolean(t.baixaPorArvore) && !t.saidaPedidoVenda,
           rmaEntradaEstoque: Boolean(t.rmaEntradaEstoque),
           rmaSaidaCliente: Boolean(t.rmaSaidaCliente),
           saidaPedidoVenda: Boolean(t.saidaPedidoVenda),
@@ -356,9 +357,12 @@ export function TipoMovimentacaoCadastroForm({
             requerTermoComodato: form.requerTermoComodato,
             controleSerie: form.controleSerie,
             baixaPorArvore:
-              form.operacao === "SAIDA" || form.operacao === "TRANSFERENCIA"
-                ? form.baixaPorArvore
-                : false,
+              form.saidaPedidoVenda
+                ? false
+                : form.operacao === "SAIDA" ||
+                    form.operacao === "TRANSFERENCIA"
+                  ? form.baixaPorArvore
+                  : false,
             rmaEntradaEstoque:
               form.operacao === "ENTRADA" && form.rmaEntradaEstoque,
             rmaSaidaCliente: form.operacao === "SAIDA" && form.rmaSaidaCliente,
@@ -729,6 +733,33 @@ export function TipoMovimentacaoCadastroForm({
               </p>
             ) : null}
           </label>
+
+          <div className="mt-2">
+            <ToggleRow
+              checked={form.baixaPorArvore}
+              disabled={soRmaFlags || (!isSaida && !isTransf)}
+              onChange={(v) =>
+                setForm({
+                  ...form,
+                  baixaPorArvore: v,
+                  requerAprovacao: v ? false : form.requerAprovacao,
+                  saidaPedidoVenda: v ? false : form.saidaPedidoVenda,
+                  controleSerie:
+                    v && form.controleSerie === "OBRIGATORIO"
+                      ? CONTROLE_SERIE_PADRAO
+                      : form.controleSerie,
+                })
+              }
+              title="Baixa pela árvore de produto"
+              hint={
+                isSaida
+                  ? "Opcional e desligado por padrão. Não é automático em toda saída. Só marque se o lançamento deve baixar os componentes da árvore em vez do produto acabado."
+                  : isTransf
+                    ? "Opcional. Na origem saem os componentes da árvore; no destino entra apenas este produto."
+                    : "Disponível apenas para Saída ou Transferência."
+              }
+            />
+          </div>
         </SectionCard>
 
         <SectionCard
@@ -874,34 +905,6 @@ export function TipoMovimentacaoCadastroForm({
                 isSaida
                   ? "Marca a saída para receber o termo assinado depois (Movimentações)."
                   : "Disponível apenas para natureza Saída."
-              }
-            />
-            <ToggleRow
-              checked={form.baixaPorArvore}
-              disabled={
-                form.saidaPedidoVenda ||
-                (!isSaida && form.operacao !== "TRANSFERENCIA")
-              }
-              onChange={(v) =>
-                setForm({
-                  ...form,
-                  baixaPorArvore: v,
-                  requerAprovacao: v ? false : form.requerAprovacao,
-                  saidaPedidoVenda: v ? false : form.saidaPedidoVenda,
-                  // Árvore não pede série do produto pai
-                  controleSerie:
-                    v && form.controleSerie === "OBRIGATORIO"
-                      ? CONTROLE_SERIE_PADRAO
-                      : form.controleSerie,
-                })
-              }
-              title="Baixa pela árvore de produto"
-              hint={
-                isSaida
-                  ? "Ao lançar a saída, o sistema baixa no mesmo estoque os componentes da árvore deste produto."
-                  : form.operacao === "TRANSFERENCIA"
-                    ? "Na origem saem os componentes da árvore; no destino entra apenas este produto."
-                    : "Disponível apenas para Saída ou Transferência."
               }
             />
 

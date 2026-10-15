@@ -1,6 +1,7 @@
 "use client";
 
 import { api } from "@/lib/api";
+import { tipoUsaBaixaArvore } from "@teep/shared";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ReactNode, Suspense, useEffect, useState } from "react";
@@ -229,7 +230,13 @@ function TiposPageInner() {
                         {t.requerTermoComodato && (
                           <FlagChip tone="brand">Termo de comodato</FlagChip>
                         )}
-                        {t.baixaPorArvore && (
+                        {t.saidaPedidoVenda && (
+                          <FlagChip tone="brand">Pedido de venda</FlagChip>
+                        )}
+                        {tipoUsaBaixaArvore({
+                          baixaPorArvore: t.baixaPorArvore,
+                          saidaPedidoVenda: t.saidaPedidoVenda,
+                        }) && (
                           <FlagChip tone="amber">Consome componentes</FlagChip>
                         )}
                         {t.controleSerie === "OBRIGATORIO" && (
@@ -255,7 +262,11 @@ function TiposPageInner() {
                         {!t.requerAprovacao &&
                           !t.geraAlertaRetorno &&
                           !t.requerTermoComodato &&
-                          !t.baixaPorArvore &&
+                          !t.saidaPedidoVenda &&
+                          !tipoUsaBaixaArvore({
+                            baixaPorArvore: t.baixaPorArvore,
+                            saidaPedidoVenda: t.saidaPedidoVenda,
+                          }) &&
                           !t.rmaEntradaEstoque &&
                           !t.rmaSaidaCliente &&
                           !origemNome &&

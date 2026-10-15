@@ -90,6 +90,18 @@ describe("tipoMovimentacaoSchema — estoque fixo", () => {
     assert.equal(r.success, true);
   });
 
+  it("saída comum não exige baixaPorArvore", () => {
+    const r = tipoMovimentacaoSchema.safeParse({
+      codigo: "SAI-VENDA",
+      nome: "Venda / Entrega",
+      operacao: "SAIDA",
+      filialId: FILIAL_A,
+      baixaPorArvore: false,
+    });
+    assert.equal(r.success, true);
+    if (r.success) assert.equal(r.data.baixaPorArvore, false);
+  });
+
   it("rejeita baixaPorArvore junto com saidaPedidoVenda", () => {
     const r = tipoMovimentacaoSchema.safeParse({
       codigo: "SAI-PED",

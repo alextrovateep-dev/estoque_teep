@@ -7,6 +7,7 @@ import {
   exigeSerieNoLancamento,
   isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
+  tipoUsaBaixaArvore,
   usaSerieLivre,
 } from "@teep/shared";
 import { Prisma } from "@prisma/client";
@@ -168,21 +169,7 @@ async function aplicarEfeitoSaldo(
   });
 }
 
-/**
- * Pedido eGestor baixa o acabado no estoque escolhido na separação.
- * Nunca explode BOM — mesmo se o tipo ainda tiver «baixa pela árvore».
- */
-export function tipoUsaBaixaArvore(opts: {
-  baixaPorArvore?: boolean | null;
-  saidaPedidoVenda?: boolean | null;
-  usoInternoPedido?: boolean;
-}): boolean {
-  return (
-    opts.baixaPorArvore === true &&
-    opts.saidaPedidoVenda !== true &&
-    !opts.usoInternoPedido
-  );
-}
+export { tipoUsaBaixaArvore };
 
 /**
  * Fluxos internos (pedido/RMA) não herdam "requer aprovação" do tipo —
@@ -322,7 +309,13 @@ export async function criarMovimentacao(
         "Informe creditoDestino: IMEDIATO ou AGUARDAR_RECEBIMENTO"
       );
     }
-    if (tipo.baixaPorArvore && tipo.requerAprovacao) {
+    if (
+      tipoUsaBaixaArvore({
+        baixaPorArvore: tipo.baixaPorArvore,
+        saidaPedidoVenda: tipo.saidaPedidoVenda,
+      }) &&
+      tipo.requerAprovacao
+    ) {
       throw new AppError(
         400,
         "Transferência com baixa pela árvore não pode exigir aprovação — desative a aprovação no tipo"
@@ -351,14 +344,20 @@ export async function criarMovimentacao(
         ["NOTA_FISCAL", "LAUDO", "OUTRO"].includes(a.tipo)
       ),
       itens,
-      baixaPorArvore: tipo.baixaPorArvore === true,
+      baixaPorArvore: tipoUsaBaixaArvore({
+        baixaPorArvore: tipo.baixaPorArvore,
+        saidaPedidoVenda: tipo.saidaPedidoVenda,
+      }),
       controleSerieTipo: tipo.controleSerie,
     };
 
     const precisaAprovacao =
       user.perfil === "OPERADOR" &&
       tipo.requerAprovacao === true &&
-      !tipo.baixaPorArvore;
+      !tipoUsaBaixaArvore({
+        baixaPorArvore: tipo.baixaPorArvore,
+        saidaPedidoVenda: tipo.saidaPedidoVenda,
+      });
 
     const result = precisaAprovacao
       ? await criarTransferenciaPendenteAprovacao(

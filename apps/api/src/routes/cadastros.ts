@@ -2022,10 +2022,16 @@ cadastrosRouter.patch(
       if (operacaoFinal !== "SAIDA" && operacaoFinal !== "TRANSFERENCIA") {
         data.baixaPorArvore = false;
       }
-      const baixaArvore =
+      const baixaArvorePedido =
         data.baixaPorArvore !== undefined
           ? data.baixaPorArvore === true
           : existing.baixaPorArvore;
+      const baixaArvore =
+        saidaPedido ||
+        (operacaoFinal !== "SAIDA" && operacaoFinal !== "TRANSFERENCIA")
+          ? false
+          : baixaArvorePedido;
+      data.baixaPorArvore = baixaArvore;
       const requerAprov =
         saidaPedido
           ? false
@@ -2034,7 +2040,6 @@ cadastrosRouter.patch(
             : existing.requerAprovacao;
       if (saidaPedido) {
         data.requerAprovacao = false;
-        data.baixaPorArvore = false;
       }
       if (baixaArvore && requerAprov) {
         throw new AppError(
@@ -2105,7 +2110,7 @@ cadastrosRouter.patch(
             controleSerie:
               (data.controleSerie as string | undefined) ??
               existing.controleSerie,
-            baixaPorArvore: saidaPedido ? false : baixaArvore,
+            baixaPorArvore: baixaArvore,
             rmaEntradaEstoque: rmaEntrada,
             rmaSaidaCliente: rmaSaida,
             saidaPedidoVenda: saidaPedido,
