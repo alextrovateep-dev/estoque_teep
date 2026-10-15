@@ -281,6 +281,7 @@ function CamposTransportePedido({
   transportadora,
   rastreio,
   freteCobrado,
+  locked = false,
   onTransportadora,
   onRastreio,
   onFrete,
@@ -288,41 +289,50 @@ function CamposTransportePedido({
   transportadora: string;
   rastreio: string;
   freteCobrado: "" | "true" | "false";
+  locked?: boolean;
   onTransportadora: (v: string) => void;
   onRastreio: (v: string) => void;
   onFrete: (v: "" | "true" | "false") => void;
 }) {
+  const campo = locked
+    ? "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm text-slate-800"
+    : "w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm";
   return (
-    <>
-      <label className="block text-sm">
+    <div className="grid gap-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_9.5rem] sm:items-end">
+      <label className="min-w-0 text-sm">
         <span className="mb-1 block font-medium">
           Transportadora{" "}
           <span className="font-normal text-slate-400">(opcional)</span>
         </span>
         <input
           maxLength={120}
-          className="w-full rounded-lg border px-3 py-2"
+          disabled={locked}
+          readOnly={locked}
+          className={campo}
           value={transportadora}
           onChange={(e) => onTransportadora(e.target.value)}
         />
       </label>
-      <label className="block text-sm">
+      <label className="min-w-0 text-sm">
         <span className="mb-1 block font-medium">
-          Número de rastreio{" "}
+          Rastreio{" "}
           <span className="font-normal text-slate-400">(opcional)</span>
         </span>
         <input
           maxLength={80}
-          className="w-full rounded-lg border px-3 py-2"
+          disabled={locked}
+          readOnly={locked}
+          className={`${campo} font-mono`}
           value={rastreio}
           onChange={(e) => onRastreio(e.target.value)}
         />
       </label>
-      <label className="block text-sm">
+      <label className="text-sm">
         <span className="mb-1 block font-medium">Frete cobrado</span>
         <select
           required
-          className="w-full rounded-lg border px-3 py-2"
+          disabled={locked}
+          className={campo}
           value={freteCobrado}
           onChange={(e) =>
             onFrete(e.target.value as "" | "true" | "false")
@@ -333,7 +343,7 @@ function CamposTransportePedido({
           <option value="false">Não</option>
         </select>
       </label>
-    </>
+    </div>
   );
 }
 
@@ -405,6 +415,7 @@ export default function PedidoDetalhePage() {
     "ADENDO_CONTRATO"
   );
   const [freteCobrado, setFreteCobrado] = useState<"" | "true" | "false">("");
+  const [editandoTransporte, setEditandoTransporte] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -420,6 +431,7 @@ export default function PedidoDetalhePage() {
         setFilialId(p.filialAcabado?.id || filiais[0]?.id || "");
         setDestIds((p.destinatarios || []).map((d) => d.usuario.id));
         setLinhas(linhasFromPedido(p));
+        setEditandoTransporte(false);
         setTransportadora(p.transportadora || "");
         setRastreio(p.rastreio || "");
         setNfNumero(p.nfNumero || "");
@@ -633,11 +645,32 @@ export default function PedidoDetalhePage() {
     }
   }
 
+  function restaurarTransporteDoPedido() {
+    if (!row) return;
+    setTransportadora(row.transportadora || "");
+    setRastreio(row.rastreio || "");
+    setFreteCobrado(
+      row.freteCobrado === true
+        ? "true"
+        : row.freteCobrado === false
+          ? "false"
+          : ""
+    );
+  }
+
+  function cancelarEdicaoTransporte() {
+    restaurarTransporteDoPedido();
+    setEditandoTransporte(false);
+    setError("");
+    setOkMsg("");
+  }
+
   async function onSalvarTransporte(e?: FormEvent) {
     e?.preventDefault();
     if (!row || (row.status !== "SEPARADO" && row.status !== "ENVIADO")) {
       return;
     }
+    if (row.status === "ENVIADO" && !editandoTransporte) return;
     if (freteCobrado !== "true" && freteCobrado !== "false") {
       setError("Informe se o frete foi cobrado.");
       return;
@@ -664,6 +697,7 @@ export default function PedidoDetalhePage() {
             ? "false"
             : ""
       );
+      setEditandoTransporte(false);
       setOkMsg("Transportadora, rastreio e frete salvos.");
     } catch (err) {
       setError(
@@ -950,8 +984,45 @@ export default function PedidoDetalhePage() {
                 onSubmit={onSalvarTransporte}
                 className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"
               >
-                <p className="text-sm font-medium">Transportadora</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Transportadora</p>
+                  {editandoTransporte ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={cancelarEdicaoTransporte}
+                        className="rounded-lg border px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="submit"
+                        disabled={
+                          saving ||
+                          (freteCobrado !== "true" && freteCobrado !== "false")
+                        }
+                        className="rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        {saving ? "Salvando…" : "Salvar"}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={() => {
+                        setOkMsg("");
+                        setEditandoTransporte(true);
+                      }}
+                      className="rounded-lg border px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Editar
+                    </button>
+                  )}
+                </div>
                 <CamposTransportePedido
+                  locked={!editandoTransporte}
                   transportadora={transportadora}
                   rastreio={rastreio}
                   freteCobrado={freteCobrado}
@@ -959,16 +1030,6 @@ export default function PedidoDetalhePage() {
                   onRastreio={setRastreio}
                   onFrete={setFreteCobrado}
                 />
-                <button
-                  type="submit"
-                  disabled={
-                    saving ||
-                    (freteCobrado !== "true" && freteCobrado !== "false")
-                  }
-                  className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-                >
-                  {saving ? "Salvando…" : "Salvar"}
-                </button>
               </form>
               <dl className="grid gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm sm:grid-cols-2">
                 <div>
