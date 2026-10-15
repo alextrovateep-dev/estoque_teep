@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { cnpjFromRaiz } from "@teep/shared";
 import {
+  chaveCnpj,
   clienteIdPorDocumento,
   indexClientesPorCnpj,
   interpretarDocumentoContatoEgestor,
@@ -62,5 +63,15 @@ describe("indexClientesPorCnpj", () => {
       { id: "a", documento: cnpj, ativo: true },
     ]);
     assert.equal(clienteIdPorDocumento(idx, cnpj.replace(/\D/g, "")), "a");
+  });
+
+  it("casa OSTEOMED (zeros à esquerda / máscara)", () => {
+    const mascarado = "00.638.390/0001-20";
+    const idx = indexClientesPorCnpj([
+      { id: "osteo", documento: mascarado, ativo: true },
+    ]);
+    assert.equal(clienteIdPorDocumento(idx, mascarado), "osteo");
+    assert.equal(clienteIdPorDocumento(idx, "00638390000120"), "osteo");
+    assert.equal(chaveCnpj(mascarado), "00638390000120");
   });
 });

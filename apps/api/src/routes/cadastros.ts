@@ -34,6 +34,7 @@ import {
   avaliarExclusaoCliente,
   excluirClienteSeLivre,
 } from "../services/clienteExclusaoService";
+import { vincularPedidosAbertosPorCnpj } from "../services/pedidoVendaService";
 import {
   exportarProdutosExcel,
   exportarProdutosPdf,
@@ -1667,16 +1668,18 @@ cadastrosRouter.post(
         }
       }
       await assertResponsavelComercialCliente(data.responsavelComercialId);
-      res.status(201).json(
-        await prisma.cliente.create({
-          data,
-          include: {
-            responsavelComercial: {
-              select: { id: true, nome: true, email: true },
-            },
+      const criado = await prisma.cliente.create({
+        data,
+        include: {
+          responsavelComercial: {
+            select: { id: true, nome: true, email: true },
           },
-        })
-      );
+        },
+      });
+      if (criado.ativo && criado.documento) {
+        await vincularPedidosAbertosPorCnpj(criado.documento);
+      }
+      res.status(201).json(criado);
     } catch (e: unknown) {
       if ((e as { code?: string }).code === "P2002") {
         return next(new AppError(409, "CNPJ/documento já cadastrado"));
@@ -1722,17 +1725,19 @@ cadastrosRouter.patch(
       if ("responsavelComercialId" in data) {
         await assertResponsavelComercialCliente(data.responsavelComercialId);
       }
-      res.json(
-        await prisma.cliente.update({
-          where: { id: req.params.id },
-          data,
-          include: {
-            responsavelComercial: {
-              select: { id: true, nome: true, email: true },
-            },
+      const atualizado = await prisma.cliente.update({
+        where: { id: req.params.id },
+        data,
+        include: {
+          responsavelComercial: {
+            select: { id: true, nome: true, email: true },
           },
-        })
-      );
+        },
+      });
+      if (atualizado.ativo && atualizado.documento) {
+        await vincularPedidosAbertosPorCnpj(atualizado.documento);
+      }
+      res.json(atualizado);
     } catch (e: unknown) {
       if ((e as { code?: string }).code === "P2002") {
         return next(new AppError(409, "CNPJ/documento já cadastrado"));

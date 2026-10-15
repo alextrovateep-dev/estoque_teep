@@ -8,6 +8,7 @@ import {
   alocarSeriesSeparacao,
 } from "../lib/pedidoSeparacaoItens";
 import {
+  chaveCnpj,
   clienteIdPorDocumento,
   indexClientesPorCnpj,
   interpretarDocumentoContatoEgestor,
@@ -72,6 +73,57 @@ const listaSelect = {
   _count: { select: { itens: true } },
 } as const;
 
+/** Pedido aberto sem clienteId: liga ao cadastro TEEP pelo CNPJ (cadastrou depois do sync). */
+export async function vincularPedidosAbertosPorCnpj(
+  documento?: string | null
+): Promise<number> {
+  const chaveAlvo = documento ? chaveCnpj(documento) : null;
+  const pedidos = await prisma.pedidoVenda.findMany({
+    where: {
+      status: "ABERTO",
+      clienteId: null,
+      documentoContato: { not: null },
+    },
+    select: { id: true, documentoContato: true },
+  });
+  const alvo = chaveAlvo
+    ? pedidos.filter((p) => chaveCnpj(p.documentoContato) === chaveAlvo)
+    : pedidos;
+  if (alvo.length === 0) return 0;
+
+  const clientes = await prisma.cliente.findMany({
+    where: { ativo: true, documento: { not: null } },
+    select: { id: true, documento: true, ativo: true },
+  });
+  const idx = indexClientesPorCnpj(clientes);
+  let n = 0;
+  for (const p of alvo) {
+    const clienteId = clienteIdPorDocumento(idx, p.documentoContato);
+    if (!clienteId) continue;
+    await prisma.pedidoVenda.update({
+      where: { id: p.id },
+      data: { clienteId },
+    });
+    n += 1;
+  }
+  return n;
+}
+
+async function tentarVincularPedidoAberto(pedido: {
+  id: string;
+  status: string;
+  clienteId: string | null;
+  documentoContato: string | null;
+  cliente?: { ativo?: boolean } | null;
+}): Promise<boolean> {
+  if (pedido.status !== "ABERTO" || !pedido.documentoContato) return false;
+  const precisa =
+    !pedido.clienteId || pedido.cliente?.ativo === false;
+  if (!precisa) return false;
+  const n = await vincularPedidosAbertosPorCnpj(pedido.documentoContato);
+  return n > 0;
+}
+
 function queryLista(st: "ABERTO" | "SEPARADO" | "ENVIADO") {
   return prisma.pedidoVenda.findMany({
     where: { status: st },
@@ -86,11 +138,13 @@ function queryLista(st: "ABERTO" | "SEPARADO" | "ENVIADO") {
 
 export async function listarPedidos(status?: string) {
   const st = status && isPedidoStatus(status) ? status : "ABERTO";
+  if (st === "ABERTO") await vincularPedidosAbertosPorCnpj();
   return queryLista(st);
 }
 
 /** Uma ida ao banco (3 queries em paralelo) para as três abas. */
 export async function listarPedidosAgrupados() {
+  await vincularPedidosAbertosPorCnpj();
   const [ABERTO, SEPARADO, ENVIADO] = await Promise.all([
     queryLista("ABERTO"),
     queryLista("SEPARADO"),
@@ -100,11 +154,19 @@ export async function listarPedidosAgrupados() {
 }
 
 export async function obterPedido(id: string) {
-  const row = await prisma.pedidoVenda.findUnique({
+  let row = await prisma.pedidoVenda.findUnique({
     where: { id },
     include: pedidoInclude,
   });
   if (!row) throw new AppError(404, "Pedido não encontrado");
+
+  if (await tentarVincularPedidoAberto(row)) {
+    const religado = await prisma.pedidoVenda.findUnique({
+      where: { id },
+      include: pedidoInclude,
+    });
+    if (religado) row = religado;
+  }
 
   const estado = await estadoSeparacaoPedido(row);
   // Releitura após possível heal (órfão limpo ou SEPARADO aplicado)

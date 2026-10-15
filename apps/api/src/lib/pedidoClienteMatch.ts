@@ -58,6 +58,17 @@ export function mensagemBloqueioSeparacaoCliente(opts: {
   return null;
 }
 
+/** CNPJ comparável: 14 dígitos, zeros à esquerda se o cadastro/eGestor omitiu. */
+export function chaveCnpj(
+  documento: string | null | undefined
+): string | null {
+  const d = onlyDigits(documento || "");
+  if (!d) return null;
+  const key = d.length < 14 ? d.padStart(14, "0") : d;
+  if (key.length !== 14 || !isValidCnpj(key)) return null;
+  return key;
+}
+
 /** Índice CNPJ (só dígitos) → id do cliente ativo. */
 export function indexClientesPorCnpj(
   rows: Array<{ id: string; documento: string | null; ativo?: boolean }>
@@ -65,9 +76,9 @@ export function indexClientesPorCnpj(
   const map = new Map<string, string>();
   for (const row of rows) {
     if (row.ativo === false) continue;
-    const d = onlyDigits(row.documento || "");
-    if (d.length === 14 && isValidCnpj(d) && !map.has(d)) {
-      map.set(d, row.id);
+    const key = chaveCnpj(row.documento);
+    if (key && !map.has(key)) {
+      map.set(key, row.id);
     }
   }
   return map;
@@ -77,9 +88,9 @@ export function clienteIdPorDocumento(
   index: Map<string, string>,
   documento: string | null | undefined
 ): string | null {
-  const d = onlyDigits(documento || "");
-  if (!d) return null;
-  return index.get(d) || null;
+  const key = chaveCnpj(documento);
+  if (!key) return null;
+  return index.get(key) || null;
 }
 
 export function mesmoCnpjPedidoCliente(
