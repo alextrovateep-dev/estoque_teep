@@ -790,6 +790,7 @@ export function TipoMovimentacaoCadastroForm({
                 saidaPedidoVenda: v,
                 // Separação de pedido conclui na hora — sem fila de aprovação
                 requerAprovacao: v ? false : form.requerAprovacao,
+                baixaPorArvore: v ? false : form.baixaPorArvore,
               })
             }
             title="Saída de pedido de venda"
@@ -877,12 +878,16 @@ export function TipoMovimentacaoCadastroForm({
             />
             <ToggleRow
               checked={form.baixaPorArvore}
-              disabled={!isSaida && form.operacao !== "TRANSFERENCIA"}
+              disabled={
+                form.saidaPedidoVenda ||
+                (!isSaida && form.operacao !== "TRANSFERENCIA")
+              }
               onChange={(v) =>
                 setForm({
                   ...form,
                   baixaPorArvore: v,
                   requerAprovacao: v ? false : form.requerAprovacao,
+                  saidaPedidoVenda: v ? false : form.saidaPedidoVenda,
                   // Árvore não pede série do produto pai
                   controleSerie:
                     v && form.controleSerie === "OBRIGATORIO"

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { deveFicarPendenteAprovacao, reativarSaidoNoLancamento } from "./movimentacaoService";
+import {
+  deveFicarPendenteAprovacao,
+  reativarSaidoNoLancamento,
+  tipoUsaBaixaArvore,
+} from "./movimentacaoService";
 import {
   serieEntradaAceitaExistente,
   serieLivreDeRmaAtivo,
@@ -46,6 +50,26 @@ describe("deveFicarPendenteAprovacao", () => {
         requerAprovacao: true,
       }),
       false
+    );
+  });
+});
+
+describe("tipoUsaBaixaArvore", () => {
+  it("pedido eGestor não explode árvore mesmo se o tipo tiver a flag", () => {
+    assert.equal(
+      tipoUsaBaixaArvore({
+        baixaPorArvore: true,
+        saidaPedidoVenda: true,
+        usoInternoPedido: true,
+      }),
+      false
+    );
+    assert.equal(
+      tipoUsaBaixaArvore({
+        baixaPorArvore: true,
+        saidaPedidoVenda: false,
+      }),
+      true
     );
   });
 });

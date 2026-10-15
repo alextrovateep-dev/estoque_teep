@@ -1905,6 +1905,7 @@ cadastrosRouter.post(
             requerTermoComodato: req.body.requerTermoComodato ?? false,
             controleSerie: req.body.controleSerie ?? CONTROLE_SERIE_PADRAO,
             baixaPorArvore:
+              !saidaPedido &&
               (req.body.operacao === "SAIDA" ||
                 req.body.operacao === "TRANSFERENCIA") &&
               req.body.baixaPorArvore === true,
@@ -2033,6 +2034,7 @@ cadastrosRouter.patch(
             : existing.requerAprovacao;
       if (saidaPedido) {
         data.requerAprovacao = false;
+        data.baixaPorArvore = false;
       }
       if (baixaArvore && requerAprov) {
         throw new AppError(
@@ -2103,7 +2105,7 @@ cadastrosRouter.patch(
             controleSerie:
               (data.controleSerie as string | undefined) ??
               existing.controleSerie,
-            baixaPorArvore: baixaArvore,
+            baixaPorArvore: saidaPedido ? false : baixaArvore,
             rmaEntradaEstoque: rmaEntrada,
             rmaSaidaCliente: rmaSaida,
             saidaPedidoVenda: saidaPedido,

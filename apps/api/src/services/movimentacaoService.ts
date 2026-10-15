@@ -169,6 +169,22 @@ async function aplicarEfeitoSaldo(
 }
 
 /**
+ * Pedido eGestor baixa o acabado no estoque escolhido na separação.
+ * Nunca explode BOM — mesmo se o tipo ainda tiver «baixa pela árvore».
+ */
+export function tipoUsaBaixaArvore(opts: {
+  baixaPorArvore?: boolean | null;
+  saidaPedidoVenda?: boolean | null;
+  usoInternoPedido?: boolean;
+}): boolean {
+  return (
+    opts.baixaPorArvore === true &&
+    opts.saidaPedidoVenda !== true &&
+    !opts.usoInternoPedido
+  );
+}
+
+/**
  * Fluxos internos (pedido/RMA) não herdam "requer aprovação" do tipo —
  * senão saída/entrada ficam PENDENTE e quebram devolver/trocar.
  */
@@ -402,7 +418,13 @@ export async function criarMovimentacao(
         "Retorno vinculado aceita apenas um produto por lançamento"
       );
     }
-    if (tipo.baixaPorArvore) {
+    if (
+      tipoUsaBaixaArvore({
+        baixaPorArvore: tipo.baixaPorArvore,
+        saidaPedidoVenda: tipo.saidaPedidoVenda,
+        usoInternoPedido: input.usoInternoPedido,
+      })
+    ) {
       throw new AppError(
         400,
         "Baixa pela árvore aceita apenas um produto por lançamento nesta versão"
@@ -700,7 +722,14 @@ export async function criarMovimentacao(
     perfil: user.perfil,
     requerAprovacao: tipo.requerAprovacao === true,
   });
-  if (tipo.baixaPorArvore && pendente) {
+  if (
+    tipoUsaBaixaArvore({
+      baixaPorArvore: tipo.baixaPorArvore,
+      saidaPedidoVenda: tipo.saidaPedidoVenda,
+      usoInternoPedido: input.usoInternoPedido,
+    }) &&
+    pendente
+  ) {
     throw new AppError(
       400,
       "Baixa pela árvore não pode ficar pendente de aprovação — desative a aprovação no tipo ou use perfil Gerente/Admin"
@@ -730,9 +759,14 @@ export async function criarMovimentacao(
     seriesNorm = [];
   }
 
-  /** Componentes saem do mesmo estoque da SAIDA. */
+  /** Componentes saem do mesmo estoque da SAIDA. Pedido eGestor nunca explode BOM. */
   let filialComponentesId: string | null = null;
-  if (tipo.baixaPorArvore) {
+  const baixaArvore = tipoUsaBaixaArvore({
+    baixaPorArvore: tipo.baixaPorArvore,
+    saidaPedidoVenda: tipo.saidaPedidoVenda,
+    usoInternoPedido: input.usoInternoPedido,
+  });
+  if (baixaArvore) {
     if (operacao !== "SAIDA") {
       throw new AppError(
         400,
@@ -844,7 +878,7 @@ export async function criarMovimentacao(
       }
     }
 
-    if (status === "CONCLUIDO" && !(tipo.baixaPorArvore && operacao === "SAIDA")) {
+    if (status === "CONCLUIDO" && !(baixaArvore && operacao === "SAIDA")) {
       const saldo = await aplicarEfeitoSaldo(tx, {
         produtoId: input.produtoId!,
         filialId,
@@ -939,11 +973,7 @@ export async function criarMovimentacao(
       }
     }
 
-    if (
-      tipo.baixaPorArvore &&
-      status === "CONCLUIDO" &&
-      operacao === "SAIDA"
-    ) {
+    if (baixaArvore && status === "CONCLUIDO" && operacao === "SAIDA") {
       if (filialComponentesId) {
         await aplicarConsumoMontagem(tx, {
           montagemMovimentacaoId: mov.id,
@@ -1079,7 +1109,11 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
       }
     }
 
-    const saidaArvore = mov.tipo.baixaPorArvore && mov.operacao === "SAIDA";
+    const saidaArvore =
+      tipoUsaBaixaArvore({
+        baixaPorArvore: mov.tipo.baixaPorArvore,
+        saidaPedidoVenda: mov.tipo.saidaPedidoVenda,
+      }) && mov.operacao === "SAIDA";
     const saldo = saidaArvore
       ? { abaixoMinimo: false, acimaMaximo: false, saldoAtual: 0 }
       : await aplicarEfeitoSaldo(tx, mov);
@@ -1369,7 +1403,11 @@ export async function estornarMovimentacao(
     // SAIDA com árvore não debitou o pai — só reverte componentes (acima).
     // Usa a flag do tipo (não a qtd de consumos): BOM só-fantasma também não debita o pai.
     const saidaSoArvore =
-      mov.operacao === "SAIDA" && mov.tipo.baixaPorArvore === true;
+      mov.operacao === "SAIDA" &&
+      tipoUsaBaixaArvore({
+        baixaPorArvore: mov.tipo.baixaPorArvore,
+        saidaPedidoVenda: mov.tipo.saidaPedidoVenda,
+      });
 
     const saldo = saidaSoArvore
       ? { abaixoMinimo: false, acimaMaximo: false, saldoAtual: 0 }

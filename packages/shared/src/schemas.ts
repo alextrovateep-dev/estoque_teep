@@ -519,6 +519,14 @@ export function refineTipoMovimentacao(
       path: ["requerAprovacao"],
     });
   }
+  if (arvore && saidaPedido) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "Saída de pedido não usa baixa pela árvore — o acabado sai do estoque escolhido na separação",
+      path: ["baixaPorArvore"],
+    });
+  }
   if (arvore && data.controleSerie === "OBRIGATORIO") {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
