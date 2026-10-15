@@ -1028,35 +1028,48 @@ export const separarPedidoSchema = z.object({
     .max(200),
 });
 
+const zPedidoTransportadora = z
+  .string()
+  .max(120)
+  .optional()
+  .nullable()
+  .transform((v) => {
+    const t = (v ?? "").trim();
+    return t || null;
+  });
+
+const zPedidoRastreio = z
+  .string()
+  .max(80)
+  .optional()
+  .nullable()
+  .transform((v) => {
+    const t = (v ?? "").trim();
+    return t || null;
+  });
+
+const zPedidoFreteCobrado = z.boolean({
+  required_error: "Informe se o frete foi cobrado",
+  invalid_type_error: "Informe se o frete foi cobrado",
+});
+
+/** Editar transportadora / rastreio / frete após separado ou enviado. */
+export const atualizarTransportePedidoSchema = z.object({
+  transportadora: zPedidoTransportadora,
+  rastreio: zPedidoRastreio,
+  freteCobrado: zPedidoFreteCobrado,
+});
+
 /** Envio após Separado: NF + frete cobrado; Locação exige termo de comodato. */
 export const enviarPedidoSchema = z.object({
-  transportadora: z
-    .string()
-    .max(120)
-    .optional()
-    .nullable()
-    .transform((v) => {
-      const t = (v ?? "").trim();
-      return t || null;
-    }),
-  rastreio: z
-    .string()
-    .max(80)
-    .optional()
-    .nullable()
-    .transform((v) => {
-      const t = (v ?? "").trim();
-      return t || null;
-    }),
+  transportadora: zPedidoTransportadora,
+  rastreio: zPedidoRastreio,
   nfNumero: z.string().trim().min(1, "Informe o número da nota fiscal").max(60),
   nfArquivo: z
     .string()
     .max(255)
     .regex(/^\/uploads\/notas-fiscais\//, "Anexe a nota fiscal"),
-  freteCobrado: z.boolean({
-    required_error: "Informe se o frete foi cobrado",
-    invalid_type_error: "Informe se o frete foi cobrado",
-  }),
+  freteCobrado: zPedidoFreteCobrado,
   anexos: z.array(pedidoAnexoInputSchema).max(20).optional(),
 });
 

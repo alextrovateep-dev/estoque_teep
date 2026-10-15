@@ -1354,6 +1354,19 @@ export async function estornarMovimentacao(
       );
     }
 
+    if (mov.grupoLancamentoId) {
+      const pedidoGrupo = await tx.pedidoVenda.findFirst({
+        where: { grupoLancamentoId: mov.grupoLancamentoId },
+        select: { status: true, egestorCodigo: true },
+      });
+      if (pedidoGrupo?.status === "ENVIADO") {
+        throw new AppError(
+          400,
+          `Não é possível estornar a saída do pedido #${pedidoGrupo.egestorCodigo}: já foi enviado. Trate a devolução pelo fluxo de retorno.`
+        );
+      }
+    }
+
     // Saída com retorno ativo: estornar retornos primeiro (evita inflar estoque)
     if (await saidaTemRetornoAtivo(tx, mov.id)) {
       throw new AppError(
@@ -1392,6 +1405,7 @@ export async function estornarMovimentacao(
           estornoDeId: cons.id,
           movimentacaoMontagemId: mov.id,
           observacao: `Estorno — devolve componente da árvore ${cons.id.slice(0, 8)}`,
+          grupoLancamentoId: cons.grupoLancamentoId,
         },
       });
       await tx.movimentacao.update({
@@ -1437,6 +1451,7 @@ export async function estornarMovimentacao(
           observacao || `Estorno do movimento ${mov.id.slice(0, 8)}`,
         status: "CONCLUIDO",
         estornoDeId: mov.id,
+        grupoLancamentoId: mov.grupoLancamentoId,
       },
       include: movInclude,
     });
@@ -1482,8 +1497,16 @@ export async function estornarMovimentacao(
       alertaEstoqueMinimo: saldo.abaixoMinimo,
       alertaEstoqueMaximo: saldo.acimaMaximo,
       saldoAtual: Number(saldo.saldoAtual),
+      grupoLancamentoId: mov.grupoLancamentoId,
     };
   });
+
+  if (result.grupoLancamentoId) {
+    const { syncPedidoAposGrupoLancamento } = await import(
+      "./pedidoVendaService"
+    );
+    await syncPedidoAposGrupoLancamento(result.grupoLancamentoId);
+  }
 
   const produtoLabel = `${result.movimentacao.produto.codigo} (${result.movimentacao.produto.descricao})`;
   if (result.alertaEstoqueMinimo || result.alertaEstoqueMaximo) {

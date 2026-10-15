@@ -277,6 +277,66 @@ function qtdLabel(v: string | number) {
   return Number.isInteger(x) ? String(x) : String(x);
 }
 
+function CamposTransportePedido({
+  transportadora,
+  rastreio,
+  freteCobrado,
+  onTransportadora,
+  onRastreio,
+  onFrete,
+}: {
+  transportadora: string;
+  rastreio: string;
+  freteCobrado: "" | "true" | "false";
+  onTransportadora: (v: string) => void;
+  onRastreio: (v: string) => void;
+  onFrete: (v: "" | "true" | "false") => void;
+}) {
+  return (
+    <>
+      <label className="block text-sm">
+        <span className="mb-1 block font-medium">
+          Transportadora{" "}
+          <span className="font-normal text-slate-400">(opcional)</span>
+        </span>
+        <input
+          maxLength={120}
+          className="w-full rounded-lg border px-3 py-2"
+          value={transportadora}
+          onChange={(e) => onTransportadora(e.target.value)}
+        />
+      </label>
+      <label className="block text-sm">
+        <span className="mb-1 block font-medium">
+          Número de rastreio{" "}
+          <span className="font-normal text-slate-400">(opcional)</span>
+        </span>
+        <input
+          maxLength={80}
+          className="w-full rounded-lg border px-3 py-2"
+          value={rastreio}
+          onChange={(e) => onRastreio(e.target.value)}
+        />
+      </label>
+      <label className="block text-sm">
+        <span className="mb-1 block font-medium">Frete cobrado</span>
+        <select
+          required
+          className="w-full rounded-lg border px-3 py-2"
+          value={freteCobrado}
+          onChange={(e) =>
+            onFrete(e.target.value as "" | "true" | "false")
+          }
+        >
+          <option value="">Selecione…</option>
+          <option value="true">Sim</option>
+          <option value="false">Não</option>
+        </select>
+      </label>
+    </>
+  );
+}
+
 function ItensSomenteLeitura({ itens }: { itens: Item[] }) {
   return (
     <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -328,6 +388,7 @@ export default function PedidoDetalhePage() {
   const [destTodos, setDestTodos] = useState<Dest[]>([]);
   const [destIds, setDestIds] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const [okMsg, setOkMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [transportadora, setTransportadora] = useState("");
   const [rastreio, setRastreio] = useState("");
@@ -375,9 +436,10 @@ export default function PedidoDetalhePage() {
           p.freteCobrado === true ? "true" : p.freteCobrado === false ? "false" : ""
         );
       })
-      .catch((e) =>
-        setError(e instanceof Error ? e.message : "Erro ao carregar")
-      );
+      .catch((e) => {
+        setOkMsg("");
+        setError(e instanceof Error ? e.message : "Erro ao carregar");
+      });
   }, [id]);
 
   const bloqueadoSku = useMemo(
@@ -541,6 +603,7 @@ export default function PedidoDetalhePage() {
       return;
     }
     setError("");
+    setOkMsg("");
     setSaving(true);
     try {
       const atualizado = await api<Pedido>(`/pedidos/${row.id}/enviar`, {
@@ -565,6 +628,47 @@ export default function PedidoDetalhePage() {
       setRow(atualizado);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao enviar");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onSalvarTransporte(e?: FormEvent) {
+    e?.preventDefault();
+    if (!row || (row.status !== "SEPARADO" && row.status !== "ENVIADO")) {
+      return;
+    }
+    if (freteCobrado !== "true" && freteCobrado !== "false") {
+      setError("Informe se o frete foi cobrado.");
+      return;
+    }
+    setError("");
+    setOkMsg("");
+    setSaving(true);
+    try {
+      const atualizado = await api<Pedido>(`/pedidos/${row.id}/transporte`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          transportadora: transportadora.trim(),
+          rastreio: rastreio.trim(),
+          freteCobrado: freteCobrado === "true",
+        }),
+      });
+      setRow(atualizado);
+      setTransportadora(atualizado.transportadora || "");
+      setRastreio(atualizado.rastreio || "");
+      setFreteCobrado(
+        atualizado.freteCobrado === true
+          ? "true"
+          : atualizado.freteCobrado === false
+            ? "false"
+            : ""
+      );
+      setOkMsg("Transportadora, rastreio e frete salvos.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erro ao salvar transportadora"
+      );
     } finally {
       setSaving(false);
     }
@@ -670,6 +774,11 @@ export default function PedidoDetalhePage() {
           {error}
         </p>
       )}
+      {okMsg && (
+        <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {okMsg}
+        </p>
+      )}
       {row.status === "ABERTO" && bloqueadoSku && (
         <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Há item sem produto TEEP. Cadastre o SKU para separar.
@@ -705,30 +814,14 @@ export default function PedidoDetalhePage() {
               className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"
             >
               <p className="text-sm font-medium">Envio</p>
-              <label className="block text-sm">
-                <span className="mb-1 block font-medium">
-                  Transportadora{" "}
-                  <span className="font-normal text-slate-400">(opcional)</span>
-                </span>
-                <input
-                  maxLength={120}
-                  className="w-full rounded-lg border px-3 py-2"
-                  value={transportadora}
-                  onChange={(e) => setTransportadora(e.target.value)}
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block font-medium">
-                  Rastreio{" "}
-                  <span className="font-normal text-slate-400">(opcional)</span>
-                </span>
-                <input
-                  maxLength={80}
-                  className="w-full rounded-lg border px-3 py-2"
-                  value={rastreio}
-                  onChange={(e) => setRastreio(e.target.value)}
-                />
-              </label>
+              <CamposTransportePedido
+                transportadora={transportadora}
+                rastreio={rastreio}
+                freteCobrado={freteCobrado}
+                onTransportadora={setTransportadora}
+                onRastreio={setRastreio}
+                onFrete={setFreteCobrado}
+              />
               <label className="block text-sm">
                 <span className="mb-1 block font-medium">Número da NF</span>
                 <input
@@ -795,21 +888,6 @@ export default function PedidoDetalhePage() {
                   </label>
                 )}
               </div>
-              <label className="block text-sm">
-                <span className="mb-1 block font-medium">Frete cobrado</span>
-                <select
-                  required
-                  className="w-full rounded-lg border px-3 py-2"
-                  value={freteCobrado}
-                  onChange={(e) =>
-                    setFreteCobrado(e.target.value as "" | "true" | "false")
-                  }
-                >
-                  <option value="">Selecione…</option>
-                  <option value="true">Sim</option>
-                  <option value="false">Não</option>
-                </select>
-              </label>
               {row.tipoContrato === "LOCACAO" && !temTermoComodato() ? (
                 <p className="text-sm text-amber-800">
                   Locação: anexe o termo de comodato antes de enviar.
@@ -833,107 +911,130 @@ export default function PedidoDetalhePage() {
                 }
                 onRemoveSalvo={(anexoId) => void removerAnexoSalvo(anexoId)}
               />
-              <button
-                type="submit"
-                disabled={
-                  saving ||
-                  uploadingNf ||
-                  uploadingDoc ||
-                  !nfArquivo ||
-                  !nfNumero.trim() ||
-                  (freteCobrado !== "true" && freteCobrado !== "false") ||
-                  (row.tipoContrato === "LOCACAO" && !temTermoComodato())
-                }
-                className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                {saving ? "Enviando…" : "Enviar"}
-              </button>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={
+                    saving ||
+                    uploadingNf ||
+                    uploadingDoc ||
+                    (freteCobrado !== "true" && freteCobrado !== "false")
+                  }
+                  onClick={() => void onSalvarTransporte()}
+                  className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {saving ? "Salvando…" : "Salvar transportadora"}
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    saving ||
+                    uploadingNf ||
+                    uploadingDoc ||
+                    !nfArquivo ||
+                    !nfNumero.trim() ||
+                    (freteCobrado !== "true" && freteCobrado !== "false") ||
+                    (row.tipoContrato === "LOCACAO" && !temTermoComodato())
+                  }
+                  className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {saving ? "Enviando…" : "Enviar"}
+                </button>
+              </div>
             </form>
           )}
 
           {row.status === "ENVIADO" && (
-            <dl className="grid gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm sm:grid-cols-2">
-              <div>
-                <dt className="text-slate-500">Transportadora</dt>
-                <dd className="font-medium">{row.transportadora || "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">Rastreio</dt>
-                <dd className="font-medium">{row.rastreio || "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">NF</dt>
-                <dd className="font-medium">{row.nfNumero || "—"}</dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">Arquivo</dt>
-                <dd>
-                  {row.nfArquivo ? (
-                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                      <a
-                        href={resolveAssetUrl(row.nfArquivo) || "#"}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-brand hover:underline"
-                      >
-                        Abrir nota fiscal
-                      </a>
-                      <button
-                        type="button"
-                        disabled={saving}
-                        className="text-slate-600 underline hover:text-slate-900 disabled:opacity-50"
-                        onClick={() => void onExcluirNfEnviada()}
-                      >
-                        Excluir
-                      </button>
-                    </span>
-                  ) : (
-                    <label className="inline-flex cursor-pointer text-brand hover:underline">
-                      {uploadingNf ? "Enviando…" : "Anexar NF"}
-                      <input
-                        type="file"
-                        accept=".pdf,image/*"
-                        className="sr-only"
-                        disabled={uploadingNf}
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          e.target.value = "";
-                          if (file) void onNfFile(file);
-                        }}
-                      />
-                    </label>
-                  )}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">Frete cobrado</dt>
-                <dd className="font-medium">
-                  {row.freteCobrado === true
-                    ? "Sim"
-                    : row.freteCobrado === false
-                      ? "Não"
+            <div className="space-y-6">
+              <form
+                onSubmit={onSalvarTransporte}
+                className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"
+              >
+                <p className="text-sm font-medium">Transportadora</p>
+                <CamposTransportePedido
+                  transportadora={transportadora}
+                  rastreio={rastreio}
+                  freteCobrado={freteCobrado}
+                  onTransportadora={setTransportadora}
+                  onRastreio={setRastreio}
+                  onFrete={setFreteCobrado}
+                />
+                <button
+                  type="submit"
+                  disabled={
+                    saving ||
+                    (freteCobrado !== "true" && freteCobrado !== "false")
+                  }
+                  className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                >
+                  {saving ? "Salvando…" : "Salvar"}
+                </button>
+              </form>
+              <dl className="grid gap-2 rounded-xl border border-slate-200 bg-white p-4 text-sm sm:grid-cols-2">
+                <div>
+                  <dt className="text-slate-500">NF</dt>
+                  <dd className="font-medium">{row.nfNumero || "—"}</dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Arquivo</dt>
+                  <dd>
+                    {row.nfArquivo ? (
+                      <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <a
+                          href={resolveAssetUrl(row.nfArquivo) || "#"}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-brand hover:underline"
+                        >
+                          Abrir nota fiscal
+                        </a>
+                        <button
+                          type="button"
+                          disabled={saving}
+                          className="text-slate-600 underline hover:text-slate-900 disabled:opacity-50"
+                          onClick={() => void onExcluirNfEnviada()}
+                        >
+                          Excluir
+                        </button>
+                      </span>
+                    ) : (
+                      <label className="inline-flex cursor-pointer text-brand hover:underline">
+                        {uploadingNf ? "Enviando…" : "Anexar NF"}
+                        <input
+                          type="file"
+                          accept=".pdf,image/*"
+                          className="sr-only"
+                          disabled={uploadingNf}
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = "";
+                            if (file) void onNfFile(file);
+                          }}
+                        />
+                      </label>
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Tipo de contrato</dt>
+                  <dd className="font-medium">
+                    {row.tipoContrato
+                      ? PEDIDO_TIPO_CONTRATO_LABELS[
+                          row.tipoContrato as PedidoTipoContrato
+                        ] || row.tipoContrato
                       : "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">Tipo de contrato</dt>
-                <dd className="font-medium">
-                  {row.tipoContrato
-                    ? PEDIDO_TIPO_CONTRATO_LABELS[
-                        row.tipoContrato as PedidoTipoContrato
-                      ] || row.tipoContrato
-                    : "—"}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-slate-500">Data prevista de entrega</dt>
-                <dd className="font-medium">
-                  {row.dataPrevistaEntrega
-                    ? formatYmdBr(ymdFromApi(row.dataPrevistaEntrega))
-                    : "—"}
-                </dd>
-              </div>
-            </dl>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-slate-500">Data prevista de entrega</dt>
+                  <dd className="font-medium">
+                    {row.dataPrevistaEntrega
+                      ? formatYmdBr(ymdFromApi(row.dataPrevistaEntrega))
+                      : "—"}
+                  </dd>
+                </div>
+              </dl>
+            </div>
           )}
 
           {row.anexos && row.anexos.length > 0 && row.status === "ENVIADO" ? (

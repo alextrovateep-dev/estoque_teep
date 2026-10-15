@@ -25,6 +25,7 @@ type Row = {
   status: string;
   filialAcabado?: { sigla: string } | null;
   rastreio?: string | null;
+  transportadora?: string | null;
   nfNumero?: string | null;
   tipoContrato?: string | null;
   dataPrevistaEntrega?: string | null;
@@ -207,6 +208,8 @@ function PedidosInner() {
                   p.dataPrevistaEntrega
                     ? `Prevista ${formatYmdBr(ymdFromApi(p.dataPrevistaEntrega))}`
                     : null,
+                  p.transportadora || null,
+                  p.rastreio ? `Rastreio ${p.rastreio}` : null,
                   "Aguardando envio",
                 ]
                   .filter(Boolean)
@@ -221,6 +224,7 @@ function PedidosInner() {
                     p.dataPrevistaEntrega
                       ? `Prevista ${formatYmdBr(ymdFromApi(p.dataPrevistaEntrega))}`
                       : null,
+                    p.transportadora || null,
                     p.rastreio ? `Rastreio ${p.rastreio}` : null,
                     p.nfNumero ? `NF ${p.nfNumero}` : null,
                   ]

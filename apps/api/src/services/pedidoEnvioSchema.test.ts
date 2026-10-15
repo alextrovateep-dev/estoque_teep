@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   anexarNotaFiscalPedidoSchema,
+  atualizarTransportePedidoSchema,
   enviarPedidoSchema,
   isPedidoStatus,
   mensagemBloqueioEnvioPedidoLocacao,
@@ -155,6 +156,42 @@ describe("enviarPedidoSchema frete", () => {
     const r = enviarPedidoSchema.safeParse({
       nfNumero: "12345",
       nfArquivo: nf,
+    });
+    assert.equal(r.success, false);
+  });
+});
+
+describe("atualizarTransportePedidoSchema", () => {
+  it("grava transportadora, rastreio e frete", () => {
+    const r = atualizarTransportePedidoSchema.safeParse({
+      transportadora: " Jadlog ",
+      rastreio: " JD123 ",
+      freteCobrado: true,
+    });
+    assert.equal(r.success, true);
+    if (r.success) {
+      assert.equal(r.data.transportadora, "Jadlog");
+      assert.equal(r.data.rastreio, "JD123");
+      assert.equal(r.data.freteCobrado, true);
+    }
+  });
+
+  it("aceita transportadora e rastreio vazios", () => {
+    const r = atualizarTransportePedidoSchema.safeParse({
+      transportadora: "",
+      rastreio: "  ",
+      freteCobrado: false,
+    });
+    assert.equal(r.success, true);
+    if (r.success) {
+      assert.equal(r.data.transportadora, null);
+      assert.equal(r.data.rastreio, null);
+    }
+  });
+
+  it("exige se o frete foi cobrado", () => {
+    const r = atualizarTransportePedidoSchema.safeParse({
+      transportadora: "Correios",
     });
     assert.equal(r.success, false);
   });

@@ -2,6 +2,7 @@ import { Router } from "express";
 import {
   anexarNotaFiscalPedidoSchema,
   anexarPedidoSchema,
+  atualizarTransportePedidoSchema,
   enviarPedidoSchema,
   separarPedidoSchema,
 } from "@teep/shared";
@@ -17,6 +18,7 @@ import { syncPedidosEgestor } from "../services/pedidoVendaSyncService";
 import {
   anexarDocumentoPedido,
   anexarNotaFiscalPedido,
+  atualizarTransportePedido,
   enviarPedido,
   liberarPedido,
   listarEstoquesAcabados,
@@ -167,6 +169,19 @@ pedidosRouter.delete(
   async (req, res, next) => {
     try {
       res.json(await removerAnexoPedido(req.params.id, req.params.anexoId));
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+pedidosRouter.patch(
+  "/:id/transporte",
+  requirePermissao("pedidos"),
+  validateBody(atualizarTransportePedidoSchema),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(await atualizarTransportePedido(req.params.id, req.body));
     } catch (e) {
       next(e);
     }

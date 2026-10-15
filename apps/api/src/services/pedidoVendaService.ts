@@ -65,6 +65,7 @@ const listaSelect = {
   dtVenda: true,
   status: true,
   rastreio: true,
+  transportadora: true,
   nfNumero: true,
   tipoContrato: true,
   dataPrevistaEntrega: true,
@@ -353,6 +354,20 @@ async function resolverClientePedido(pedido: {
   return { clienteId, documentoContato };
 }
 
+/** Após estornar todas as saídas da separação, o pedido volta para a fila. */
+export function grupoPedidoReabreAposEstorno(
+  statusPedido: string,
+  movsOriginais: { status: string }[]
+): boolean {
+  if (statusPedido !== "SEPARADO") return false;
+  return (
+    movsOriginais.length > 0 &&
+    movsOriginais.every(
+      (m) => m.status === "ESTORNADO" || m.status === "REJEITADO"
+    )
+  );
+}
+
 export async function syncPedidoAposGrupoLancamento(grupoId: string) {
   const pedido = await prisma.pedidoVenda.findFirst({
     where: { grupoLancamentoId: grupoId },
@@ -363,19 +378,41 @@ export async function syncPedidoAposGrupoLancamento(grupoId: string) {
       itens: { select: { produtoId: true } },
     },
   });
-  if (!pedido || pedido.status !== "ABERTO") return;
+  if (!pedido) return;
 
   const movs = await prisma.movimentacao.findMany({
     where: { grupoLancamentoId: grupoId },
     select: {
       status: true,
       produtoId: true,
+      estornoDeId: true,
       usuario: { select: { nome: true } },
     },
   });
-  if (movs.length === 0) return;
+  const originais = movs.filter((m) => !m.estornoDeId);
+  if (originais.length === 0) return;
 
-  if (movs.some((m) => m.status === "REJEITADO")) {
+  if (grupoPedidoReabreAposEstorno(pedido.status, originais)) {
+    await prisma.pedidoVenda.update({
+      where: { id: pedido.id },
+      data: {
+        status: "ABERTO",
+        grupoLancamentoId: null,
+        filialAcabadoId: null,
+        separadoEm: null,
+        liberadoEm: null,
+        liberadoPorId: null,
+      },
+    });
+    await prisma.pedidoVendaDestinatario.deleteMany({
+      where: { pedidoId: pedido.id },
+    });
+    return;
+  }
+
+  if (pedido.status !== "ABERTO") return;
+
+  if (originais.some((m) => m.status === "REJEITADO")) {
     await prisma.pedidoVenda.update({
       where: { id: pedido.id },
       data: { grupoLancamentoId: null, filialAcabadoId: null },
@@ -386,7 +423,7 @@ export async function syncPedidoAposGrupoLancamento(grupoId: string) {
     return;
   }
 
-  if (movs.some((m) => m.status === "PENDENTE")) {
+  if (originais.some((m) => m.status === "PENDENTE")) {
     return;
   }
 
@@ -395,16 +432,18 @@ export async function syncPedidoAposGrupoLancamento(grupoId: string) {
   const skusEsperados = new Set(
     pedido.itens.map((i) => i.produtoId).filter((id): id is string => Boolean(id))
   );
-  const skusLancados = new Set(movs.map((m) => m.produtoId).filter(Boolean));
+  const skusLancados = new Set(
+    originais.map((m) => m.produtoId).filter(Boolean)
+  );
   if (
     skusEsperados.size > 0 &&
-    (movs.length < skusEsperados.size ||
+    (originais.length < skusEsperados.size ||
       [...skusEsperados].some((id) => !skusLancados.has(id)))
   ) {
     return;
   }
 
-  if (movs.every((m) => m.status === "CONCLUIDO")) {
+  if (originais.every((m) => m.status === "CONCLUIDO")) {
     await prisma.pedidoVenda.update({
       where: { id: pedido.id },
       data: {
@@ -420,7 +459,7 @@ export async function syncPedidoAposGrupoLancamento(grupoId: string) {
         clienteNome: pedido.cliente?.nome || pedido.nomeContato,
         filialSigla: pedido.filialAcabado?.sigla || "—",
         destinatarioIds: destIds,
-        responsavelNome: movs.find((m) => m.usuario?.nome)?.usuario?.nome,
+        responsavelNome: originais.find((m) => m.usuario?.nome)?.usuario?.nome,
       });
     }
   }
@@ -795,6 +834,36 @@ async function persistirAnexosPedido(
       label: a.label || null,
     })),
   });
+}
+
+export async function atualizarTransportePedido(
+  pedidoId: string,
+  input: {
+    transportadora?: string | null;
+    rastreio?: string | null;
+    freteCobrado: boolean;
+  }
+) {
+  const pedido = await prisma.pedidoVenda.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, status: true },
+  });
+  if (!pedido) throw new AppError(404, "Pedido não encontrado");
+  if (pedido.status !== "SEPARADO" && pedido.status !== "ENVIADO") {
+    throw new AppError(
+      400,
+      "Só é possível editar transportadora, rastreio e frete após a separação"
+    );
+  }
+  await prisma.pedidoVenda.update({
+    where: { id: pedido.id },
+    data: {
+      transportadora: input.transportadora || null,
+      rastreio: input.rastreio || null,
+      freteCobrado: input.freteCobrado,
+    },
+  });
+  return obterPedido(pedidoId);
 }
 
 export async function removerNotaFiscalPedido(pedidoId: string) {

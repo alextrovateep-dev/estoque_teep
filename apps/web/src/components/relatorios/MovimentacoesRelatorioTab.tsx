@@ -434,7 +434,7 @@ export function MovimentacoesRelatorioTab() {
     try {
       await api(`/movimentacoes/${id}/estornar`, {
         method: "POST",
-        body: JSON.stringify({ motivo: motivo.trim() || undefined }),
+        body: JSON.stringify({ observacao: motivo.trim() || undefined }),
       });
       setMsg("Movimentação estornada com sucesso");
       fecharPainel();
@@ -623,6 +623,8 @@ export function MovimentacoesRelatorioTab() {
       setExporting(null);
     }
   }
+
+  const movPainel = painelId ? data.find((x) => x.id === painelId) : undefined;
 
   return (
     <>
@@ -1186,7 +1188,6 @@ export function MovimentacoesRelatorioTab() {
                     (canLancamentos && !!m.retornoPendente) ||
                     (canLancamentos && !!m.termoPendente) ||
                     canConfirmarRecebimento;
-                  const painelAberto = painelId === m.id;
                   const isTransfLinha = Boolean(
                     m.transferenciaItemId ||
                       m.filialDestino ||
@@ -1413,7 +1414,7 @@ export function MovimentacoesRelatorioTab() {
                             >
                               Ver
                             </Link>
-                          {temAcoes && !painelAberto ? (
+                          {temAcoes ? (
                             <>
                               {canConfirmarRecebimento &&
                                 m.aguardandoRecebimento && (
@@ -1474,7 +1475,7 @@ export function MovimentacoesRelatorioTab() {
                                     onClick={() =>
                                       abrirPainel(m.id, "estornar")
                                     }
-                                    className="text-xs font-medium text-red-700 hover:underline disabled:opacity-50"
+                                    className="rounded border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-800 hover:bg-red-100 disabled:opacity-50"
                                   >
                                     Estornar
                                   </button>
@@ -1634,80 +1635,6 @@ export function MovimentacoesRelatorioTab() {
                           </td>
                         </tr>
                       ) : null}
-                      {painelAberto && (
-                        <tr className="border-b border-slate-100 bg-slate-50/50">
-                          <td colSpan={9} className="px-3 py-3">
-                            {canManage && painelAcao === "rejeitar" && (
-                              <ConfirmMotivoPanel
-                                title="Confirmar rejeição"
-                                confirmLabel="Confirmar rejeição"
-                                motivoLabel="Motivo"
-                                motivo={motivo}
-                                onMotivoChange={setMotivo}
-                                onConfirm={() => confirmarRejeicao(m.id)}
-                                onCancel={fecharPainel}
-                                loading={acting}
-                                danger
-                              />
-                            )}
-                            {canManage && painelAcao === "estornar" && (
-                              <ConfirmMotivoPanel
-                                title={`Estornar ${m.tipo.nome} — ${m.produto.codigo}?`}
-                                confirmLabel="Confirmar estorno"
-                                motivoLabel="Observação"
-                                motivoPlaceholder="Motivo do estorno (opcional)"
-                                motivo={motivo}
-                                onMotivoChange={setMotivo}
-                                onConfirm={() => confirmarEstorno(m.id)}
-                                onCancel={fecharPainel}
-                                loading={acting}
-                                danger
-                              >
-                                <p className="text-xs text-slate-600">
-                                  O saldo será revertido e o movimento original
-                                  ficará ESTORNADO.
-                                </p>
-                              </ConfirmMotivoPanel>
-                            )}
-                            {canLancamentos && painelAcao === "termo" && (
-                              <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
-                                <p className="text-sm font-medium text-sky-950">
-                                  Anexar termo de comodato assinado
-                                </p>
-                                <p className="mt-1 text-xs text-sky-900/80">
-                                  PDF ou imagem do termo que voltou do cliente.
-                                </p>
-                                <input
-                                  type="file"
-                                  accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
-                                  disabled={termoUploading || acting}
-                                  className="mt-2 w-full max-w-md rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-sky-100 file:px-3 file:py-1 file:text-sm file:font-medium file:text-sky-900"
-                                  onChange={(e) => {
-                                    const file = e.target.files?.[0];
-                                    e.target.value = "";
-                                    if (file) void anexarTermo(m.id, file);
-                                  }}
-                                />
-                                <div className="mt-2 flex gap-3">
-                                  <button
-                                    type="button"
-                                    disabled={acting}
-                                    onClick={fecharPainel}
-                                    className="text-sm text-slate-600 hover:underline disabled:opacity-50"
-                                  >
-                                    Cancelar
-                                  </button>
-                                  {termoUploading && (
-                                    <span className="text-xs text-sky-800">
-                                      Enviando…
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
                     </Fragment>
                   );
                 })}
@@ -1735,6 +1662,100 @@ export function MovimentacoesRelatorioTab() {
           Próxima
         </button>
       </div>
+      {painelId && painelAcao ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/45 p-3 sm:items-center"
+          role="dialog"
+          aria-modal="true"
+          aria-label={
+            painelAcao === "estornar"
+              ? "Confirmar estorno"
+              : painelAcao === "rejeitar"
+                ? "Confirmar rejeição"
+                : "Anexar termo"
+          }
+          onClick={acting ? undefined : fecharPainel}
+        >
+          <div
+            className="w-full max-w-lg rounded-xl bg-white p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {error ? (
+              <p className="mb-2 text-sm text-red-600">{error}</p>
+            ) : null}
+            {canManage && painelAcao === "rejeitar" ? (
+              <ConfirmMotivoPanel
+                title="Confirmar rejeição"
+                confirmLabel="Confirmar rejeição"
+                motivoLabel="Motivo"
+                motivo={motivo}
+                onMotivoChange={setMotivo}
+                onConfirm={() => confirmarRejeicao(painelId)}
+                onCancel={fecharPainel}
+                loading={acting}
+                danger
+              />
+            ) : null}
+            {canManage && painelAcao === "estornar" ? (
+              <ConfirmMotivoPanel
+                title={
+                  movPainel
+                    ? `Estornar ${movPainel.tipo.nome} — ${movPainel.produto.codigo}?`
+                    : "Estornar movimentação?"
+                }
+                confirmLabel="Confirmar estorno"
+                motivoLabel="Observação"
+                motivoPlaceholder="Motivo do estorno (opcional)"
+                motivo={motivo}
+                onMotivoChange={setMotivo}
+                onConfirm={() => confirmarEstorno(painelId)}
+                onCancel={fecharPainel}
+                loading={acting}
+                danger
+              >
+                <p className="text-xs text-slate-600">
+                  O saldo será revertido e o movimento original ficará
+                  ESTORNADO.
+                </p>
+              </ConfirmMotivoPanel>
+            ) : null}
+            {canLancamentos && painelAcao === "termo" ? (
+              <div className="rounded-lg border border-sky-200 bg-sky-50/60 p-3">
+                <p className="text-sm font-medium text-sky-950">
+                  Anexar termo de comodato assinado
+                </p>
+                <p className="mt-1 text-xs text-sky-900/80">
+                  PDF ou imagem do termo que voltou do cliente.
+                </p>
+                <input
+                  type="file"
+                  accept="application/pdf,image/jpeg,image/png,image/gif,image/webp"
+                  disabled={termoUploading || acting}
+                  className="mt-2 w-full rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-sky-100 file:px-3 file:py-1 file:text-sm file:font-medium file:text-sky-900"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void anexarTermo(painelId, file);
+                  }}
+                />
+                <div className="mt-2 flex gap-3">
+                  <button
+                    type="button"
+                    disabled={acting}
+                    onClick={fecharPainel}
+                    className="text-sm text-slate-600 hover:underline disabled:opacity-50"
+                  >
+                    Cancelar
+                  </button>
+                  {termoUploading ? (
+                    <span className="text-xs text-sky-800">Enviando…</span>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
