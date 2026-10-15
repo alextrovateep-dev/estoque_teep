@@ -756,12 +756,26 @@ estoqueRouter.get(
     try {
       const tipoOrigemId = String(req.query.tipoOrigemId || "");
       const clienteId = String(req.query.clienteId || "");
-      if (!tipoOrigemId || !clienteId) {
+      const filialId = String(req.query.filialId || "");
+      const modoDemoComodato = String(req.query.modo || "") === "demoComodato";
+      const escopoRaw = String(req.query.escopo || "");
+      const escopo =
+        escopoRaw === "demo" || escopoRaw === "comodato" ? escopoRaw : null;
+      if (!clienteId) {
+        throw new AppError(400, "clienteId obrigatório");
+      }
+      if (!tipoOrigemId && !modoDemoComodato) {
         throw new AppError(400, "tipoOrigemId e clienteId obrigatórios");
       }
       const UUID =
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      if (!UUID.test(tipoOrigemId) || !UUID.test(clienteId)) {
+      if (!UUID.test(clienteId)) {
+        throw new AppError(400, "Parâmetros inválidos");
+      }
+      if (tipoOrigemId && !UUID.test(tipoOrigemId)) {
+        throw new AppError(400, "Parâmetros inválidos");
+      }
+      if (filialId && !UUID.test(filialId)) {
         throw new AppError(400, "Parâmetros inválidos");
       }
       const opIds =
@@ -770,8 +784,11 @@ estoqueRouter.get(
           : null;
       res.json(
         await listarSaidasAbertas({
-          tipoOrigemId,
+          tipoOrigemId: tipoOrigemId || null,
+          modoDemoComodato: !tipoOrigemId && modoDemoComodato,
+          escopo: !tipoOrigemId ? escopo : null,
           clienteId,
+          filialId: filialId || null,
           filialIdsPermitidas: opIds,
         })
       );

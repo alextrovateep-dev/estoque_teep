@@ -35,6 +35,42 @@ export type TipoParaLancamento = {
   filialId?: string | null;
 };
 
+export type EscopoRetornoCliente = "demo" | "comodato";
+
+/** Demonstração vs comodato a partir do nome/código do tipo. */
+export function escopoRetornoClienteDeTipo(t: {
+  nome?: string | null;
+  codigo?: string | null;
+}): EscopoRetornoCliente | null {
+  const blob = `${t.nome || ""} ${t.codigo || ""}`;
+  const demo = /demonstr/i.test(blob);
+  const comodato = /comodato/i.test(blob);
+  if (demo && !comodato) return "demo";
+  if (comodato && !demo) return "comodato";
+  return null;
+}
+
+/**
+ * Entrada de retorno de demonstração/comodato no Novo Lançamento.
+ * Usa o vínculo cadastrado (ehRetornoDeId) ou nome com “retorno” +
+ * demonstração/comodato (tipo em produção ainda sem o vínculo).
+ * Não inclui entrada de RMA, compra nem “retorno” genérico.
+ */
+export function tipoEntradaEhRetornoCliente(t: {
+  operacao?: string | null;
+  ehRetornoDeId?: string | null;
+  rmaEntradaEstoque?: boolean | null;
+  nome?: string | null;
+  codigo?: string | null;
+}): boolean {
+  if (t.operacao !== "ENTRADA") return false;
+  if (t.rmaEntradaEstoque === true) return false;
+  if (t.ehRetornoDeId) return true;
+  const blob = `${t.nome || ""} ${t.codigo || ""}`;
+  if (!/\bretorno\b/i.test(blob)) return false;
+  return /demonstr|comodato/i.test(blob);
+}
+
 /**
  * Novo Lançamento: todo tipo de negócio ativo que o perfil pode usar.
  * Tipos sistema ficam de fora. RMA / pedido / sem estoque fixo aparecem

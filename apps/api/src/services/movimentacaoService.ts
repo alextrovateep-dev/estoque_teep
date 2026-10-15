@@ -7,6 +7,8 @@ import {
   exigeSerieNoLancamento,
   isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
+  escopoRetornoClienteDeTipo,
+  tipoEntradaEhRetornoCliente,
   tipoUsaBaixaArvore,
   usaSerieLivre,
 } from "@teep/shared";
@@ -41,6 +43,7 @@ import {
   syncAlertasAposRetorno,
 } from "./alertaRetornoService";
 import {
+  filtroTipoSaidaDemoComodato,
   mapaQtyOcupadaPorSaidas,
   mapaSeriesEmAbertoPorSaidas,
   qtyRestanteSaida,
@@ -679,7 +682,8 @@ export async function criarMovimentacao(
   // costuma voltar assinado depois; anexa em Movimentações.
 
   let movimentacaoOrigemId: string | null = null;
-  if (tipo.ehRetornoDeId) {
+  const exigeVinculoRetorno = tipoEntradaEhRetornoCliente(tipo);
+  if (exigeVinculoRetorno) {
     if (!input.movimentacaoOrigemId) {
       throw new AppError(
         400,
@@ -814,10 +818,16 @@ export async function criarMovimentacao(
       const origem = await tx.movimentacao.findFirst({
         where: {
           id: movimentacaoOrigemId,
-          tipoId: tipo.ehRetornoDeId!,
           clienteId: input.clienteId!,
           status: "CONCLUIDO",
           operacao: "SAIDA",
+          ...(tipo.ehRetornoDeId
+            ? { tipoId: tipo.ehRetornoDeId }
+            : {
+                tipo: filtroTipoSaidaDemoComodato(
+                  escopoRetornoClienteDeTipo(tipo)
+                ),
+              }),
         },
       });
       if (!origem) {
@@ -1793,16 +1803,30 @@ export async function inicializarEstoque(
 
 /**
  * Saídas abertas de um tipo origem (ehRetornoDe) + cliente,
- * com qty restante > 0 (descontando CONCLUIDO+PENDENTE).
+ * ou de demo/comodato (modoDemoComodato) quando o tipo de entrada
+ * ainda não tem ehRetornoDeId. qty restante > 0 (CONCLUIDO+PENDENTE).
  */
 export async function listarSaidasAbertas(opts: {
-  tipoOrigemId: string;
+  tipoOrigemId?: string | null;
+  modoDemoComodato?: boolean;
+  escopo?: "demo" | "comodato" | null;
   clienteId: string;
-  /** Se informado, restringe à filial (ex.: operador). */
+  /** Se informado, restringe à filial (ex.: estoque do tipo). */
   filialId?: string | null;
   /** Filiais permitidas ao operador (se setado, filtra). */
   filialIdsPermitidas?: string[] | null;
 }) {
+  if (!opts.tipoOrigemId && !opts.modoDemoComodato) {
+    throw new AppError(400, "tipoOrigemId ou modo demoComodato obrigatório");
+  }
+  if (
+    opts.filialId &&
+    opts.filialIdsPermitidas &&
+    opts.filialIdsPermitidas.length > 0 &&
+    !opts.filialIdsPermitidas.includes(opts.filialId)
+  ) {
+    return [];
+  }
   const filialFilter =
     opts.filialId ||
     (opts.filialIdsPermitidas && opts.filialIdsPermitidas.length > 0
@@ -1810,10 +1834,12 @@ export async function listarSaidasAbertas(opts: {
       : undefined);
 
   const where = {
-    tipoId: opts.tipoOrigemId,
     clienteId: opts.clienteId,
     status: "CONCLUIDO" as const,
     operacao: "SAIDA" as const,
+    ...(opts.tipoOrigemId
+      ? { tipoId: opts.tipoOrigemId }
+      : { tipo: filtroTipoSaidaDemoComodato(opts.escopo) }),
     ...(filialFilter ? { filialId: filialFilter } : {}),
   };
 
@@ -1838,7 +1864,7 @@ export async function listarSaidasAbertas(opts: {
       },
     },
     filial: { select: { id: true, sigla: true, nome: true } },
-    tipo: { select: { id: true, nome: true } },
+    tipo: { select: { id: true, nome: true, codigo: true } },
     cliente: { select: { id: true, nome: true } },
   };
 
@@ -1865,7 +1891,7 @@ export async function listarSaidasAbertas(opts: {
       } | null;
     };
     filial: { id: string; sigla: string; nome: string };
-    tipo: { id: string; nome: string };
+    tipo: { id: string; nome: string; codigo: string };
     cliente: { id: string; nome: string } | null;
   }> = [];
 

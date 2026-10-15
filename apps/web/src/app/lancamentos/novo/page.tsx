@@ -17,6 +17,8 @@ import {
   exigeSerieNoLancamento,
   formatQtyUnidade,
   normalizarUnidade,
+  escopoRetornoClienteDeTipo,
+  tipoEntradaEhRetornoCliente,
   tipoUsaBaixaArvore,
   usaSerieLivre,
 } from "@teep/shared";
@@ -29,6 +31,22 @@ const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_ALERTA_EMAILS = 10;
 const MAX_LINHAS = 20;
 
+function urlSaidasAbertas(opts: {
+  clienteId: string;
+  tipoOrigemId?: string | null;
+  filialId?: string | null;
+  escopo?: "demo" | "comodato" | null;
+}): string {
+  const qs = new URLSearchParams({ clienteId: opts.clienteId });
+  if (opts.tipoOrigemId) qs.set("tipoOrigemId", opts.tipoOrigemId);
+  else {
+    qs.set("modo", "demoComodato");
+    if (opts.escopo) qs.set("escopo", opts.escopo);
+  }
+  if (opts.filialId) qs.set("filialId", opts.filialId);
+  return `/movimentacoes/saidas-abertas?${qs.toString()}`;
+}
+
 type Tipo = {
   id: string;
   codigo?: string;
@@ -37,6 +55,7 @@ type Tipo = {
   requerCliente: boolean;
   geraAlertaRetorno?: boolean;
   ehRetornoDeId?: string | null;
+  rmaEntradaEstoque?: boolean;
   requerTermoComodato?: boolean;
   baixaPorArvore?: boolean;
   saidaPedidoVenda?: boolean;
@@ -70,7 +89,7 @@ type SaidaAberta = {
     } | null;
   };
   filial: { id: string; sigla: string; nome: string };
-  tipo: { id: string; nome: string };
+  tipo: { id: string; nome: string; codigo?: string | null };
 };
 type Filial = { id: string; nome: string; sigla: string };
 type Cliente = { id: string; nome: string; tipo: string };
@@ -239,7 +258,8 @@ function NovoLancamentoForm() {
 
   const tipo = tipos.find((t) => t.id === tipoId);
   const isTransf = tipo?.operacao === "TRANSFERENCIA";
-  const isRetorno = Boolean(tipo?.ehRetornoDeId);
+  const isRetorno = tipoEntradaEhRetornoCliente(tipo || {});
+  const escopoRetorno = tipo ? escopoRetornoClienteDeTipo(tipo) : null;
   const precisaAlerta = Boolean(tipo?.geraAlertaRetorno);
   const precisaTermo = Boolean(tipo?.requerTermoComodato);
   const isBaixaArvore = tipoUsaBaixaArvore({
@@ -347,6 +367,7 @@ function NovoLancamentoForm() {
           id: string;
           tipoId: string;
           clienteId: string | null;
+          filialId?: string;
           status: string;
           operacao: string;
           tipo: { nome: string };
@@ -365,8 +386,22 @@ function NovoLancamentoForm() {
           setPrefillLoading(false);
           return;
         }
-        const tipoRetorno = tipos.find((t) => t.ehRetornoDeId === mov.tipoId);
-        if (!tipoRetorno?.ehRetornoDeId) {
+        const escopoSaida = escopoRetornoClienteDeTipo({
+          nome: mov.tipo.nome,
+        });
+        const candidatos = tipos.filter(
+          (t) =>
+            tipoEntradaEhRetornoCliente(t) &&
+            (!t.filialId || !mov.filialId || t.filialId === mov.filialId)
+        );
+        const tipoRetorno =
+          tipos.find((t) => t.ehRetornoDeId === mov.tipoId) ||
+          candidatos.find((t) => {
+            const e = escopoRetornoClienteDeTipo(t);
+            return escopoSaida ? e === escopoSaida : true;
+          }) ||
+          candidatos[0];
+        if (!tipoRetorno) {
           setError(
             `Não há tipo de retorno cadastrado para “${mov.tipo.nome}”`
           );
@@ -376,7 +411,12 @@ function NovoLancamentoForm() {
 
         setSaidasLoading(true);
         const abertas = await api<SaidaAberta[]>(
-          `/movimentacoes/saidas-abertas?tipoOrigemId=${encodeURIComponent(tipoRetorno.ehRetornoDeId)}&clienteId=${encodeURIComponent(mov.clienteId)}`
+          urlSaidasAbertas({
+            clienteId: mov.clienteId,
+            tipoOrigemId: tipoRetorno.ehRetornoDeId,
+            filialId: tipoRetorno.filialId || mov.filialId || null,
+            escopo: escopoRetornoClienteDeTipo(tipoRetorno),
+          })
         );
         if (cancelled) return;
 
@@ -702,11 +742,16 @@ function NovoLancamentoForm() {
     if (retornoPrefill || retornoDeId) return;
     setMovimentacaoOrigemId("");
     setSaidasAbertas([]);
-    if (!isRetorno || !tipo?.ehRetornoDeId || !clienteId) return;
+    if (!isRetorno || !clienteId) return;
     let cancelled = false;
     setSaidasLoading(true);
     void api<SaidaAberta[]>(
-      `/movimentacoes/saidas-abertas?tipoOrigemId=${encodeURIComponent(tipo.ehRetornoDeId)}&clienteId=${encodeURIComponent(clienteId)}`
+      urlSaidasAbertas({
+        clienteId,
+        tipoOrigemId: tipo?.ehRetornoDeId,
+        filialId: tipo?.filialId || null,
+        escopo: escopoRetorno,
+      })
     )
       .then((rows) => {
         if (cancelled) return;
@@ -732,6 +777,8 @@ function NovoLancamentoForm() {
   }, [
     isRetorno,
     tipo?.ehRetornoDeId,
+    tipo?.filialId,
+    escopoRetorno,
     clienteId,
     retornoDeId,
     retornoPrefill,
@@ -777,11 +824,21 @@ function NovoLancamentoForm() {
       configuracaoSerie: s.produto.configuracaoSerie,
     });
     setCodigo(s.produto.codigo);
+    if (s.filial?.id) setFilialId(s.filial.id);
     const qtd =
       sns.length > 0 ? sns.length : (s.qtyRestante ?? s.quantidade);
     setQuantidade(String(qtd));
     setSeries(sns);
     setSugestoes([]);
+  }
+
+  function toggleSerieRetorno(sn: string) {
+    setSeries((prev) => {
+      const on = prev.includes(sn);
+      const next = on ? prev.filter((x) => x !== sn) : [...prev, sn];
+      setQuantidade(String(next.length || 0));
+      return next;
+    });
   }
 
   async function buscarProduto(code: string): Promise<Produto | null> {
@@ -1319,6 +1376,10 @@ function NovoLancamentoForm() {
   const saidaVinculada = saidasAbertas.find(
     (s) => s.id === movimentacaoOrigemId
   );
+  const seriesRetornoChips = isRetorno
+    ? (saidaVinculada?.seriesEmAberto || []).map((x) => x.trim()).filter(Boolean)
+    : [];
+  const usaChipsSerieRetorno = seriesRetornoChips.length > 0;
   const maxRetornoAberto =
     saidaVinculada?.qtyRestante ?? saidaVinculada?.quantidade;
   const qtdDigitada = Number(quantidade);
@@ -1768,54 +1829,109 @@ function NovoLancamentoForm() {
             </label>
 
             {isRetorno && (
-              <label className="block">
+              <div className="block">
                 <span className="mb-1 block text-sm font-medium">
-                  Saída aberta a vincular
+                  Saídas em aberto deste cliente
                 </span>
-                <select
-                  required
-                  disabled={camposTravados}
-                  className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
-                  value={movimentacaoOrigemId}
-                  onChange={(e) => {
-                    const id = e.target.value;
-                    setMovimentacaoOrigemId(id);
-                    const s = saidasAbertas.find((x) => x.id === id);
-                    if (s) aplicarProdutoDaSaida(s);
-                  }}
-                >
-                  <option value="">
-                    {!clienteId
-                      ? "Selecione o cliente primeiro"
-                      : saidasLoading
-                        ? "Carregando saídas abertas…"
-                        : saidasAbertas.length
-                          ? "Selecione a saída"
-                          : "Nenhuma saída aberta para este cliente"}
-                  </option>
-                  {saidasAbertas.map((s) => {
-                    const restante = s.qtyRestante ?? s.quantidade;
-                    return (
-                      <option key={s.id} value={s.id}>
-                        {new Date(s.dataMovimento).toLocaleDateString("pt-BR")} ·{" "}
-                        {s.produto.codigo} · aberto {restante}
-                        {restante !== s.quantidade
-                          ? ` / ${s.quantidade}`
-                          : ""}
-                        {s.notaFiscalNumero
-                          ? ` · NF ${s.notaFiscalNumero}`
-                          : ""}{" "}
-                        · {s.filial.sigla}
-                      </option>
-                    );
-                  })}
-                </select>
+                {!tipo?.ehRetornoDeId ? (
+                  <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Este tipo ainda não tem o vínculo “É retorno de” no
+                    cadastro. Listamos saídas de demonstração e comodato em
+                    aberto. Em Cadastros → Tipos, associe este tipo à saída
+                    correspondente para restringir a lista.
+                  </p>
+                ) : null}
+                {!clienteId ? (
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                    Selecione o cliente para ver as saídas de demonstração ou
+                    comodato ainda em aberto.
+                  </p>
+                ) : saidasLoading ? (
+                  <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                    Carregando saídas abertas…
+                  </p>
+                ) : saidasAbertas.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                    Nenhuma saída de{" "}
+                    {escopoRetorno === "comodato"
+                      ? "comodato"
+                      : escopoRetorno === "demo"
+                        ? "demonstração"
+                        : "demonstração ou comodato"}{" "}
+                    em aberto para este cliente
+                    {tipo?.filialId ? " neste estoque" : ""}.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {saidasAbertas.map((s) => {
+                      const restante = s.qtyRestante ?? s.quantidade;
+                      const selected = s.id === movimentacaoOrigemId;
+                      return (
+                        <li key={s.id}>
+                          <button
+                            type="button"
+                            disabled={camposTravados && !selected}
+                            onClick={() => {
+                              if (camposTravados) return;
+                              setMovimentacaoOrigemId(s.id);
+                              aplicarProdutoDaSaida(s);
+                            }}
+                            className={`w-full rounded-lg border px-3 py-3 text-left transition ${
+                              selected
+                                ? "border-teal-600 bg-teal-50 ring-2 ring-teal-600/30"
+                                : "border-slate-200 bg-white hover:border-teal-400 hover:bg-teal-50/40"
+                            } disabled:cursor-not-allowed disabled:opacity-70`}
+                          >
+                            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                              <span className="text-sm font-semibold text-slate-800">
+                                {s.tipo.nome}
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                {new Date(s.dataMovimento).toLocaleDateString(
+                                  "pt-BR"
+                                )}{" "}
+                                · {s.filial.sigla}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-sm text-slate-700">
+                              <span className="font-mono text-xs">
+                                {s.produto.codigo}
+                              </span>{" "}
+                              — {s.produto.descricao}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-600">
+                              Aberto {restante}
+                              {restante !== s.quantidade
+                                ? ` de ${s.quantidade}`
+                                : ""}
+                              {s.notaFiscalNumero
+                                ? ` · NF ${s.notaFiscalNumero}`
+                                : ""}
+                            </p>
+                            {(s.seriesEmAberto || []).length > 0 ? (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {(s.seriesEmAberto || []).map((sn) => (
+                                  <span
+                                    key={sn}
+                                    className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-700"
+                                  >
+                                    {sn}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : null}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
                 <span className="mt-1 block text-xs text-slate-500">
-                  Produto, filial e números de série vêm da saída vinculada
-                  (cliente e NF daquela operação). Remova um S/N só se o
-                  retorno for parcial.
+                  Clique na saída para montar a entrada. Produto, estoque e
+                  números de série vêm da operação original — evita erro de
+                  série (nascimento).
                 </span>
-              </label>
+              </div>
             )}
 
             {precisaAlerta && (
@@ -2189,6 +2305,12 @@ function NovoLancamentoForm() {
               Adicionar item
             </button>
           </section>
+        ) : isRetorno && !movimentacaoOrigemId ? (
+          <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600">
+            Clique em uma saída em aberto acima. O produto, o estoque e os
+            números de série entram automaticamente — não digite a série à
+            mão.
+          </p>
         ) : (
           <>
             <label className="relative block">
@@ -2381,9 +2503,10 @@ function NovoLancamentoForm() {
                 min={pedeSerieDe(produto, tipo?.controleSerie) ? 1 : 0.0001}
                 step={pedeSerieDe(produto, tipo?.controleSerie) ? 1 : "any"}
                 required
+                readOnly={usaChipsSerieRetorno}
                 value={quantidade}
                 onChange={(e) => setQuantidade(e.target.value)}
-                className="w-full rounded-lg border px-3 py-3"
+                className="w-full rounded-lg border px-3 py-3 read-only:bg-slate-50"
               />
               {pedeSerieDe(produto, tipo?.controleSerie) && isRetorno ? (
                 <span className="mt-1 block text-xs text-slate-500">
@@ -2408,6 +2531,37 @@ function NovoLancamentoForm() {
             </label>
 
             {produto &&
+            pedeSerieDe(produto, tipo?.controleSerie) &&
+            usaChipsSerieRetorno ? (
+              <div className="block">
+                <span className="mb-1 block text-sm font-medium">
+                  Números de série a retornar
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {seriesRetornoChips.map((sn) => {
+                    const on = series.includes(sn);
+                    return (
+                      <button
+                        key={sn}
+                        type="button"
+                        onClick={() => toggleSerieRetorno(sn)}
+                        className={`rounded-lg border px-2.5 py-1.5 font-mono text-xs ${
+                          on
+                            ? "border-teal-700 bg-teal-700 text-white"
+                            : "border-slate-200 bg-white text-slate-700"
+                        }`}
+                      >
+                        {sn}
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="mt-1 block text-xs text-slate-500">
+                  Clique para incluir ou tirar um S/N (retorno parcial). Não é
+                  preciso redigitar — evita erro de série já existente.
+                </span>
+              </div>
+            ) : produto &&
             pedeSerieDe(produto, tipo?.controleSerie) &&
             (isRetorno ||
               tipo?.operacao === "ENTRADA" ||

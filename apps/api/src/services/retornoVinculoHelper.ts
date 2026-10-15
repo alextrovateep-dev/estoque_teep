@@ -1,4 +1,43 @@
 import { Prisma } from "@prisma/client";
+import type { EscopoRetornoCliente } from "@teep/shared";
+
+/** Saída de demo/comodato que ainda pode ser vinculada a um retorno. */
+export function filtroTipoSaidaDemoComodato(
+  escopo?: EscopoRetornoCliente | null
+): Prisma.TipoMovimentacaoWhereInput {
+  if (escopo === "demo") {
+    return {
+      OR: [
+        { nome: { contains: "Demonstr", mode: "insensitive" } },
+        {
+          AND: [
+            { geraAlertaRetorno: true },
+            { requerTermoComodato: false },
+            {
+              NOT: { nome: { contains: "Comodato", mode: "insensitive" } },
+            },
+          ],
+        },
+      ],
+    };
+  }
+  if (escopo === "comodato") {
+    return {
+      OR: [
+        { requerTermoComodato: true },
+        { nome: { contains: "Comodato", mode: "insensitive" } },
+      ],
+    };
+  }
+  return {
+    OR: [
+      { geraAlertaRetorno: true },
+      { requerTermoComodato: true },
+      { nome: { contains: "Demonstr", mode: "insensitive" } },
+      { nome: { contains: "Comodato", mode: "insensitive" } },
+    ],
+  };
+}
 
 /** Status que ocupam qty da saída (impedem outro retorno sobre o mesmo saldo). */
 const STATUS_OCUPA = ["CONCLUIDO", "PENDENTE"] as const;

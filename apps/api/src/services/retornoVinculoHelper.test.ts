@@ -1,6 +1,33 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { seriesEmAbertoDaSaida } from "./retornoVinculoHelper";
+import {
+  filtroTipoSaidaDemoComodato,
+  seriesEmAbertoDaSaida,
+} from "./retornoVinculoHelper";
+
+describe("filtroTipoSaidaDemoComodato", () => {
+  it("aceita saída com alerta de retorno ou termo de comodato", () => {
+    assert.deepEqual(filtroTipoSaidaDemoComodato(), {
+      OR: [
+        { geraAlertaRetorno: true },
+        { requerTermoComodato: true },
+        { nome: { contains: "Demonstr", mode: "insensitive" } },
+        { nome: { contains: "Comodato", mode: "insensitive" } },
+      ],
+    });
+  });
+
+  it("restringe demonstração e comodato", () => {
+    const demo = filtroTipoSaidaDemoComodato("demo");
+    const comodato = filtroTipoSaidaDemoComodato("comodato");
+    assert.equal(Array.isArray(demo.OR), true);
+    assert.equal(
+      JSON.stringify(comodato).includes("Comodato"),
+      true
+    );
+    assert.equal(JSON.stringify(demo).includes("Demonstr"), true);
+  });
+});
 
 describe("seriesEmAbertoDaSaida", () => {
   it("traz os S/N da saída que ainda estão SAIDO", () => {

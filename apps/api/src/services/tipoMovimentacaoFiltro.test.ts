@@ -1,10 +1,96 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  escopoRetornoClienteDeTipo,
+  tipoEntradaEhRetornoCliente,
   tipoUsaBaixaArvore,
   tipoVisivelFiltroMovimentacoes,
   tipoVisivelLancamento,
 } from "@teep/shared";
+
+describe("tipoEntradaEhRetornoCliente", () => {
+  it("reconhece vínculo cadastrado", () => {
+    assert.equal(
+      tipoEntradaEhRetornoCliente({
+        operacao: "ENTRADA",
+        ehRetornoDeId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        nome: "EDSP",
+      }),
+      true
+    );
+  });
+
+  it("reconhece nome com retorno de demonstração mesmo sem vínculo", () => {
+    assert.equal(
+      tipoEntradaEhRetornoCliente({
+        operacao: "ENTRADA",
+        ehRetornoDeId: null,
+        nome: "EDSP — Entrada Retorno de Demonstração - SP (ENTRADA)",
+        codigo: "EDSP",
+      }),
+      true
+    );
+  });
+
+  it("reconhece retorno de comodato sem vínculo", () => {
+    assert.equal(
+      tipoEntradaEhRetornoCliente({
+        operacao: "ENTRADA",
+        nome: "Retorno Comodato",
+        codigo: "ECSP",
+      }),
+      true
+    );
+  });
+
+  it("não trata compra, RMA nem retorno genérico como demo/comodato", () => {
+    assert.equal(
+      tipoEntradaEhRetornoCliente({
+        operacao: "ENTRADA",
+        nome: "Entrada de compra",
+      }),
+      false
+    );
+    assert.equal(
+      tipoEntradaEhRetornoCliente({
+        operacao: "ENTRADA",
+        nome: "Retorno RMA",
+        rmaEntradaEstoque: true,
+      }),
+      false
+    );
+    assert.equal(
+      tipoEntradaEhRetornoCliente({
+        operacao: "SAIDA",
+        nome: "Saída Demonstração",
+      }),
+      false
+    );
+    assert.equal(
+      tipoEntradaEhRetornoCliente({
+        operacao: "ENTRADA",
+        nome: "Retorno de garantia",
+      }),
+      false
+    );
+  });
+});
+
+describe("escopoRetornoClienteDeTipo", () => {
+  it("separa demonstração e comodato", () => {
+    assert.equal(
+      escopoRetornoClienteDeTipo({
+        nome: "Entrada Retorno de Demonstração",
+      }),
+      "demo"
+    );
+    assert.equal(
+      escopoRetornoClienteDeTipo({ nome: "Saída Comodato" }),
+      "comodato"
+    );
+    assert.equal(escopoRetornoClienteDeTipo({ nome: "Entrada" }), null);
+  });
+});
 
 describe("tipoUsaBaixaArvore", () => {
   it("só explode BOM com a flag ligada", () => {
