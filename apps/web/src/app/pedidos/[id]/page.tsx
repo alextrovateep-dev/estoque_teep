@@ -349,37 +349,51 @@ function CamposTransportePedido({
 
 function ItensSomenteLeitura({ itens }: { itens: Item[] }) {
   return (
-    <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200 bg-white">
+    <ul className="space-y-3">
       {itens.map((it) => {
         const series = it.seriesSeparadas || [];
         return (
           <li
             key={it.id}
-            className="flex items-start justify-between gap-3 px-4 py-3"
+            className="rounded-xl border border-slate-200 bg-white p-4"
           >
-            <div className="min-w-0">
-              <p className="font-medium">{it.codigoProprio}</p>
-              <p className="text-sm text-slate-500">{it.descricao}</p>
-              {series.length > 0 ? (
-                <ul className="mt-1.5 space-y-0.5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-mono text-sm font-semibold text-slate-900">
+                  {it.codigoProprio}
+                </p>
+                <p className="mt-0.5 text-sm leading-snug text-slate-600">
+                  {it.descricao}
+                </p>
+              </div>
+              <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium tabular-nums text-slate-700">
+                Qtd {qtdLabel(it.quantidade)}
+              </span>
+            </div>
+            {series.length > 0 ? (
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+                  Números de série
+                  <span className="ml-1 font-normal tabular-nums text-slate-400">
+                    ({series.length})
+                  </span>
+                </p>
+                <ul className="flex flex-wrap gap-1.5">
                   {series.map((sn, i) => (
                     <li
                       key={`${sn}-${i}`}
-                      className="font-mono text-sm text-slate-800"
+                      className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 font-mono text-[11px] leading-none text-slate-800 sm:text-xs"
                     >
-                      N/S {sn}
+                      {sn}
                     </li>
                   ))}
                 </ul>
-              ) : it.produto?.controlaSerie ? (
-                <p className="mt-1 text-xs text-slate-400">
-                  Série não registrada na separação
-                </p>
-              ) : null}
-            </div>
-            <span className="shrink-0 text-sm tabular-nums text-slate-700">
-              {qtdLabel(it.quantidade)}
-            </span>
+              </div>
+            ) : it.produto?.controlaSerie ? (
+              <p className="mt-3 text-xs text-slate-400">
+                Série não registrada na separação
+              </p>
+            ) : null}
           </li>
         );
       })}
