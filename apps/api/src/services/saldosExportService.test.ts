@@ -103,6 +103,36 @@ describe("saldosExport totais e filtros", () => {
     assert.equal(resolveAlertaFiltro({}), null);
   });
 
+  it("código exato não puxa SKU que só começa igual", () => {
+    const rows = [
+      row({
+        id: "1",
+        codigo: "TMP-1144-W",
+        descricao: "Módulo W",
+        filialSigla: "EPSP",
+      }),
+      row({
+        id: "2",
+        codigo: "TMP-1144-W",
+        descricao: "Módulo W",
+        filialSigla: "EVSP",
+      }),
+      row({
+        id: "3",
+        codigo: "TMP-1144-WE",
+        descricao: "Módulo WE",
+        filialSigla: "EVSP",
+      }),
+    ];
+    const out = filtrarSaldosExport(rows, { q: "TMP-1144-W" });
+    assert.deepEqual(
+      out.map((r) => `${r.filialSigla}:${r.codigo}`),
+      ["EPSP:TMP-1144-W", "EVSP:TMP-1144-W"]
+    );
+    const prefixo = filtrarSaldosExport(rows, { q: "TMP-1144" });
+    assert.equal(prefixo.length, 3);
+  });
+
   it("busca q filtra só código/descrição do produto", () => {
     const rows = [
       row({

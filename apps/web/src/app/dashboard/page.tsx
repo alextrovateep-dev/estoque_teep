@@ -10,6 +10,7 @@ import {
   localUnidadeSerie,
   UNIDADE_SERIE_STATUS_LABEL,
 } from "@/lib/serieLabels";
+import { matchSaldoProduto, temCodigoProdutoExato } from "@teep/shared";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -253,7 +254,8 @@ export default function DashboardPage() {
 
   const saldosFiltrados = useMemo(() => {
     if (!data) return [];
-    const q = produtoFiltro.trim().toLowerCase();
+    const q = produtoFiltro.trim();
+    const codigoExato = temCodigoProdutoExato(data.saldos, q);
     return data.saldos.filter((s) => {
       if (categoriaId && s.categoriaId !== categoriaId) return false;
       if (filialTabelaId && s.filialId !== filialTabelaId) return false;
@@ -270,11 +272,7 @@ export default function DashboardPage() {
         );
         if (!match) return false;
       }
-      if (!q) return true;
-      return (
-        s.codigo.toLowerCase().includes(q) ||
-        s.descricao.toLowerCase().includes(q)
-      );
+      return matchSaldoProduto(s, q, codigoExato);
     });
   }, [
     data,

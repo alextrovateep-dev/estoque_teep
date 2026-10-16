@@ -4,6 +4,8 @@ import {
   BRAND_COLOR,
   isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
+  matchSaldoProduto,
+  temCodigoProdutoExato,
 } from "@teep/shared";
 import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
@@ -159,10 +161,7 @@ export function filtrarSaldosExport(
     if (alerta === "max" && !s.acimaMaximo) return false;
     if (alerta === "qualquer" && !(s.abaixoMinimo || s.acimaMaximo)) return false;
     if (!q) return true;
-    return (
-      s.codigo.toLowerCase().includes(q) ||
-      s.descricao.toLowerCase().includes(q)
-    );
+    return matchSaldoProduto(s, q, temCodigoProdutoExato(rows, q));
   });
 }
 
@@ -183,10 +182,19 @@ async function selecionarIdsSaldos(opts: {
     conditions.push(Prisma.sql`p.categoria_id = ${opts.categoriaId}::uuid`);
   }
   if (opts.q) {
-    const like = `%${opts.q}%`;
-    conditions.push(
-      Prisma.sql`(p.codigo ILIKE ${like} OR p.descricao ILIKE ${like})`
-    );
+    const exactCount = await prisma.produto.count({
+      where: { codigo: { equals: opts.q, mode: "insensitive" } },
+    });
+    if (exactCount > 0) {
+      conditions.push(
+        Prisma.sql`LOWER(p.codigo) = LOWER(${opts.q})`
+      );
+    } else {
+      const like = `%${opts.q}%`;
+      conditions.push(
+        Prisma.sql`(p.codigo ILIKE ${like} OR p.descricao ILIKE ${like})`
+      );
+    }
   }
   if (opts.alerta === "min") {
     conditions.push(sqlAbaixoMinimo);

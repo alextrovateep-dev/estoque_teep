@@ -5,3 +5,4 @@ export * from "./serieFormat";
 export * from "./validationMessage";
 export * from "./tipoMovimentacaoFiltro";
 export * from "./unidadeMedida";
+export * from "./saldoProdutoFiltro";
