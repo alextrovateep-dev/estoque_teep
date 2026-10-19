@@ -2344,7 +2344,7 @@ export default function RmaDetalhePage() {
             )}
         </div>
 
-        <ul className="grid gap-3 text-sm [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]">
+        <ul className="grid items-start gap-3 text-sm [grid-template-columns:repeat(auto-fill,minmax(min(100%,20rem),1fr))]">
           {itensAtivos.map((i) => {
             const origemIds = new Set(rmaDefaults?.filiaisOrigemTrocaIds || []);
             const descarteId = rmaDefaults?.filialDescarteId;
@@ -2376,10 +2376,6 @@ export default function RmaDetalhePage() {
             const podeExcluir =
               processoAberto &&
               (i.status === "EM_ESTOQUE" || i.status === "SEM_MANUTENCAO");
-            const expandido =
-              trocaItemId === i.id ||
-              semManutencaoItemId === i.id ||
-              itemFinEditId === i.id;
             const podeSemManutencao =
               podeExcluir &&
               (i.etapa === "AGUARDANDO_MANUTENCAO" ||
@@ -2389,11 +2385,7 @@ export default function RmaDetalhePage() {
             return (
               <li
                 key={i.id}
-                className={`flex min-w-0 flex-col rounded-lg border border-slate-200 bg-slate-50/50 p-2.5 sm:p-3 ${
-                  expandido
-                    ? "overflow-visible [grid-column:1/-1]"
-                    : "overflow-hidden"
-                }`}
+                className="flex min-w-0 flex-col overflow-visible rounded-lg border border-slate-200 bg-slate-50/50 p-2.5 sm:p-3"
               >
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
                   <div className="flex flex-wrap items-center gap-1.5">
@@ -2528,7 +2520,9 @@ export default function RmaDetalhePage() {
                       </button>
                     </div>
                   )}
-                  {podeAcoesSecundarias && (
+                  {podeAcoesSecundarias &&
+                    semManutencaoItemId !== i.id &&
+                    trocaItemId !== i.id && (
                     <div className="mt-auto flex items-center justify-between gap-2 border-t border-slate-200/80 pt-2 text-xs">
                       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
                         {canEditCobrancaItem && i.status !== "CANCELADO" && (
@@ -2747,16 +2741,24 @@ export default function RmaDetalhePage() {
                   )}
                 </div>
                 {semManutencaoItemId === i.id && (
-                  <div className="mt-2 space-y-2 rounded-lg border border-rose-200 bg-white p-3 text-xs">
-                    <p className="font-medium text-rose-950">
-                      Sem manutenção
+                  <div className="mt-2 space-y-2 rounded-md border border-rose-200 bg-white p-2.5 text-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="font-medium text-rose-950">
+                        Sem manutenção
+                      </p>
+                      <button
+                        type="button"
+                        disabled={acting}
+                        className="shrink-0 text-[11px] text-slate-500 underline disabled:opacity-50"
+                        onClick={() => setSemManutencaoItemId(null)}
+                      >
+                        Voltar
+                      </button>
+                    </div>
+                    <p className="text-[11px] leading-snug text-slate-600">
+                      Laudo permanece no processo.
                     </p>
-                    <p className="text-slate-600">
-                      O laudo/diagnóstico permanece no processo. Devolva o
-                      mesmo hardware ou troque por um novo (modelo, estoque e
-                      série).
-                    </p>
-                    <div className="grid gap-1.5 min-[420px]:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-1.5">
                       <button
                         type="button"
                         disabled={acting}
@@ -2774,14 +2776,6 @@ export default function RmaDetalhePage() {
                         Trocar por um novo
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      disabled={acting}
-                      className="text-slate-600 underline disabled:opacity-50"
-                      onClick={() => setSemManutencaoItemId(null)}
-                    >
-                      Voltar
-                    </button>
                   </div>
                 )}
                 {semCobrancaItemId === i.id && (
@@ -2822,12 +2816,12 @@ export default function RmaDetalhePage() {
                 {trocaItemId === i.id && (
                   <div
                     id={`troca-painel-${i.id}`}
-                    className="mt-3 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-3 text-xs sm:grid sm:grid-cols-2 sm:gap-3 sm:space-y-0 lg:grid-cols-3"
+                    className="mt-2 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-2.5 text-xs"
                   >
-                    <p className="font-medium text-amber-950 sm:col-span-2 lg:col-span-3">
+                    <p className="font-medium text-amber-950">
                       Troca
                     </p>
-                    <div className="relative sm:col-span-2 lg:col-span-3">
+                    <div className="relative">
                       <label className="block">
                         <span className="text-slate-600">
                           Modelo da peça nova *
@@ -2842,7 +2836,7 @@ export default function RmaDetalhePage() {
                         />
                       </label>
                       {trocaProdutoOpen && trocaProdutoSugestoes.length > 0 && (
-                        <ul className="absolute z-10 mt-0.5 max-h-40 w-full overflow-auto rounded border bg-white shadow">
+                        <ul className="absolute z-20 mt-0.5 max-h-40 w-full overflow-auto rounded border bg-white shadow">
                           {trocaProdutoSugestoes.map((p) => (
                             <li key={p.id}>
                               <button
@@ -2868,7 +2862,7 @@ export default function RmaDetalhePage() {
                       )}
                     </div>
                     {rmaDefaults?.avisos && rmaDefaults.avisos.length > 0 && (
-                      <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950 sm:col-span-2 lg:col-span-3">
+                      <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950">
                         {rmaDefaults.avisos.join(" · ")}
                       </p>
                     )}
@@ -2968,13 +2962,13 @@ export default function RmaDetalhePage() {
                     {(trocaErro || faltaDocsRetorno) && (
                       <p
                         role="alert"
-                        className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-800 sm:col-span-2 lg:col-span-3"
+                        className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-800"
                       >
                         {trocaErro ||
                           `${faltaDocsRetorno} antes de enviar ao cliente.`}
                       </p>
                     )}
-                    <div className="flex flex-wrap gap-2 pt-1 sm:col-span-2 lg:col-span-3">
+                    <div className="flex flex-wrap gap-2 pt-1">
                       <button
                         type="button"
                         disabled={
