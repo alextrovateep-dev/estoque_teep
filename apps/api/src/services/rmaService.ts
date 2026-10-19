@@ -558,15 +558,21 @@ function assertEtapaPermiteSaida(etapa: string | null | undefined) {
   }
 }
 
-/** Troca também a partir da manutenção (não foi possível reparar) — sem POST extra. */
+/** Troca se não deu para reparar: manutenção ou liberação (laudo já pode existir). */
 function assertEtapaPermiteTroca(etapa: string | null | undefined) {
-  if (etapa === "AGUARDANDO_MANUTENCAO") return;
+  if (
+    etapa === "AGUARDANDO_MANUTENCAO" ||
+    etapa === "AGUARDANDO_LIBERACAO"
+  ) {
+    return;
+  }
   assertEtapaPermiteSaida(etapa);
 }
 
 const RMA_ITEM_ETAPAS_TROCA = [
   ...RMA_ITEM_ETAPAS_SAIDA,
   "AGUARDANDO_MANUTENCAO",
+  "AGUARDANDO_LIBERACAO",
 ] as const;
 
 async function assertUsuarioComercialAtivo(usuarioId: string) {
@@ -2315,12 +2321,13 @@ export async function marcarSemManutencaoRma(
 
   const set = new Set(input.itemIds);
   const itens = proc.itens.filter(
-    (i) => set.has(i.id) && i.status === "EM_ESTOQUE"
+    (i) =>
+      set.has(i.id) && (ITEM_NO_RMA as readonly string[]).includes(i.status)
   );
   if (itens.length === 0) {
     throw new AppError(
       400,
-      "Nenhum item EM_ESTOQUE selecionado para marcar sem manutenção"
+      "Nenhum item no estoque RMA selecionado para marcar sem manutenção"
     );
   }
   if (itens.length !== input.itemIds.length) {
@@ -2336,11 +2343,16 @@ export async function marcarSemManutencaoRma(
       item.etapa === "AGUARDANDO_APROVACAO" ||
       item.etapa === "NAO_APROVADO"
         ? "NAO_APROVADO"
-        : item.etapa === "AGUARDANDO_MANUTENCAO"
+        : item.etapa === "AGUARDANDO_MANUTENCAO" ||
+            item.etapa === "AGUARDANDO_LIBERACAO"
           ? "AGUARDANDO_ENVIO"
           : null;
     const claim = await prisma.rmaItem.updateMany({
-      where: { id: item.id, status: "EM_ESTOQUE", etapa: item.etapa },
+      where: {
+        id: item.id,
+        status: { in: [...ITEM_NO_RMA] },
+        etapa: item.etapa,
+      },
       data: {
         status: "SEM_MANUTENCAO",
         ...(proximaEtapa ? { etapa: proximaEtapa } : {}),
