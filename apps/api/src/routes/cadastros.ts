@@ -378,15 +378,17 @@ async function assertFiliaisAtivas(ids: string[]) {
   }
 }
 
-async function assertEstoqueMinimoFilial(id: string | null | undefined) {
-  if (!id) return;
-  const f = await prisma.filial.findFirst({
-    where: { id, ativo: true },
+async function assertEstoqueMinimoFiliais(ids: string[] | undefined) {
+  const uniq = [...new Set((ids || []).filter(Boolean))];
+  if (uniq.length === 0) return uniq;
+  const found = await prisma.filial.findMany({
+    where: { id: { in: uniq } },
     select: { id: true },
   });
-  if (!f) {
-    throw new AppError(400, "Estoque do alerta mínimo inválido ou inativo");
+  if (found.length !== uniq.length) {
+    throw new AppError(400, "Estoque do alerta mínimo inválido");
   }
+  return uniq;
 }
 
 // —— Filiais (Admin) ——
@@ -882,7 +884,6 @@ cadastrosRouter.patch(
 const produtoInclude = {
   categoria: true,
   configuracaoSerie: true,
-  estoqueMinimoFilial: { select: { id: true, nome: true, sigla: true } },
 } as const;
 
 cadastrosRouter.get("/produtos", async (req, res, next) => {
@@ -1165,8 +1166,11 @@ cadastrosRouter.post(
   validateBody(createProdutoSchema),
   async (req, res, next) => {
     try {
-      await assertEstoqueMinimoFilial(req.body.estoqueMinimoFilialId);
+      const minimoIds = await assertEstoqueMinimoFiliais(
+        req.body.estoqueMinimoFilialIds
+      );
       const { configuracaoSerie, ...produtoData } = req.body;
+      produtoData.estoqueMinimoFilialIds = minimoIds;
       const created = await prisma.$transaction(async (tx) => {
         const p = await tx.produto.create({
           data: { ...produtoData, fotos: [] },
@@ -1203,8 +1207,10 @@ cadastrosRouter.patch(
       });
       if (!atual) throw new AppError(404, "Produto não encontrado");
 
-      if (req.body.estoqueMinimoFilialId !== undefined) {
-        await assertEstoqueMinimoFilial(req.body.estoqueMinimoFilialId);
+      if (req.body.estoqueMinimoFilialIds !== undefined) {
+        req.body.estoqueMinimoFilialIds = await assertEstoqueMinimoFiliais(
+          req.body.estoqueMinimoFilialIds
+        );
       }
 
       const min =

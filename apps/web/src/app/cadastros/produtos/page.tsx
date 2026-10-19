@@ -30,7 +30,7 @@ type Produto = {
   descricao: string;
   precoUnitario: string | number;
   estoqueMinimo: number;
-  estoqueMinimoFilial?: { id: string; sigla: string; nome: string } | null;
+  estoqueMinimoFilialIds?: string[];
   estoqueMaximo: number;
   unidade?: string;
   controlaSerie?: boolean;
@@ -541,9 +541,13 @@ function ProdutosPageInner() {
                     <td className="px-3 py-2">
                       {p.estoqueMinimo
                         ? `${p.estoqueMinimo}${
-                            p.estoqueMinimoFilial
-                              ? ` · ${p.estoqueMinimoFilial.sigla}`
-                              : " · todos"
+                            (p.estoqueMinimoFilialIds || []).length
+                              ? ` · ${(p.estoqueMinimoFilialIds || []).length} estoque${
+                                  (p.estoqueMinimoFilialIds || []).length === 1
+                                    ? ""
+                                    : "s"
+                                }`
+                              : " · nenhum estoque"
                           }`
                         : "—"}
                     </td>

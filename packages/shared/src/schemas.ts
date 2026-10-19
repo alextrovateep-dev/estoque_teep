@@ -215,12 +215,10 @@ const unidadeField = z.preprocess(
   z.string().max(10)
 );
 
-const emptyToNullUuid = (v: unknown) => (v === "" ? null : v);
-
-const estoqueMinimoFilialIdField = z.preprocess(
-  emptyToNullUuid,
-  z.string().uuid().nullable().optional()
-);
+const estoqueMinimoFilialIdsField = z
+  .array(z.string().uuid())
+  .max(80)
+  .optional();
 
 export const produtoSchema = z
   .object({
@@ -231,8 +229,8 @@ export const produtoSchema = z
     precoUnitario: z.coerce.number().min(0).optional(),
     /** 0 = sem alerta de mínimo */
     estoqueMinimo: z.coerce.number().int().min(0).optional(),
-    /** null = todos os estoques */
-    estoqueMinimoFilialId: estoqueMinimoFilialIdField,
+    /** Vazio = não monitora mínimo em nenhum estoque */
+    estoqueMinimoFilialIds: estoqueMinimoFilialIdsField,
     /** 0 = sem alerta de máximo */
     estoqueMaximo: z.coerce.number().int().min(0).optional(),
     fotos: fotosProdutoSchema.optional(),
@@ -265,7 +263,7 @@ export const createProdutoSchema = z
     unidade: unidadeField.default("PC"),
     precoUnitario: z.coerce.number().min(0).default(0),
     estoqueMinimo: z.coerce.number().int().min(0).default(0),
-    estoqueMinimoFilialId: estoqueMinimoFilialIdField,
+    estoqueMinimoFilialIds: estoqueMinimoFilialIdsField.default([]),
     estoqueMaximo: z.coerce.number().int().min(0).default(0),
     controlaSerie: z.boolean().optional().default(false),
     configuracaoSerie: configuracaoSerieSchema.optional(),
@@ -289,7 +287,7 @@ export const updateProdutoSchema = z
     unidade: unidadeField.optional(),
     precoUnitario: z.coerce.number().min(0).optional(),
     estoqueMinimo: z.coerce.number().int().min(0).optional(),
-    estoqueMinimoFilialId: estoqueMinimoFilialIdField,
+    estoqueMinimoFilialIds: estoqueMinimoFilialIdsField,
     estoqueMaximo: z.coerce.number().int().min(0).optional(),
     fotos: fotosProdutoSchema.optional(),
     controlaSerie: z.boolean().optional(),
@@ -1340,6 +1338,8 @@ export const semManutencaoRmaSchema = z.object({
  */
 export const trocarRmaItemSchema = z.object({
   itemId: z.string().uuid(),
+  /** Modelo da peça nova (default: mesmo produto do item RMA) */
+  produtoIdSubstituto: z.string().uuid().optional(),
   /** Estoque de onde sai a série boa (PLN, TBO, …) */
   origemFilialId: z.string().uuid(),
   /** Destino de preparação antes da expedição (default: filial do processo / RMA) */

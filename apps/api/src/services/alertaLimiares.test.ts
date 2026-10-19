@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   ALERTA_EVENTO_LABELS,
+  estoqueMinimoNaFilial,
   isAbaixoMinimo,
   isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
@@ -20,7 +21,7 @@ describe("alerta limiares (F9)", () => {
     assert.equal(isAcimaMaximo(9, 10), false);
   });
 
-  it("mínimo só no estoque escolhido", () => {
+  it("mínimo só nos estoques marcados; vazio não monitora", () => {
     const evsp = "11111111-1111-4111-8111-111111111111";
     const rmasp = "22222222-2222-4222-8222-222222222222";
     assert.equal(
@@ -28,7 +29,7 @@ describe("alerta limiares (F9)", () => {
         saldo: 2,
         estoqueMinimo: 10,
         filialId: evsp,
-        estoqueMinimoFilialId: evsp,
+        estoqueMinimoFilialIds: [evsp],
       }),
       true
     );
@@ -37,7 +38,7 @@ describe("alerta limiares (F9)", () => {
         saldo: 2,
         estoqueMinimo: 10,
         filialId: rmasp,
-        estoqueMinimoFilialId: evsp,
+        estoqueMinimoFilialIds: [evsp],
       }),
       false
     );
@@ -46,9 +47,34 @@ describe("alerta limiares (F9)", () => {
         saldo: 2,
         estoqueMinimo: 10,
         filialId: rmasp,
-        estoqueMinimoFilialId: null,
+        estoqueMinimoFilialIds: [],
+      }),
+      false
+    );
+    assert.equal(
+      isAbaixoMinimoNoEstoque({
+        saldo: 2,
+        estoqueMinimo: 10,
+        filialId: evsp,
+        estoqueMinimoFilialIds: [evsp, rmasp],
       }),
       true
+    );
+    assert.equal(
+      estoqueMinimoNaFilial({
+        estoqueMinimo: 10,
+        filialId: rmasp,
+        estoqueMinimoFilialIds: [evsp],
+      }),
+      0
+    );
+    assert.equal(
+      estoqueMinimoNaFilial({
+        estoqueMinimo: 10,
+        filialId: evsp,
+        estoqueMinimoFilialIds: [evsp],
+      }),
+      10
     );
   });
 

@@ -1,4 +1,5 @@
 import {
+  estoqueMinimoNaFilial,
   isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
   hasPermissao,
@@ -298,7 +299,7 @@ export async function obterDashboard(
             descricao: true,
             precoUnitario: true,
             estoqueMinimo: true,
-            estoqueMinimoFilialId: true,
+            estoqueMinimoFilialIds: true,
             estoqueMaximo: true,
             ativo: true,
             controlaSerie: true,
@@ -368,7 +369,11 @@ export async function obterDashboard(
   const saldos = estoques.map((e) => {
     const saldo = Number(e.saldoAtual);
     const preco = Number(e.produto.precoUnitario);
-    const min = e.produto.estoqueMinimo;
+    const min = estoqueMinimoNaFilial({
+      estoqueMinimo: e.produto.estoqueMinimo,
+      filialId: e.filialId,
+      estoqueMinimoFilialIds: e.produto.estoqueMinimoFilialIds,
+    });
     const max = e.produto.estoqueMaximo;
     return {
       id: e.id,
@@ -389,9 +394,9 @@ export async function obterDashboard(
       valor: saldo * preco,
       abaixoMinimo: isAbaixoMinimoNoEstoque({
         saldo,
-        estoqueMinimo: min,
+        estoqueMinimo: e.produto.estoqueMinimo,
         filialId: e.filialId,
-        estoqueMinimoFilialId: e.produto.estoqueMinimoFilialId,
+        estoqueMinimoFilialIds: e.produto.estoqueMinimoFilialIds,
       }),
       acimaMaximo: isAcimaMaximo(saldo, max),
       atualizadoEm: e.atualizadoEm,

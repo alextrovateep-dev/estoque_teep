@@ -1593,7 +1593,7 @@ export async function inicializarEstoque(
         descricao: string;
         estoqueMinimo: number;
         estoqueMaximo: number;
-        estoqueMinimoFilialId?: string | null;
+        estoqueMinimoFilialIds?: string[] | null;
       },
       saldoAtual: number,
       flags?: { abaixoMinimo: boolean; acimaMaximo: boolean }
@@ -1604,7 +1604,7 @@ export async function inicializarEstoque(
           saldo: saldoAtual,
           estoqueMinimo: produto.estoqueMinimo,
           filialId: input.filialId,
-          estoqueMinimoFilialId: produto.estoqueMinimoFilialId,
+          estoqueMinimoFilialIds: produto.estoqueMinimoFilialIds,
         });
       const acimaMaximo =
         flags?.acimaMaximo ?? isAcimaMaximo(saldoAtual, produto.estoqueMaximo);

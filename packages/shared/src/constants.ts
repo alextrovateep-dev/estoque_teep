@@ -1201,23 +1201,47 @@ export function isAbaixoMinimo(saldo: number, estoqueMinimo: number): boolean {
   return estoqueMinimo > 0 && saldo <= estoqueMinimo;
 }
 
+/** Estoques em que o mínimo do produto é monitorado. Lista vazia = nenhum. */
+export function filiaisComAlertaMinimo(
+  ids?: string[] | null
+): string[] {
+  return [
+    ...new Set(
+      (ids || [])
+        .map((id) => id.trim().toLowerCase())
+        .filter(Boolean)
+    ),
+  ];
+}
+
 /**
- * Alerta de mínimo: se o produto escolheu um estoque, só vale naquela filial.
- * `estoqueMinimoFilialId` vazio/null = todos (comportamento antigo).
+ * Alerta de mínimo só nos estoques marcados no cadastro.
+ * Nenhum estoque marcado = não monitora (mesmo com quantidade mínima > 0).
  */
 export function isAbaixoMinimoNoEstoque(opts: {
   saldo: number;
   estoqueMinimo: number;
   filialId: string;
-  estoqueMinimoFilialId?: string | null;
+  estoqueMinimoFilialIds?: string[] | null;
 }): boolean {
-  if (
-    opts.estoqueMinimoFilialId &&
-    opts.estoqueMinimoFilialId !== opts.filialId
-  ) {
+  const ids = filiaisComAlertaMinimo(opts.estoqueMinimoFilialIds);
+  if (ids.length === 0 || !ids.includes(opts.filialId.trim().toLowerCase())) {
     return false;
   }
   return isAbaixoMinimo(opts.saldo, opts.estoqueMinimo);
+}
+
+/** Quantidade mínima exibida/aplicada nesta posição de estoque (0 = sem monitoramento). */
+export function estoqueMinimoNaFilial(opts: {
+  estoqueMinimo: number;
+  filialId: string;
+  estoqueMinimoFilialIds?: string[] | null;
+}): number {
+  const ids = filiaisComAlertaMinimo(opts.estoqueMinimoFilialIds);
+  if (opts.estoqueMinimo <= 0 || ids.length === 0) return 0;
+  return ids.includes(opts.filialId.trim().toLowerCase())
+    ? opts.estoqueMinimo
+    : 0;
 }
 
 /** 0 = limiar desligado (não gera alerta) */

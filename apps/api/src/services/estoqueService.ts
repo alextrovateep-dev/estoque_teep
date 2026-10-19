@@ -115,7 +115,7 @@ export async function aplicarSaldo(
       saldo: Number(updated.saldoAtual),
       estoqueMinimo: produto.estoqueMinimo,
       filialId: params.filialId,
-      estoqueMinimoFilialId: produto.estoqueMinimoFilialId,
+      estoqueMinimoFilialIds: produto.estoqueMinimoFilialIds,
     }),
     acimaMaximo: isAcimaMaximo(Number(updated.saldoAtual), produto.estoqueMaximo),
   };

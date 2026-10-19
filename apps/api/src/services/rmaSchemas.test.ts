@@ -187,6 +187,18 @@ describe("trocarRmaItemSchema", () => {
     });
     assert.equal(r.success, false);
   });
+
+  it("aceita modelo substituto opcional", () => {
+    const r = trocarRmaItemSchema.safeParse({
+      itemId: UUID_ITEM,
+      produtoIdSubstituto: UUID_A,
+      origemFilialId: UUID_ORIGEM,
+      numeroSerieBoa: "SN-BOA-001",
+      destinoDescarteFilialId: UUID_DESC,
+      substituicaoAutorizadaPorId: UUID_A,
+    });
+    assert.equal(r.success, true);
+  });
 });
 
 describe("updateRmaItemFinanceiroSchema", () => {

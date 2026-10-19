@@ -54,7 +54,11 @@ type RmaItem = {
   aprovacaoPor?: { id: string; nome: string } | null;
   produto: { id: string; codigo: string; descricao: string };
   unidadeSerie?: { id: string; numeroSerie: string } | null;
-  unidadeSerieSubstituicao?: { id: string; numeroSerie: string } | null;
+  unidadeSerieSubstituicao?: {
+    id: string;
+    numeroSerie: string;
+    produto?: { id: string; codigo: string; descricao: string } | null;
+  } | null;
   substituicaoAutorizadaPor?: { id: string; nome: string } | null;
   anexos?: RmaAnexo[];
   movEntradaId?: string | null;
@@ -231,6 +235,17 @@ export default function RmaDetalhePage() {
   const [trocaObs, setTrocaObs] = useState("");
   const [trocaErro, setTrocaErro] = useState("");
   const [autorizadorId, setAutorizadorId] = useState("");
+  const [trocaProdutoId, setTrocaProdutoId] = useState("");
+  const [trocaProdutoQuery, setTrocaProdutoQuery] = useState("");
+  const [trocaProdutoSugestoes, setTrocaProdutoSugestoes] = useState<
+    ProdutoOpt[]
+  >([]);
+  const [trocaProdutoOpen, setTrocaProdutoOpen] = useState(false);
+  const trocaSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const trocaSearchAbort = useRef<AbortController | null>(null);
+  const [semManutencaoItemId, setSemManutencaoItemId] = useState<string | null>(
+    null
+  );
   const [freteModalidade, setFreteModalidade] = useState<RmaFreteModalidade | "">(
     ""
   );
@@ -986,10 +1001,109 @@ export default function RmaDetalhePage() {
     }
   }
 
+  function onTrocaProdutoQuery(q: string) {
+    setTrocaProdutoQuery(q);
+    setTrocaProdutoId("");
+    setSerieBoa("");
+    setTrocaProdutoOpen(true);
+    if (trocaSearchTimer.current) clearTimeout(trocaSearchTimer.current);
+    trocaSearchAbort.current?.abort();
+    if (!q.trim()) {
+      setTrocaProdutoSugestoes([]);
+      return;
+    }
+    trocaSearchTimer.current = setTimeout(() => {
+      const ac = new AbortController();
+      trocaSearchAbort.current = ac;
+      void api<ProdutoOpt[]>(
+        `/produtos/busca?q=${encodeURIComponent(q.trim())}`,
+        { signal: ac.signal }
+      )
+        .then((list) =>
+          setTrocaProdutoSugestoes(list.filter((p) => p.controlaSerie))
+        )
+        .catch((e) => {
+          if (e instanceof Error && e.name === "AbortError") return;
+          setTrocaProdutoSugestoes([]);
+        });
+    }, 250);
+  }
+
+  async function marcarSemManutencaoItem(itemId: string) {
+    await persistRma(`/rma/${id}/sem-manutencao`, {
+      method: "POST",
+      body: JSON.stringify({ itemIds: [itemId] }),
+    });
+  }
+
+  async function devolverSemManutencao(itemId: string) {
+    if (actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await marcarSemManutencaoItem(itemId);
+      setSemManutencaoItemId(null);
+      const anexos = row?.anexos || [];
+      const falta =
+        !nfEnt.trim()
+          ? "Informe a NF de entrada para devolver o hardware."
+          : !anexoAtivoPorTipo(anexos, "NF_ENTRADA")
+            ? "Anexe o arquivo da NF de entrada para devolver o hardware."
+            : !nfSai.trim()
+              ? "Informe a NF de retorno para devolver o hardware."
+              : !anexoAtivoPorTipo(anexos, "NF_SAIDA")
+                ? "Anexe o arquivo da NF de retorno para devolver o hardware."
+                : mensagemBloqueioFreteRma({
+                    freteModalidade: freteModalidade || row?.freteModalidade,
+                    transportadora:
+                      freteTransportadora || row?.transportadora,
+                    freteCobrado:
+                      freteCobrado === "true"
+                        ? true
+                        : freteCobrado === "false"
+                          ? false
+                          : row?.freteCobrado,
+                  });
+      if (falta) {
+        setMsg(`Não foi possível realizar manutenção. ${falta}`);
+        return;
+      }
+      await persistRma(`/rma/${id}/devolver`, {
+        method: "POST",
+        body: JSON.stringify({
+          itemIds: [itemId],
+          nfSaidaNumero: nfSai.trim() || undefined,
+          ...payloadFrete(),
+        }),
+      });
+      setMsg("Hardware devolvido sem manutenção.");
+      setTrocaItemId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
+  }
+
+  async function abrirTrocaSemManutencao(item: RmaItem) {
+    setSemManutencaoItemId(null);
+    setMsg(
+      "Manutenção não realizada — escolha o modelo novo, o estoque e a série para a troca."
+    );
+    await abrirTroca(item);
+  }
+
   async function abrirTroca(item: RmaItem) {
     setError("");
     setTrocaErro("");
     setTrocaItemId(item.id);
+    setTrocaProdutoId(item.produtoId || item.produto.id);
+    setTrocaProdutoQuery(`${item.produto.codigo} — ${item.produto.descricao}`);
+    setTrocaProdutoSugestoes([]);
+    setTrocaProdutoOpen(false);
     setSerieBoa("");
     setTrocaObs("");
     setAutorizadorId("");
@@ -1025,12 +1139,13 @@ export default function RmaDetalhePage() {
   }
 
   useEffect(() => {
-    if (!trocaItemId || !origemFilialId || !row) {
+    if (!trocaItemId || !origemFilialId || !row || !trocaProdutoId) {
       setSeriesDisp([]);
       return;
     }
     const item = row.itens.find((i) => i.id === trocaItemId);
-    const produtoId = item?.produtoId || item?.produto?.id;
+    const produtoId =
+      trocaProdutoId || item?.produtoId || item?.produto?.id;
     if (!produtoId) {
       return;
     }
@@ -1057,7 +1172,7 @@ export default function RmaDetalhePage() {
     return () => {
       cancelled = true;
     };
-  }, [trocaItemId, origemFilialId, row]);
+  }, [trocaItemId, origemFilialId, row, trocaProdutoId]);
 
   async function confirmarTroca() {
     if (!trocaItemId) return;
@@ -1097,6 +1212,10 @@ export default function RmaDetalhePage() {
       falhaLocal("Informe quem autorizou a troca");
       return;
     }
+    if (!trocaProdutoId) {
+      falhaLocal("Selecione o modelo da peça nova");
+      return;
+    }
     const faltaDocs = !nfEnt.trim()
       ? "Informe o número da NF de entrada"
       : !anexoAtivoPorTipo(row?.anexos || [], "NF_ENTRADA")
@@ -1120,6 +1239,7 @@ export default function RmaDetalhePage() {
         method: "POST",
         body: JSON.stringify({
           itemId: trocaItemId,
+          produtoIdSubstituto: trocaProdutoId,
           origemFilialId,
           // Destino da peça boa = estoque RMA do processo (definido na abertura)
           destinoPreparacaoFilialId: row?.filial.id,
@@ -2327,6 +2447,11 @@ export default function RmaDetalhePage() {
                             <span className="text-emerald-700">
                               {" "}
                               → {i.unidadeSerieSubstituicao.numeroSerie}
+                              {i.unidadeSerieSubstituicao.produto &&
+                              i.unidadeSerieSubstituicao.produto.id !==
+                                i.produto.id
+                                ? ` (${i.unidadeSerieSubstituicao.produto.codigo})`
+                                : ""}
                             </span>
                           ) : null}
                         </dd>
@@ -2413,16 +2538,31 @@ export default function RmaDetalhePage() {
                             </button>
                           )}
                         {podeExcluir && i.etapa === "AGUARDANDO_MANUTENCAO" && (
-                          <button
-                            type="button"
-                            disabled={acting || removerItemId !== null}
-                            className="min-h-8 font-medium text-sky-800 underline disabled:opacity-50"
-                            onClick={() =>
-                              void marcarManutencaoRealizada(i.id)
-                            }
-                          >
-                            Manutenção realizada
-                          </button>
+                          <>
+                            <button
+                              type="button"
+                              disabled={acting || removerItemId !== null}
+                              className="min-h-8 font-medium text-sky-800 underline disabled:opacity-50"
+                              onClick={() =>
+                                void marcarManutencaoRealizada(i.id)
+                              }
+                            >
+                              Manutenção realizada
+                            </button>
+                            <button
+                              type="button"
+                              disabled={acting || removerItemId !== null}
+                              className="min-h-8 font-medium text-rose-800 underline disabled:opacity-50"
+                              onClick={() => {
+                                setSemManutencaoItemId(i.id);
+                                setTrocaItemId(null);
+                                setError("");
+                                setMsg("");
+                              }}
+                            >
+                              Não foi possível realizar manutenção
+                            </button>
+                          </>
                         )}
                         {podeExcluir && ETAPAS_SAIDA.has(i.etapa || "") && (
                           <>
@@ -2585,6 +2725,43 @@ export default function RmaDetalhePage() {
                     </p>
                   )}
                 </div>
+                {semManutencaoItemId === i.id && (
+                  <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50/50 p-3 text-xs">
+                    <p className="font-medium text-rose-950">
+                      Não foi possível realizar manutenção
+                    </p>
+                    <p className="mt-1 text-slate-700">
+                      Escolha devolver o mesmo hardware ou trocar por um novo
+                      (modelo, estoque e número de série).
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={acting}
+                        className="rounded bg-brand px-3 py-1.5 text-white disabled:opacity-50"
+                        onClick={() => void devolverSemManutencao(i.id)}
+                      >
+                        Devolver o hardware sem manutenção
+                      </button>
+                      <button
+                        type="button"
+                        disabled={acting}
+                        className="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-50"
+                        onClick={() => void abrirTrocaSemManutencao(i)}
+                      >
+                        Efetuar troca por um novo
+                      </button>
+                      <button
+                        type="button"
+                        disabled={acting}
+                        className="rounded border px-3 py-1.5"
+                        onClick={() => setSemManutencaoItemId(null)}
+                      >
+                        Voltar
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {semCobrancaItemId === i.id && (
                   <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50/50 p-3 text-xs">
                     <p className="font-medium text-emerald-950">
@@ -2628,6 +2805,46 @@ export default function RmaDetalhePage() {
                     <p className="font-medium text-amber-950 sm:col-span-2 lg:col-span-3">
                       Troca
                     </p>
+                    <div className="relative sm:col-span-2 lg:col-span-3">
+                      <label className="block">
+                        <span className="text-slate-600">
+                          Modelo da peça nova *
+                        </span>
+                        <input
+                          className="mt-0.5 w-full rounded border px-2 py-1.5"
+                          value={trocaProdutoQuery}
+                          onChange={(e) => onTrocaProdutoQuery(e.target.value)}
+                          onFocus={() => setTrocaProdutoOpen(true)}
+                          placeholder="Buscar por código ou descrição"
+                          autoComplete="off"
+                        />
+                      </label>
+                      {trocaProdutoOpen && trocaProdutoSugestoes.length > 0 && (
+                        <ul className="absolute z-10 mt-0.5 max-h-40 w-full overflow-auto rounded border bg-white shadow">
+                          {trocaProdutoSugestoes.map((p) => (
+                            <li key={p.id}>
+                              <button
+                                type="button"
+                                className="w-full px-2 py-1.5 text-left hover:bg-amber-50"
+                                onClick={() => {
+                                  setTrocaProdutoId(p.id);
+                                  setTrocaProdutoQuery(
+                                    `${p.codigo} — ${p.descricao}`
+                                  );
+                                  setTrocaProdutoSugestoes([]);
+                                  setTrocaProdutoOpen(false);
+                                  setSerieBoa("");
+                                }}
+                              >
+                                <span className="font-mono">{p.codigo}</span>
+                                {" — "}
+                                {p.descricao}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
                     {rmaDefaults?.avisos && rmaDefaults.avisos.length > 0 && (
                       <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950 sm:col-span-2 lg:col-span-3">
                         {rmaDefaults.avisos.join(" · ")}
@@ -2740,6 +2957,7 @@ export default function RmaDetalhePage() {
                         type="button"
                         disabled={
                           acting ||
+                          !trocaProdutoId ||
                           !origemFilialId ||
                           !serieBoa.trim() ||
                           !destinoDescarteId ||
@@ -2764,6 +2982,9 @@ export default function RmaDetalhePage() {
                         onClick={() => {
                           setTrocaItemId(null);
                           setTrocaErro("");
+                          setTrocaProdutoId("");
+                          setTrocaProdutoQuery("");
+                          setTrocaProdutoSugestoes([]);
                         }}
                         className="rounded border px-3 py-1.5"
                       >

@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { Prisma } from "@prisma/client";
 import {
   BRAND_COLOR,
+  estoqueMinimoNaFilial,
   isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
   matchSaldoProduto,
@@ -309,7 +310,7 @@ export async function carregarSaldosExport(
                 descricao: true,
                 precoUnitario: true,
                 estoqueMinimo: true,
-                estoqueMinimoFilialId: true,
+                estoqueMinimoFilialIds: true,
                 estoqueMaximo: true,
                 ativo: true,
                 categoriaId: true,
@@ -328,7 +329,11 @@ export async function carregarSaldosExport(
   const mapped: SaldoExportRow[] = ordered.map((e) => {
     const saldo = Number(e.saldoAtual);
     const preco = Number(e.produto.precoUnitario);
-    const min = e.produto.estoqueMinimo;
+    const min = estoqueMinimoNaFilial({
+      estoqueMinimo: e.produto.estoqueMinimo,
+      filialId: e.filialId,
+      estoqueMinimoFilialIds: e.produto.estoqueMinimoFilialIds,
+    });
     const max = e.produto.estoqueMaximo;
     return {
       id: e.id,
@@ -345,9 +350,9 @@ export async function carregarSaldosExport(
       valor: saldo * preco,
       abaixoMinimo: isAbaixoMinimoNoEstoque({
         saldo,
-        estoqueMinimo: min,
+        estoqueMinimo: e.produto.estoqueMinimo,
         filialId: e.filialId,
-        estoqueMinimoFilialId: e.produto.estoqueMinimoFilialId,
+        estoqueMinimoFilialIds: e.produto.estoqueMinimoFilialIds,
       }),
       acimaMaximo: isAcimaMaximo(saldo, max),
       produtoAtivo: e.produto.ativo,

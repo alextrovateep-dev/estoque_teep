@@ -100,7 +100,13 @@ const processoInclude = {
         select: { id: true, numeroSerie: true, status: true, filialId: true },
       },
       unidadeSerieSubstituicao: {
-        select: { id: true, numeroSerie: true, status: true, filialId: true },
+        select: {
+          id: true,
+          numeroSerie: true,
+          status: true,
+          filialId: true,
+          produto: { select: { id: true, codigo: true, descricao: true } },
+        },
       },
       substituicaoAutorizadaPor: { select: { id: true, nome: true } },
       aprovacaoPor: { select: { id: true, nome: true } },
@@ -551,6 +557,17 @@ function assertEtapaPermiteSaida(etapa: string | null | undefined) {
     );
   }
 }
+
+/** Troca também a partir da manutenção (não foi possível reparar) — sem POST extra. */
+function assertEtapaPermiteTroca(etapa: string | null | undefined) {
+  if (etapa === "AGUARDANDO_MANUTENCAO") return;
+  assertEtapaPermiteSaida(etapa);
+}
+
+const RMA_ITEM_ETAPAS_TROCA = [
+  ...RMA_ITEM_ETAPAS_SAIDA,
+  "AGUARDANDO_MANUTENCAO",
+] as const;
 
 async function assertUsuarioComercialAtivo(usuarioId: string) {
   const u = await prisma.usuario.findFirst({
@@ -2278,7 +2295,8 @@ export async function devolverRmaItens(
 }
 
 /** Marca itens no RMA como SEM_MANUTENCAO (decisão de processo; sem mover saldo).
- * Só avança etapa para NAO_APROVADO (libera Devolver/Trocar) na decisão comercial. */
+ * Na recusa comercial avança para NAO_APROVADO; na manutenção (não foi possível
+ * reparar) avança para AGUARDANDO_ENVIO — libera Devolver/Trocar no mesmo fluxo. */
 export async function marcarSemManutencaoRma(
   user: AuthUser,
   id: string,
@@ -2313,15 +2331,19 @@ export async function marcarSemManutencaoRma(
   }
 
   for (const item of itens) {
-    const liberaSaida =
+    const proximaEtapa =
       item.etapa === "AGUARDANDO_ORCAMENTO" ||
       item.etapa === "AGUARDANDO_APROVACAO" ||
-      item.etapa === "NAO_APROVADO";
+      item.etapa === "NAO_APROVADO"
+        ? "NAO_APROVADO"
+        : item.etapa === "AGUARDANDO_MANUTENCAO"
+          ? "AGUARDANDO_ENVIO"
+          : null;
     const claim = await prisma.rmaItem.updateMany({
       where: { id: item.id, status: "EM_ESTOQUE", etapa: item.etapa },
       data: {
         status: "SEM_MANUTENCAO",
-        ...(liberaSaida ? { etapa: "NAO_APROVADO" } : {}),
+        ...(proximaEtapa ? { etapa: proximaEtapa } : {}),
       },
     });
     if (claim.count === 0) {
@@ -2452,6 +2474,7 @@ export async function trocarRmaItem(
   processoId: string,
   input: {
     itemId: string;
+    produtoIdSubstituto?: string;
     origemFilialId: string;
     destinoPreparacaoFilialId?: string;
     numeroSerieBoa: string;
@@ -2482,12 +2505,33 @@ export async function trocarRmaItem(
 
   const item = proc.itens.find((i) => i.id === input.itemId);
   if (!item) throw new AppError(404, "Item não encontrado neste processo");
-  assertEtapaPermiteSaida(item.etapa);
+  assertEtapaPermiteTroca(item.etapa);
   if (!(ITEM_NO_RMA as readonly string[]).includes(item.status)) {
     throw new AppError(400, "Só itens ainda no estoque RMA podem ser trocados");
   }
   if (!item.unidadeSerie?.numeroSerie) {
     throw new AppError(400, "Item sem número de série vinculado");
+  }
+
+  let produtoIdBoa = item.produtoId;
+  if (input.produtoIdSubstituto && input.produtoIdSubstituto !== item.produtoId) {
+    const sub = await prisma.produto.findFirst({
+      where: { id: input.produtoIdSubstituto },
+      select: { id: true, codigo: true, ativo: true, controlaSerie: true },
+    });
+    if (!sub) {
+      throw new AppError(400, "Modelo substituto não encontrado");
+    }
+    if (!sub.ativo) {
+      throw new AppError(400, "Modelo substituto inativo");
+    }
+    if (!sub.controlaSerie) {
+      throw new AppError(
+        400,
+        "Modelo substituto precisa controlar número de série"
+      );
+    }
+    produtoIdBoa = sub.id;
   }
 
   if (
@@ -2501,7 +2545,10 @@ export async function trocarRmaItem(
   const serieRuim = item.unidadeSerie.numeroSerie.trim();
   const serieBoa = input.numeroSerieBoa.trim();
   if (!serieBoa) throw new AppError(400, "Informe a série da peça substituta");
-  if (serieBoa.toLowerCase() === serieRuim.toLowerCase()) {
+  if (
+    produtoIdBoa === item.produtoId &&
+    serieBoa.toLowerCase() === serieRuim.toLowerCase()
+  ) {
     throw new AppError(
       400,
       "A série substituta deve ser diferente da série do item RMA"
@@ -2553,7 +2600,7 @@ export async function trocarRmaItem(
   // Valida séries antes do claim — evita marcar item e depois falhar
   const boaDisponivel = await prisma.unidadeSerie.findFirst({
     where: {
-      produtoId: item.produtoId,
+      produtoId: produtoIdBoa,
       numeroSerie: { equals: serieBoa, mode: "insensitive" },
       status: "EM_ESTOQUE",
       filialId: input.origemFilialId,
@@ -2598,7 +2645,7 @@ export async function trocarRmaItem(
     where: {
       id: item.id,
       status: { in: [...ITEM_NO_RMA] },
-      etapa: { in: [...RMA_ITEM_ETAPAS_SAIDA] },
+      etapa: { in: [...RMA_ITEM_ETAPAS_TROCA] },
     },
     data: {
       status: "DESCARTADO",
@@ -2627,7 +2674,7 @@ export async function trocarRmaItem(
         guiaTransporte: `RMA-troca-prep ${processoId.slice(0, 8)}`,
         itens: [
           {
-            produtoId: item.produtoId,
+            produtoId: produtoIdBoa,
             quantidade: 1,
             series: [serieBoa],
           },
@@ -2639,7 +2686,7 @@ export async function trocarRmaItem(
 
     const boa = await prisma.unidadeSerie.findFirst({
       where: {
-        produtoId: item.produtoId,
+        produtoId: produtoIdBoa,
         numeroSerie: { equals: serieBoa, mode: "insensitive" },
       },
     });
@@ -2651,7 +2698,7 @@ export async function trocarRmaItem(
     // 2) Expedir série boa ao cliente (Saída RMA)
     const saida = await lancarSaidaRma(user, {
       tipoSaidaId: tipoSaida.id,
-      produtoId: item.produtoId,
+      produtoId: produtoIdBoa,
       filialId: destinoPrepId,
       clienteId: proc.clienteId,
       quantidade: 1,

@@ -29,8 +29,7 @@ type Produto = {
   descricao: string;
   precoUnitario: string | number;
   estoqueMinimo: number;
-  estoqueMinimoFilialId?: string | null;
-  estoqueMinimoFilial?: { id: string; sigla: string; nome: string } | null;
+  estoqueMinimoFilialIds?: string[];
   estoqueMaximo: number;
   controlaSerie?: boolean;
   categoriaId?: string;
@@ -55,7 +54,7 @@ const emptyForm = {
   unidade: "PC",
   precoUnitario: "0,00",
   estoqueMinimo: "0",
-  estoqueMinimoFilialId: "",
+  estoqueMinimoFilialIds: [] as string[],
   estoqueMaximo: "0",
   controlaSerie: false,
   geracaoAutomatica: true,
@@ -148,7 +147,7 @@ export function ProdutoCadastroForm({
           unidade: p.unidade || "UN",
           precoUnitario: formatMoneyPlain(p.precoUnitario),
           estoqueMinimo: String(p.estoqueMinimo ?? 0),
-          estoqueMinimoFilialId: p.estoqueMinimoFilialId || "",
+          estoqueMinimoFilialIds: p.estoqueMinimoFilialIds || [],
           estoqueMaximo: String(p.estoqueMaximo ?? 0),
           controlaSerie: Boolean(p.controlaSerie),
           geracaoAutomatica: cfg?.geracaoAutomatica ?? true,
@@ -374,7 +373,7 @@ export function ProdutoCadastroForm({
       categoriaId: form.categoriaId,
       precoUnitario: normalizeMoneyInput(form.precoUnitario),
       estoqueMinimo: Number(form.estoqueMinimo),
-      estoqueMinimoFilialId: form.estoqueMinimoFilialId || null,
+      estoqueMinimoFilialIds: form.estoqueMinimoFilialIds,
       estoqueMaximo: Number(form.estoqueMaximo),
       controlaSerie: form.controlaSerie,
       unidade: form.unidade,
@@ -634,30 +633,66 @@ export function ProdutoCadastroForm({
               0 = sem alerta de mínimo
             </span>
           </label>
-          <label className="block text-sm md:col-span-3">
-            <span className="mb-1 block font-medium text-slate-700">
-              Considerar mínimo em
-            </span>
-            <select
-              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-teal-700 focus:ring-1 focus:ring-teal-700"
-              value={form.estoqueMinimoFilialId}
-              onChange={(e) =>
-                setForm({ ...form, estoqueMinimoFilialId: e.target.value })
-              }
-            >
-              <option value="">Todos os estoques</option>
-              {filiais.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.sigla} — {f.nome}
-                  {f.ativo ? "" : " (inativo)"}
-                </option>
-              ))}
-            </select>
+          <fieldset className="block text-sm md:col-span-3">
+            <legend className="mb-1 font-medium text-slate-700">
+              Monitorar mínimo nestes estoques
+            </legend>
+            <div className="flex flex-wrap gap-2 rounded-lg border border-slate-300 p-2.5">
+              {filiais.length === 0 ? (
+                <span className="text-xs text-slate-500">
+                  Nenhum estoque cadastrado
+                </span>
+              ) : (
+                filiais.map((f) => {
+                    const on = form.estoqueMinimoFilialIds.includes(f.id);
+                    return (
+                      <label
+                        key={f.id}
+                        className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${
+                          on
+                            ? "border-teal-700 bg-teal-50 text-teal-900"
+                            : "border-slate-200 bg-white text-slate-600"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="rounded border-slate-300 text-teal-700"
+                          checked={on}
+                          disabled={readOnly}
+                          onChange={() => {
+                            setForm((prev) => {
+                              const has = prev.estoqueMinimoFilialIds.includes(
+                                f.id
+                              );
+                              return {
+                                ...prev,
+                                estoqueMinimoFilialIds: has
+                                  ? prev.estoqueMinimoFilialIds.filter(
+                                      (id) => id !== f.id
+                                    )
+                                  : [...prev.estoqueMinimoFilialIds, f.id],
+                              };
+                            });
+                          }}
+                        />
+                        {f.sigla} — {f.nome}
+                        {f.ativo ? "" : " (inativo)"}
+                      </label>
+                    );
+                  })
+              )}
+            </div>
             <span className="mt-1 block text-xs text-slate-500">
-              Todos: alerta em qualquer estoque (como hoje). Um estoque: só
-              aquele é gerenciado pelo mínimo.
+              Padrão: nenhum. Só gera alerta de mínimo nos estoques marcados.
             </span>
-          </label>
+            {Number(form.estoqueMinimo) > 0 &&
+            form.estoqueMinimoFilialIds.length === 0 ? (
+              <span className="mt-1 block text-xs text-amber-800">
+                Quantidade mínima preenchida, mas nenhum estoque marcado — o
+                sistema não vai monitorar.
+              </span>
+            ) : null}
+          </fieldset>
         </div>
 
         <div
