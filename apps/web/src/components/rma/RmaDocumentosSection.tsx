@@ -101,6 +101,173 @@ type Props = {
   itens: RmaDocumentoItem[];
 };
 
+async function baixarPdf(path: string) {
+  const { blob, filename } = await apiDownload(path, {
+    fallbackFilename: "documento-rma.pdf",
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+const btnDoc =
+  "rounded-md border bg-white px-2 py-1 text-[11px] font-medium hover:bg-slate-50 disabled:opacity-50";
+
+/** PDF consolidado do orçamento — fica no topo do processo. */
+export function RmaOrcamentoArquivoButton({
+  processoId,
+}: {
+  processoId: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      disabled={busy}
+      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 disabled:opacity-50"
+      onClick={() => {
+        setBusy(true);
+        void baixarPdf(`/rma/${processoId}/orcamento/arquivo.pdf`).finally(
+          () => setBusy(false)
+        );
+      }}
+    >
+      {busy ? "Gerando…" : "PDF orçamento"}
+    </button>
+  );
+}
+
+/** Atalhos de laudo/orçamento no card do item (sem repetir SKU). */
+export function RmaItemLaudosBar({
+  processoId,
+  item,
+}: {
+  processoId: string;
+  item: RmaDocumentoItem;
+}) {
+  const [viewer, setViewer] = useState<ViewerState>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const entrada = temLaudoEntrada(item);
+  const liberacao = temLaudoLiberacao(item);
+  const orc = temOrcamento(item);
+  if (
+    !entrada &&
+    !liberacao &&
+    !orc &&
+    !item.substituicaoAutorizadaPor
+  ) {
+    return null;
+  }
+
+  async function baixar(path: string, key: string) {
+    setBusy(key);
+    try {
+      await baixarPdf(path);
+    } catch {
+      /* falha de download não bloqueia o card */
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {item.substituicaoAutorizadaPor ? (
+        <span className="text-[11px] text-slate-600">
+          Troca autorizada por {item.substituicaoAutorizadaPor.nome}
+        </span>
+      ) : null}
+      {entrada ? (
+        <>
+          <button
+            type="button"
+            className={btnDoc}
+            onClick={() => setViewer({ item, tipo: "entrada" })}
+          >
+            Laudo inspeção
+          </button>
+          <button
+            type="button"
+            disabled={busy === `e-${item.id}`}
+            className={btnDoc}
+            onClick={() =>
+              void baixar(
+                `/rma/${processoId}/itens/${item.id}/laudo/RECEBIMENTO/pdf`,
+                `e-${item.id}`
+              )
+            }
+          >
+            {busy === `e-${item.id}` ? "…" : "PDF inspeção"}
+          </button>
+        </>
+      ) : null}
+      {liberacao ? (
+        <>
+          <button
+            type="button"
+            className={btnDoc}
+            onClick={() => setViewer({ item, tipo: "liberacao" })}
+          >
+            Laudo saída
+          </button>
+          <button
+            type="button"
+            disabled={busy === `l-${item.id}`}
+            className={btnDoc}
+            onClick={() =>
+              void baixar(
+                `/rma/${processoId}/itens/${item.id}/laudo/LIBERACAO/pdf`,
+                `l-${item.id}`
+              )
+            }
+          >
+            {busy === `l-${item.id}` ? "…" : "PDF saída"}
+          </button>
+        </>
+      ) : null}
+      {orc ? (
+        <>
+          <button
+            type="button"
+            className={btnDoc}
+            onClick={() => setViewer({ item, tipo: "orcamento" })}
+          >
+            Orçamento
+            <span className="ml-1 text-slate-400">
+              ({rmaOrcamentoStatusLabel(item.orcamento?.status)})
+            </span>
+          </button>
+          <button
+            type="button"
+            disabled={busy === `o-${item.id}`}
+            className={btnDoc}
+            onClick={() =>
+              void baixar(
+                `/rma/${processoId}/orcamento/arquivo.pdf?itemId=${item.id}`,
+                `o-${item.id}`
+              )
+            }
+          >
+            {busy === `o-${item.id}` ? "…" : "PDF orçamento"}
+          </button>
+        </>
+      ) : null}
+      {viewer ? (
+        <DocumentoViewer
+          state={viewer}
+          onClose={() => setViewer(null)}
+          onPdf={(path) => void baixar(path, "viewer")}
+          processoId={processoId}
+          busy={busy === "viewer"}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 export function RmaDocumentosSection({
   processoId,
   itens,

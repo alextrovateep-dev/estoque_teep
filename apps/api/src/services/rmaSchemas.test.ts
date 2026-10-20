@@ -26,6 +26,7 @@ import {
   mensagemBloqueioFreteRma,
   podeExcluirAberturaRma,
   rmaListaWhereAba,
+  RMA_ITEM_ETAPAS_TROCA,
   updateRmaItemFinanceiroSchema,
 } from "@teep/shared";
 import {
@@ -147,6 +148,20 @@ describe("semManutencaoRmaSchema", () => {
   it("aceita lista de itens", () => {
     const r = semManutencaoRmaSchema.safeParse({ itemIds: [UUID_ITEM] });
     assert.equal(r.success, true);
+  });
+});
+
+describe("RMA_ITEM_ETAPAS_TROCA", () => {
+  it("não inclui aguardando envio", () => {
+    assert.equal(
+      (RMA_ITEM_ETAPAS_TROCA as readonly string[]).includes("AGUARDANDO_ENVIO"),
+      false
+    );
+    assert.deepEqual([...RMA_ITEM_ETAPAS_TROCA], [
+      "AGUARDANDO_MANUTENCAO",
+      "AGUARDANDO_LIBERACAO",
+      "NAO_APROVADO",
+    ]);
   });
 });
 

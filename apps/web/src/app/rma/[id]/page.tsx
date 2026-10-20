@@ -5,7 +5,10 @@ import {
   RmaItemWorkflowPanel,
   type RmaItemWorkflowData,
 } from "@/components/rma/RmaItemWorkflowPanel";
-import { RmaDocumentosSection } from "@/components/rma/RmaDocumentosSection";
+import {
+  RmaItemLaudosBar,
+  RmaOrcamentoArquivoButton,
+} from "@/components/rma/RmaDocumentosSection";
 import { api, apiUpload, getStoredUser } from "@/lib/api";
 import { userHas } from "@/lib/access";
 import { resolveAssetUrl } from "@/lib/assets";
@@ -19,7 +22,7 @@ import {
   useState,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { SIGLA_ESTOQUE_DESCARTE, RMA_FRETE_MODALIDADE, RMA_FRETE_MODALIDADE_LABELS, RMA_ITEM_ETAPA_LABELS, RMA_MODALIDADE_AQUISICAO, RMA_MODALIDADE_AQUISICAO_LABELS, mensagemBloqueioFreteRma, mensagemBloqueioNfRetorno, mensagemBloqueioNfRetornoSemEntrada, formatYmdBr, podeExcluirAberturaRma, rmaModalidadeAquisicaoLabel, ymdFromApi, ymdVencido, type RmaFreteModalidade, type RmaModalidadeAquisicao } from "@teep/shared";
+import { SIGLA_ESTOQUE_DESCARTE, RMA_FRETE_MODALIDADE, RMA_FRETE_MODALIDADE_LABELS, RMA_ITEM_ETAPA_LABELS, RMA_ITEM_ETAPAS_TROCA, RMA_MODALIDADE_AQUISICAO, RMA_MODALIDADE_AQUISICAO_LABELS, mensagemBloqueioFreteRma, mensagemBloqueioNfRetorno, mensagemBloqueioNfRetornoSemEntrada, formatYmdBr, podeExcluirAberturaRma, rmaModalidadeAquisicaoLabel, ymdFromApi, ymdVencido, type RmaFreteModalidade, type RmaModalidadeAquisicao } from "@teep/shared";
 
 type RmaAnexo = {
   id: string;
@@ -246,6 +249,9 @@ export default function RmaDetalhePage() {
   const [semManutencaoItemId, setSemManutencaoItemId] = useState<string | null>(
     null
   );
+  const [voltarManutencaoItemId, setVoltarManutencaoItemId] = useState<
+    string | null
+  >(null);
   const [freteModalidade, setFreteModalidade] = useState<RmaFreteModalidade | "">(
     ""
   );
@@ -990,7 +996,7 @@ export default function RmaDetalhePage() {
       const etapa = updated.itens.find((i) => i.id === itemId)?.etapa;
       setMsg(
         etapa === "AGUARDANDO_ENVIO"
-          ? "Manutenção marcada — item liberado para devolver/trocar"
+          ? "Manutenção marcada — item liberado para devolver"
           : "Manutenção marcada — item aguarda checklist de liberação"
       );
     } catch (err) {
@@ -1027,6 +1033,28 @@ export default function RmaDetalhePage() {
           setTrocaProdutoSugestoes([]);
         });
     }, 250);
+  }
+
+  async function voltarParaManutencao(itemId: string) {
+    if (actingRef.current) return;
+    actingRef.current = true;
+    setActing(true);
+    setError("");
+    setMsg("");
+    try {
+      await persistRma(`/rma/${id}/itens/${itemId}/voltar-manutencao`, {
+        method: "POST",
+      });
+      setTrocaItemId(null);
+      setSemManutencaoItemId(null);
+      setVoltarManutencaoItemId(null);
+      setMsg("Item voltou para aguardando manutenção");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro");
+    } finally {
+      actingRef.current = false;
+      setActing(false);
+    }
   }
 
   async function marcarSemManutencaoItem(itemId: string) {
@@ -1360,6 +1388,15 @@ export default function RmaDetalhePage() {
   const itemRemovendo = removerItemId
     ? row.itens.find((i) => i.id === removerItemId)
     : null;
+  const mostraOrcamento = itensAtivos.some(
+    (i) =>
+      Boolean(i.orcamento) ||
+      Boolean(i.diagnostico) ||
+      i.etapa === "AGUARDANDO_ORCAMENTO" ||
+      i.etapa === "AGUARDANDO_APROVACAO"
+  );
+  const btnTopo =
+    "rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 disabled:opacity-50";
 
   return (
     <div>
@@ -1368,77 +1405,192 @@ export default function RmaDetalhePage() {
           ← Voltar
         </Link>
       </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-2xl font-semibold">RMA</h1>
-        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold">
-          {PROC_STATUS[row.status] || row.status}
-        </span>
-      </div>
-      <label className="mt-3 flex max-w-sm flex-col gap-1">
-        <span className="text-sm font-medium text-slate-800">
-          Prazo limite da manutenção
-        </span>
-        <input
-          type="date"
-          disabled={!processoAberto || acting}
-          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm disabled:bg-slate-50"
-          value={prazoManutencao}
-          onChange={(e) => {
-            const v = e.target.value;
-            setPrazoManutencao(v);
-            void salvarPrazoManutencao(v);
-          }}
-        />
-          {prazoManutencao && processoAberto && ymdVencido(prazoManutencao) ? (
-            <span className="text-[11px] font-medium text-amber-800">
-              Vencido em {formatYmdBr(prazoManutencao)}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold">RMA</h1>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold">
+              {PROC_STATUS[row.status] || row.status}
             </span>
-          ) : null}
-      </label>
-      <p className="mt-1 text-sm text-slate-600">
-        <span className="font-medium text-slate-800">{row.cliente.nome}</span>
-        {podeEditarCliente && !editCliente && (
-          <>
-            {" "}
+          </div>
+          <p className="mt-1 text-sm text-slate-600">
+            <span className="font-medium text-slate-800">{row.cliente.nome}</span>
+            {podeEditarCliente && !editCliente && (
+              <>
+                {" "}
+                <button
+                  type="button"
+                  disabled={acting}
+                  className="text-xs text-brand underline disabled:opacity-50"
+                  onClick={() => {
+                    setEditCliente(true);
+                    setShowAddItem(false);
+                    setRemoverItemId(null);
+                    setPainelAcao(null);
+                    setClienteIdEdit(row.cliente.id);
+                    setClienteQuery(
+                      row.cliente.documento
+                        ? `${row.cliente.nome} · ${row.cliente.documento}`
+                        : row.cliente.nome
+                    );
+                    setClienteOpen(false);
+                    if (clientes.length === 0) {
+                      void api<ClienteOpt[]>("/clientes")
+                        .then((c) =>
+                          setClientes(
+                            c.filter(
+                              (x) =>
+                                x.ativo !== false && x.tipo !== "FORNECEDOR"
+                            )
+                          )
+                        )
+                        .catch((e) =>
+                          setError(e instanceof Error ? e.message : "Erro")
+                        );
+                    }
+                  }}
+                >
+                  Alterar
+                </button>
+              </>
+            )}
+            {" · "}
+            {row.filial.sigla} — {row.filial.nome}
+            {" · "}
+            {row.responsavelComercial?.nome || "Sem comercial"}
+            {" · "}
+            {rmaModalidadeAquisicaoLabel(row.modalidadeAquisicao)}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            por {row.criadoPor.nome} ·{" "}
+            {new Date(row.criadoEm).toLocaleString("pt-BR")}
+          </p>
+          <label className="mt-2 inline-flex items-center gap-2 text-xs">
+            <span className="font-medium text-slate-600">Prazo manutenção</span>
+            <input
+              type="date"
+              disabled={!processoAberto || acting}
+              className="rounded-md border border-slate-200 px-2 py-1 text-sm disabled:bg-slate-50"
+              value={prazoManutencao}
+              onChange={(e) => {
+                const v = e.target.value;
+                setPrazoManutencao(v);
+                void salvarPrazoManutencao(v);
+              }}
+            />
+            {prazoManutencao && processoAberto && ymdVencido(prazoManutencao) ? (
+              <span className="font-medium text-amber-800">
+                Vencido em {formatYmdBr(prazoManutencao)}
+              </span>
+            ) : null}
+          </label>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {processoAberto && (
             <button
               type="button"
-              disabled={acting}
-              className="text-xs text-brand underline disabled:opacity-50"
+              disabled={
+                acting ||
+                painelAcao !== null ||
+                removerItemId !== null ||
+                showAddItem
+              }
               onClick={() => {
-                setEditCliente(true);
-                setShowAddItem(false);
+                setError("");
+                setEditCliente(false);
+                setShowAddItem(true);
+                setAddProdutoId("");
+                setAddProdutoQuery("");
+                setAddProdutoSugestoes([]);
+                setAddSerie("");
                 setRemoverItemId(null);
                 setPainelAcao(null);
-                setClienteIdEdit(row.cliente.id);
-                setClienteQuery(
-                  row.cliente.documento
-                    ? `${row.cliente.nome} · ${row.cliente.documento}`
-                    : row.cliente.nome
-                );
-                setClienteOpen(false);
-                if (clientes.length === 0) {
-                  void api<ClienteOpt[]>("/clientes")
-                    .then((c) =>
-                      setClientes(
-                        c.filter(
-                          (x) => x.ativo !== false && x.tipo !== "FORNECEDOR"
-                        )
-                      )
-                    )
-                    .catch((e) =>
-                      setError(e instanceof Error ? e.message : "Erro")
-                    );
-                }
               }}
+              className={btnTopo}
             >
-              Alterar cliente
+              Incluir item
             </button>
-          </>
-        )}
-        {" · "}
-        estoque {row.filial.sigla} — {row.filial.nome} · por {row.criadoPor.nome}{" "}
-        · {new Date(row.criadoEm).toLocaleString("pt-BR")}
-      </p>
+          )}
+          {itensParaDevolver.length > 0 && (
+            <button
+              type="button"
+              disabled={
+                acting ||
+                painelAcao !== null ||
+                removerItemId !== null ||
+                Boolean(faltaDocsRetorno)
+              }
+              title={faltaDocsRetorno || undefined}
+              onClick={() => {
+                if (faltaDocsRetorno) {
+                  setError(
+                    `${faltaDocsRetorno} antes de devolver ao cliente.`
+                  );
+                  return;
+                }
+                setError("");
+                setMotivoAcao("");
+                setEditCliente(false);
+                setRemoverItemId(null);
+                setShowAddItem(false);
+                setPainelAcao("devolver-todos");
+              }}
+              className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+            >
+              Devolver liberados ({itensParaDevolver.length})
+            </button>
+          )}
+          {mostraOrcamento && (
+            <>
+              <Link
+                href={`/rma/${id}/orcamento`}
+                className="rounded-md bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800"
+              >
+                {processoAberto ? ctaOrcamento : "Ver orçamento"}
+              </Link>
+              <RmaOrcamentoArquivoButton processoId={id} />
+            </>
+          )}
+          {canCancelar && row.status === "ABERTO" && (
+            <button
+              type="button"
+              disabled={
+                acting || painelAcao !== null || removerItemId !== null
+              }
+              onClick={() => {
+                setError("");
+                setMotivoAcao("");
+                setEditCliente(false);
+                setRemoverItemId(null);
+                setShowAddItem(false);
+                setPainelAcao("cancelar");
+              }}
+              className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 disabled:opacity-50"
+            >
+              Cancelar RMA
+            </button>
+          )}
+          {canExcluirAbertura && row.status === "ABERTO" && (
+            <button
+              type="button"
+              disabled={
+                acting || painelAcao !== null || removerItemId !== null
+              }
+              onClick={() => {
+                setError("");
+                setMotivoAcao("");
+                setEditCliente(false);
+                setRemoverItemId(null);
+                setShowAddItem(false);
+                setPainelAcao("excluir-abertura");
+              }}
+              className={btnTopo}
+            >
+              Excluir abertura
+            </button>
+          )}
+        </div>
+      </div>
 
       {editCliente && podeEditarCliente && (
         <div className="relative mt-3 max-w-lg rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -1521,43 +1673,178 @@ export default function RmaDetalhePage() {
         </p>
       )}
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-      <section className="rounded-xl border bg-white p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-slate-900">
-              Comercial
-            </h2>
-          </div>
-          {podeEditarComercial && !editComercial && (
+      {painelAcao === "cancelar" && (
+        <div className="mt-3">
+          <ConfirmMotivoPanel
+            title="Cancelar este processo RMA?"
+            confirmLabel="Confirmar cancelamento"
+            cancelLabel="Voltar"
+            motivoLabel="Motivo do cancelamento"
+            motivoRequired
+            motivoPlaceholder="Obrigatório — por que o RMA está sendo cancelado?"
+            motivo={motivoAcao}
+            onMotivoChange={setMotivoAcao}
+            onConfirm={() => void confirmarCancelarRma()}
+            onCancel={() => {
+              setPainelAcao(null);
+              setMotivoAcao("");
+            }}
+            loading={acting}
+            danger
+          >
+            <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">
+              {noRma.length > 0 ? (
+                <li>Estorna {noRma.length} item(ns) do estoque RMA.</li>
+              ) : null}
+              <li>O processo fica cancelado — não devolve ao cliente.</li>
+            </ul>
+          </ConfirmMotivoPanel>
+        </div>
+      )}
+
+      {painelAcao === "excluir-abertura" && (
+        <div className="mt-3">
+          <ConfirmMotivoPanel
+            title="Excluir abertura deste RMA?"
+            confirmLabel="Excluir abertura"
+            cancelLabel="Voltar"
+            motivoLabel="Motivo da exclusão"
+            motivoRequired
+            motivoPlaceholder="Obrigatório — por que a abertura foi feita por engano?"
+            motivo={motivoAcao}
+            onMotivoChange={setMotivoAcao}
+            onConfirm={() => void confirmarExcluirAbertura()}
+            onCancel={() => {
+              setPainelAcao(null);
+              setMotivoAcao("");
+            }}
+            loading={acting}
+            danger
+          >
+            <p className="text-xs text-slate-600">
+              Estorna o estoque. O processo vai para Cancelados.
+            </p>
+          </ConfirmMotivoPanel>
+        </div>
+      )}
+
+      {painelAcao === "devolver-todos" && (
+        <div className="mt-3">
+          <ConfirmMotivoPanel
+            title={`Devolver ${itensParaDevolver.length} item(ns) liberados ao cliente?`}
+            confirmLabel="Confirmar devolução"
+            cancelLabel="Voltar"
+            motivoLabel="Observação"
+            motivoPlaceholder="Opcional — ex.: NF, condição da peça, combinado com o cliente"
+            motivo={motivoAcao}
+            onMotivoChange={setMotivoAcao}
+            onConfirm={() => {
+              const ids = itensParaDevolver.map((i) => i.id);
+              const qtd = ids.length;
+              void devolver(
+                ids,
+                motivoAcao.trim() || undefined,
+                `${qtd} item(ns) devolvidos ao cliente.`
+              );
+            }}
+            onCancel={() => {
+              setPainelAcao(null);
+              setMotivoAcao("");
+            }}
+            loading={acting}
+          >
+            <p className="text-xs text-slate-600">
+              Sai do estoque RMA para o cliente. Se for o último item, o
+              processo fecha.
+            </p>
+          </ConfirmMotivoPanel>
+        </div>
+      )}
+
+      <section className="mt-4 rounded-xl border bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-sm font-semibold text-slate-900">Processo</h2>
+          <div className="flex flex-wrap gap-1.5">
+            {canEditNfsProcesso && (
+              <button
+                type="submit"
+                form="rma-financeiro-form"
+                disabled={acting}
+                className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+              >
+                Salvar NFs
+              </button>
+            )}
+            {row.status !== "CANCELADO" && (
+              <button
+                type="button"
+                disabled={acting}
+                onClick={() => void salvarFrete()}
+                className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
+              >
+                Salvar frete
+              </button>
+            )}
+            {podeEditarComercial && !editComercial && (
+              <button
+                type="button"
+                disabled={acting}
+                onClick={() => void abrirEditarComercial()}
+                className="rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+              >
+                Comercial
+              </button>
+            )}
+            {processoAberto && !editModalidade && (
+              <button
+                type="button"
+                disabled={acting}
+                onClick={() => abrirEditarModalidade()}
+                className="rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+              >
+                Modalidade
+              </button>
+            )}
+            {processoAberto && (
+              <button
+                type="button"
+                disabled={acting}
+                onClick={() => void abrirEditarDestinatarios()}
+                className="rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+              >
+                Destinatários
+              </button>
+            )}
             <button
               type="button"
-              disabled={acting}
-              onClick={() => void abrirEditarComercial()}
-              className="rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
+              disabled={acting || notifyingLaudos || !processoAberto}
+              title={
+                !processoAberto
+                  ? "RMA fechado ou cancelado — aviso indisponível"
+                  : undefined
+              }
+              onClick={() => void notificarLaudos()}
+              className="rounded-md bg-slate-800 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
             >
-              Alterar comercial
+              {notifyingLaudos ? "Enviando…" : "Avisar diagnóstico"}
             </button>
-          )}
+          </div>
         </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-medium text-slate-800">
-            {row.responsavelComercial?.nome || "—"}
-          </span>
-          <span className="text-slate-400">·</span>
-          <span className="text-slate-700">
-            {rmaModalidadeAquisicaoLabel(row.modalidadeAquisicao)}
-          </span>
-        </div>
-        {processoAberto && !editModalidade && (
-          <button
-            type="button"
-            disabled={acting}
-            onClick={() => abrirEditarModalidade()}
-            className="mt-2 rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
-          >
-            Alterar modalidade
-          </button>
+        {podeDecidirAprovacao && itensAguardandoAprovacao.length > 0 && (
+          <p className="mt-2 text-xs text-amber-800">
+            {itensAguardandoAprovacao.length} item(ns) aguardando aprovação —{" "}
+            <Link href={`/rma/${id}/orcamento`} className="underline">
+              Orçamento
+            </Link>
+          </p>
+        )}
+        {(row.destinatarios || []).length > 0 && !editDest && (
+          <p className="mt-1 text-[11px] text-slate-500">
+            Avisos:{" "}
+            {(row.destinatarios || [])
+              .map((d) => d.usuario.nome)
+              .join(" · ")}
+          </p>
         )}
         {editModalidade && processoAberto && (
           <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -1637,70 +1924,6 @@ export default function RmaDetalhePage() {
             </button>
           </div>
         )}
-        {podeDecidirAprovacao && itensAguardandoAprovacao.length > 0 && (
-          <p className="mt-2 text-xs text-amber-800">
-            {itensAguardandoAprovacao.length} item(ns) aguardando aprovação —{" "}
-            <Link href={`/rma/${id}/orcamento`} className="underline">
-              Orçamento
-            </Link>
-          </p>
-        )}
-      </section>
-
-      <section className="rounded-xl border bg-white p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-slate-900">
-              Notificações
-            </h2>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {processoAberto && (
-              <button
-                type="button"
-                disabled={acting}
-                onClick={() => void abrirEditarDestinatarios()}
-                className="rounded-md border px-2.5 py-1 text-xs font-medium text-slate-700 disabled:opacity-50"
-              >
-                Destinatários
-              </button>
-            )}
-            <button
-              type="button"
-              disabled={acting || notifyingLaudos || !processoAberto}
-              title={
-                !processoAberto
-                  ? "RMA fechado ou cancelado — aviso indisponível"
-                  : undefined
-              }
-              onClick={() => void notificarLaudos()}
-              className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
-            >
-              {notifyingLaudos ? "Enviando…" : "Avisar diagnóstico"}
-            </button>
-          </div>
-        </div>
-        {!editDest && (
-          <ul className="mt-2 space-y-1 text-sm text-slate-700">
-            {(row.destinatarios || []).length === 0 ? (
-              <li className="text-xs text-slate-500">
-                Nenhum destinatário cadastrado.
-              </li>
-            ) : (
-              (row.destinatarios || []).map((d) => (
-                <li key={d.id}>
-                  {d.usuario.nome}
-                  <span className="text-slate-400"> · {d.usuario.email}</span>
-                  {d.origem === "GLOBAL" && (
-                    <span className="ml-1 text-[10px] text-slate-500">
-                      (global)
-                    </span>
-                  )}
-                </li>
-              ))
-            )}
-          </ul>
-        )}
         {editDest && (
           <div className="mt-2 space-y-2">
             <ul className="max-h-40 space-y-1 overflow-auto text-sm">
@@ -1777,32 +2000,12 @@ export default function RmaDetalhePage() {
             </div>
           </div>
         )}
-      </section>
-      </div>
-
-      <section className="mt-4 rounded-xl border bg-white p-4">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-slate-900">Processo / NFs</h2>
-          </div>
-          {canEditNfsProcesso && (
-            <button
-              type="submit"
-              form="rma-financeiro-form"
-              disabled={acting}
-              className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
-            >
-              Salvar
-            </button>
-          )}
-        </div>
-
         <form
           id="rma-financeiro-form"
           onSubmit={(e) => void salvarFinanceiro(e)}
-          className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+          className="mt-3 flex flex-col gap-3 md:flex-row md:items-start"
         >
-          <label className="block text-xs">
+          <label className="block w-full shrink-0 text-xs md:w-36">
             <span className="mb-0.5 block font-medium text-slate-600">
               NF entrada *
             </span>
@@ -1813,7 +2016,7 @@ export default function RmaDetalhePage() {
               onChange={(e) => setNfEnt(e.target.value)}
             />
           </label>
-          <label className="block text-xs">
+          <label className="block w-full shrink-0 text-xs md:w-36">
             <span className="mb-0.5 block font-medium text-slate-600">
               NF retorno *
             </span>
@@ -1830,7 +2033,7 @@ export default function RmaDetalhePage() {
               </p>
             ) : null}
           </label>
-          <label className="block text-xs sm:col-span-2 lg:col-span-3">
+          <label className="block min-w-0 w-full flex-1 text-xs">
             <span className="mb-0.5 block font-medium text-slate-600">
               Observação
             </span>
@@ -1943,27 +2146,7 @@ export default function RmaDetalhePage() {
             })}
           </div>
         </div>
-      </section>
-
-      <section className="mt-4 rounded-xl border bg-white p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">
-              Frete / logística
-            </h2>
-          </div>
-          {row.status !== "CANCELADO" && (
-            <button
-              type="button"
-              disabled={acting}
-              onClick={() => void salvarFrete()}
-              className="rounded-md bg-brand px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50"
-            >
-              Salvar frete
-            </button>
-          )}
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div className="mt-3 grid gap-3 border-t border-slate-100 pt-3 sm:grid-cols-3">
           <label className="block text-xs">
             <span className="mb-0.5 block font-medium text-slate-600">
               Modalidade
@@ -2023,107 +2206,12 @@ export default function RmaDetalhePage() {
       </section>
 
       <section className="mt-4 rounded-xl border bg-white p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-slate-900">
-              Itens / Estoque
-            </h2>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {processoAberto && (
-              <button
-                type="button"
-                disabled={
-                  acting ||
-                  painelAcao !== null ||
-                  removerItemId !== null ||
-                  showAddItem
-                }
-                onClick={() => {
-                  setError("");
-                  setEditCliente(false);
-                  setShowAddItem(true);
-                  setAddProdutoId("");
-                  setAddProdutoQuery("");
-                  setAddProdutoSugestoes([]);
-                  setAddSerie("");
-                  setRemoverItemId(null);
-                  setPainelAcao(null);
-                }}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 disabled:opacity-50"
-              >
-                Incluir item
-              </button>
-            )}
-            {itensParaDevolver.length > 0 && (
-              <button
-                type="button"
-                disabled={
-                  acting ||
-                  painelAcao !== null ||
-                  removerItemId !== null ||
-                  Boolean(faltaDocsRetorno)
-                }
-                title={faltaDocsRetorno || undefined}
-                onClick={() => {
-                  if (faltaDocsRetorno) {
-                    setError(
-                      `${faltaDocsRetorno} antes de devolver ao cliente.`
-                    );
-                    return;
-                  }
-                  setError("");
-                  setMotivoAcao("");
-                  setEditCliente(false);
-                  setRemoverItemId(null);
-                  setShowAddItem(false);
-                  setPainelAcao("devolver-todos");
-                }}
-                className="rounded-md bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
-              >
-                Devolver liberados ({itensParaDevolver.length})
-              </button>
-            )}
-            {canCancelar && row.status === "ABERTO" && (
-              <button
-                type="button"
-                disabled={
-                  acting || painelAcao !== null || removerItemId !== null
-                }
-                onClick={() => {
-                  setError("");
-                  setMotivoAcao("");
-                  setEditCliente(false);
-                  setRemoverItemId(null);
-                  setShowAddItem(false);
-                  setPainelAcao("cancelar");
-                }}
-                className="rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-700 disabled:opacity-50"
-              >
-                Cancelar RMA
-              </button>
-            )}
-            {canExcluirAbertura && row.status === "ABERTO" && (
-              <button
-                type="button"
-                disabled={
-                  acting || painelAcao !== null || removerItemId !== null
-                }
-                onClick={() => {
-                  setError("");
-                  setMotivoAcao("");
-                  setEditCliente(false);
-                  setRemoverItemId(null);
-                  setShowAddItem(false);
-                  setPainelAcao("excluir-abertura");
-                }}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 disabled:opacity-50"
-              >
-                Excluir abertura
-              </button>
-            )}
-          </div>
-        </div>
+        <h2 className="text-sm font-semibold text-slate-900">
+          Itens
+          <span className="ml-1.5 font-normal text-slate-400">
+            ({itensAtivos.length})
+          </span>
+        </h2>
 
         {showAddItem && processoAberto && (
           <form
@@ -2230,121 +2318,7 @@ export default function RmaDetalhePage() {
           </ConfirmMotivoPanel>
         )}
 
-        {painelAcao === "cancelar" && (
-          <ConfirmMotivoPanel
-            title="Cancelar este processo RMA?"
-            confirmLabel="Confirmar cancelamento"
-            cancelLabel="Voltar"
-            motivoLabel="Motivo do cancelamento"
-            motivoRequired
-            motivoPlaceholder="Obrigatório — por que o RMA está sendo cancelado?"
-            motivo={motivoAcao}
-            onMotivoChange={setMotivoAcao}
-            onConfirm={() => void confirmarCancelarRma()}
-            onCancel={() => {
-              setPainelAcao(null);
-              setMotivoAcao("");
-            }}
-            loading={acting}
-            danger
-          >
-            <ul className="list-disc space-y-1 pl-4 text-xs text-slate-600">
-              {noRma.length > 0 ? (
-                <li>
-                  Estorna {noRma.length} item(ns) do estoque RMA.
-                </li>
-              ) : null}
-              <li>O processo fica cancelado — não devolve ao cliente.</li>
-            </ul>
-          </ConfirmMotivoPanel>
-        )}
-
-        {painelAcao === "excluir-abertura" && (
-          <ConfirmMotivoPanel
-            title="Excluir abertura deste RMA?"
-            confirmLabel="Excluir abertura"
-            cancelLabel="Voltar"
-            motivoLabel="Motivo da exclusão"
-            motivoRequired
-            motivoPlaceholder="Obrigatório — por que a abertura foi feita por engano?"
-            motivo={motivoAcao}
-            onMotivoChange={setMotivoAcao}
-            onConfirm={() => void confirmarExcluirAbertura()}
-            onCancel={() => {
-              setPainelAcao(null);
-              setMotivoAcao("");
-            }}
-            loading={acting}
-            danger
-          >
-            <p className="text-xs text-slate-600">
-              Estorna o estoque. O processo vai para Cancelados.
-            </p>
-          </ConfirmMotivoPanel>
-        )}
-
-        {painelAcao === "devolver-todos" && (
-          <ConfirmMotivoPanel
-            title={`Devolver ${itensParaDevolver.length} item(ns) liberados ao cliente?`}
-            confirmLabel="Confirmar devolução"
-            cancelLabel="Voltar"
-            motivoLabel="Observação"
-            motivoPlaceholder="Opcional — ex.: NF, condição da peça, combinado com o cliente"
-            motivo={motivoAcao}
-            onMotivoChange={setMotivoAcao}
-            onConfirm={() => {
-              const ids = itensParaDevolver.map((i) => i.id);
-              const qtd = ids.length;
-              void devolver(
-                ids,
-                motivoAcao.trim() || undefined,
-                `${qtd} item(ns) devolvidos ao cliente.`
-              );
-            }}
-            onCancel={() => {
-              setPainelAcao(null);
-              setMotivoAcao("");
-            }}
-            loading={acting}
-          >
-            <p className="text-xs text-slate-600">
-              Sai do estoque RMA para o cliente. Se for o último item, o
-              processo fecha.
-            </p>
-          </ConfirmMotivoPanel>
-        )}
-      </section>
-
-      <RmaDocumentosSection
-        processoId={id}
-        itens={row.itens}
-      />
-
-      <section className="mt-3 rounded-xl border bg-white p-3 sm:p-4">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Itens em manutenção
-            <span className="ml-1.5 font-normal normal-case text-slate-400">
-              ({itensAtivos.length})
-            </span>
-          </h3>
-          {itensAtivos.some(
-            (i) =>
-              Boolean(i.orcamento) ||
-              Boolean(i.diagnostico) ||
-              i.etapa === "AGUARDANDO_ORCAMENTO" ||
-              i.etapa === "AGUARDANDO_APROVACAO"
-          ) && (
-              <Link
-                href={`/rma/${id}/orcamento`}
-                className="rounded-lg bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800"
-              >
-                {processoAberto ? ctaOrcamento : "Ver orçamento"}
-              </Link>
-            )}
-        </div>
-
-        <ul className="grid items-start gap-3 text-sm [grid-template-columns:repeat(auto-fill,minmax(min(100%,20rem),1fr))]">
+        <ul className="mt-3 grid grid-cols-1 items-start gap-3 text-sm">
           {itensAtivos.map((i) => {
             const origemIds = new Set(rmaDefaults?.filiaisOrigemTrocaIds || []);
             const descarteId = rmaDefaults?.filialDescarteId;
@@ -2380,6 +2354,15 @@ export default function RmaDetalhePage() {
               podeExcluir &&
               (i.etapa === "AGUARDANDO_MANUTENCAO" ||
                 i.etapa === "AGUARDANDO_LIBERACAO");
+            const podeVoltarManutencao =
+              podeExcluir &&
+              (i.etapa === "AGUARDANDO_LIBERACAO" ||
+                i.etapa === "AGUARDANDO_ENVIO");
+            const podeTrocar =
+              podeExcluir &&
+              (RMA_ITEM_ETAPAS_TROCA as readonly string[]).includes(
+                i.etapa || ""
+              );
             const podeAcoesSecundarias =
               (canEditCobrancaItem && i.status !== "CANCELADO") || podeExcluir;
             return (
@@ -2421,7 +2404,7 @@ export default function RmaDetalhePage() {
                     )}
                   </div>
                   <dl className="min-w-0 space-y-1 text-xs leading-snug">
-                    <div className="grid grid-cols-1 gap-1 min-[360px]:grid-cols-2">
+                    <div className="grid grid-cols-1 gap-1 sm:grid-cols-2 lg:grid-cols-3">
                       <div className="flex min-w-0 gap-1.5">
                         <dt className="w-9 shrink-0 font-medium text-slate-500">
                           Cód.
@@ -2469,6 +2452,7 @@ export default function RmaDetalhePage() {
                       </dd>
                     </div>
                   </dl>
+                  <RmaItemLaudosBar processoId={row.id} item={i} />
                   <RmaItemWorkflowPanel
                     processoId={row.id}
                     item={i}
@@ -2487,41 +2471,59 @@ export default function RmaDetalhePage() {
                     }}
                     onError={(msg) => setError(msg)}
                   />
-                  {podeSemManutencao && semManutencaoItemId !== i.id && (
-                    <div
-                      className={`grid gap-1.5 ${
-                        i.etapa === "AGUARDANDO_MANUTENCAO"
-                          ? "grid-cols-1 min-[380px]:grid-cols-2"
-                          : "grid-cols-1"
-                      }`}
-                    >
+                  {(podeSemManutencao || podeVoltarManutencao) &&
+                    semManutencaoItemId !== i.id &&
+                    voltarManutencaoItemId !== i.id &&
+                    trocaItemId !== i.id && (
+                    <div className="flex flex-wrap gap-1.5">
                       {i.etapa === "AGUARDANDO_MANUTENCAO" && (
                         <button
                           type="button"
                           disabled={acting || removerItemId !== null}
-                          className="rounded-md bg-sky-700 px-2.5 py-2 text-xs font-medium text-white hover:bg-sky-800 disabled:opacity-50"
+                          className="rounded-md bg-sky-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-800 disabled:opacity-50"
                           onClick={() => void marcarManutencaoRealizada(i.id)}
                         >
                           Manutenção realizada
                         </button>
                       )}
-                      <button
-                        type="button"
-                        disabled={acting || removerItemId !== null}
-                        className="rounded-md border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs font-medium text-rose-900 hover:bg-rose-100 disabled:opacity-50"
-                        onClick={() => {
-                          setSemManutencaoItemId(i.id);
-                          setTrocaItemId(null);
-                          setError("");
-                          setMsg("");
-                        }}
-                      >
-                        Sem manutenção
-                      </button>
+                      {podeSemManutencao && (
+                        <button
+                          type="button"
+                          disabled={acting || removerItemId !== null}
+                          className="rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-900 hover:bg-rose-100 disabled:opacity-50"
+                          onClick={() => {
+                            setSemManutencaoItemId(i.id);
+                            setTrocaItemId(null);
+                            setVoltarManutencaoItemId(null);
+                            setError("");
+                            setMsg("");
+                          }}
+                        >
+                          Sem manutenção
+                        </button>
+                      )}
+                      {podeVoltarManutencao && (
+                        <button
+                          type="button"
+                          disabled={acting || removerItemId !== null}
+                          title="Corrige avanço indevido — o item volta para a fila de manutenção"
+                          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                          onClick={() => {
+                            setVoltarManutencaoItemId(i.id);
+                            setSemManutencaoItemId(null);
+                            setTrocaItemId(null);
+                            setError("");
+                            setMsg("");
+                          }}
+                        >
+                          Voltar para manutenção
+                        </button>
+                      )}
                     </div>
                   )}
                   {podeAcoesSecundarias &&
                     semManutencaoItemId !== i.id &&
+                    voltarManutencaoItemId !== i.id &&
                     trocaItemId !== i.id && (
                     <div className="mt-auto flex items-center justify-between gap-2 border-t border-slate-200/80 pt-2 text-xs">
                       <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -2587,19 +2589,21 @@ export default function RmaDetalhePage() {
                             >
                               Devolver
                             </button>
-                            <button
-                              type="button"
-                              disabled={
-                                acting ||
-                                removerItemId !== null ||
-                                Boolean(faltaDocsRetorno)
-                              }
-                              title={faltaDocsRetorno || undefined}
-                              onClick={() => void abrirTroca(i)}
-                              className="min-h-8 text-amber-800 underline disabled:opacity-50"
-                            >
-                              Trocar
-                            </button>
+                            {podeTrocar && i.etapa !== "AGUARDANDO_ENVIO" && (
+                              <button
+                                type="button"
+                                disabled={
+                                  acting ||
+                                  removerItemId !== null ||
+                                  Boolean(faltaDocsRetorno)
+                                }
+                                title={faltaDocsRetorno || undefined}
+                                onClick={() => void abrirTroca(i)}
+                                className="min-h-8 text-amber-800 underline disabled:opacity-50"
+                              >
+                                Trocar
+                              </button>
+                            )}
                           </>
                         )}
                       </div>
@@ -2740,6 +2744,39 @@ export default function RmaDetalhePage() {
                     </p>
                   )}
                 </div>
+                {voltarManutencaoItemId === i.id && (
+                  <div className="mt-2 space-y-2 rounded-md border border-slate-300 bg-white p-2.5 text-xs">
+                    <p className="font-medium text-slate-900">
+                      Voltar para manutenção?
+                    </p>
+                    <p className="text-[11px] leading-snug text-slate-600">
+                      O item sai de{" "}
+                      {(RMA_ITEM_ETAPA_LABELS as Record<string, string>)[
+                        i.etapa || ""
+                      ] || i.etapa}{" "}
+                      e volta para a fila técnica. Use só se a operação avançou
+                      por engano.
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        disabled={acting}
+                        className="rounded-md bg-slate-800 px-3 py-2 font-medium text-white disabled:opacity-50"
+                        onClick={() => void voltarParaManutencao(i.id)}
+                      >
+                        {acting ? "Aguarde…" : "Confirmar"}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={acting}
+                        className="rounded-md border px-3 py-2 disabled:opacity-50"
+                        onClick={() => setVoltarManutencaoItemId(null)}
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                )}
                 {semManutencaoItemId === i.id && (
                   <div className="mt-2 space-y-2 rounded-md border border-rose-200 bg-white p-2.5 text-xs">
                     <div className="flex items-start justify-between gap-2">
@@ -2813,7 +2850,10 @@ export default function RmaDetalhePage() {
                     </div>
                   </div>
                 )}
-                {trocaItemId === i.id && (
+                {trocaItemId === i.id &&
+                  (RMA_ITEM_ETAPAS_TROCA as readonly string[]).includes(
+                    i.etapa || ""
+                  ) && (
                   <div
                     id={`troca-painel-${i.id}`}
                     className="mt-2 space-y-2 rounded-md border border-amber-200 bg-amber-50/60 p-2.5 text-xs"

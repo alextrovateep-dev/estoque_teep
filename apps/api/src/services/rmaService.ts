@@ -1,6 +1,7 @@
 import {
   RMA_ITEM_ETAPA,
   RMA_ITEM_ETAPAS_SAIDA,
+  RMA_ITEM_ETAPAS_TROCA,
   emailsAlertaDeUsuariosRma,
   mensagemBloqueioFreteRma,
   mensagemBloqueioNfRetorno,
@@ -558,22 +559,19 @@ function assertEtapaPermiteSaida(etapa: string | null | undefined) {
   }
 }
 
-/** Troca se não deu para reparar: manutenção ou liberação (laudo já pode existir). */
+/** Troca se não deu para reparar: manutenção, liberação ou recusa — não após envio. */
 function assertEtapaPermiteTroca(etapa: string | null | undefined) {
-  if (
-    etapa === "AGUARDANDO_MANUTENCAO" ||
-    etapa === "AGUARDANDO_LIBERACAO"
-  ) {
+  if ((RMA_ITEM_ETAPAS_TROCA as readonly string[]).includes(etapa || "")) {
     return;
   }
-  assertEtapaPermiteSaida(etapa);
+  if (etapa === "AGUARDANDO_ENVIO") {
+    throw new AppError(
+      400,
+      "Item já aguarda envio — troca não é permitida nesta etapa. Volte para manutenção se foi um erro da operação."
+    );
+  }
+  throw new AppError(400, "Item não está em etapa que permite troca");
 }
-
-const RMA_ITEM_ETAPAS_TROCA = [
-  ...RMA_ITEM_ETAPAS_SAIDA,
-  "AGUARDANDO_MANUTENCAO",
-  "AGUARDANDO_LIBERACAO",
-] as const;
 
 async function assertUsuarioComercialAtivo(usuarioId: string) {
   const u = await prisma.usuario.findFirst({
@@ -1522,6 +1520,62 @@ export async function marcarManutencaoRealizadaRmaItem(
   return obterRma(user, processoId);
 }
 
+/** Desfaz “manutenção realizada” (ou avanço indevido para envio) — item volta à fila técnica. */
+export async function voltarManutencaoRmaItem(
+  user: AuthUser,
+  processoId: string,
+  itemId: string
+) {
+  const proc = await obterRma(user, processoId);
+  if (proc.status !== "ABERTO") {
+    throw new AppError(400, "Só é possível voltar a manutenção em RMA aberto");
+  }
+  const item = proc.itens.find((i) => i.id === itemId);
+  if (!item) throw new AppError(404, "Item não encontrado neste processo");
+  if (!(ITEM_NO_RMA as readonly string[]).includes(item.status)) {
+    throw new AppError(
+      400,
+      "Só itens ainda no estoque RMA podem voltar para manutenção"
+    );
+  }
+  const etapasVolta = ["AGUARDANDO_LIBERACAO", "AGUARDANDO_ENVIO"] as const;
+  if (!(etapasVolta as readonly string[]).includes(item.etapa || "")) {
+    throw new AppError(
+      400,
+      "Só é possível voltar para manutenção a partir de liberação ou aguardando envio"
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    const claim = await tx.rmaItem.updateMany({
+      where: {
+        id: itemId,
+        processoId,
+        etapa: { in: [...etapasVolta] },
+        status: { in: [...ITEM_NO_RMA] },
+      },
+      data: {
+        etapa: "AGUARDANDO_MANUTENCAO",
+        ...(item.status === "SEM_MANUTENCAO" ? { status: "EM_ESTOQUE" } : {}),
+      },
+    });
+    if (claim.count === 0) {
+      throw new AppError(409, "Item já foi atualizado — atualize a tela");
+    }
+
+    await tx.rmaChecklistExecucao.updateMany({
+      where: {
+        rmaItemId: itemId,
+        tipo: "LIBERACAO",
+        status: "CONCLUIDO",
+      },
+      data: { status: "EM_PREENCHIMENTO", concluidoEm: null },
+    });
+  });
+
+  return obterRma(user, processoId);
+}
+
 export async function atualizarRmaItemFinanceiro(
   user: AuthUser,
   processoId: string,
@@ -2302,7 +2356,7 @@ export async function devolverRmaItens(
 
 /** Marca itens no RMA como SEM_MANUTENCAO (decisão de processo; sem mover saldo).
  * Na recusa comercial avança para NAO_APROVADO; na manutenção (não foi possível
- * reparar) avança para AGUARDANDO_ENVIO — libera Devolver/Trocar no mesmo fluxo. */
+ * reparar) avança para AGUARDANDO_ENVIO — libera Devolver no mesmo fluxo. */
 export async function marcarSemManutencaoRma(
   user: AuthUser,
   id: string,

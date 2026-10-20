@@ -392,9 +392,16 @@ export const RMA_ITEM_ETAPA_LABELS: Record<RmaItemEtapa, string> = {
   AGUARDANDO_LAUDO: "Aguardando inspeção / diagnóstico",
 };
 
-/** Etapas em que Devolver/Trocar são permitidos */
+/** Etapas em que Devolver (saída ao cliente) é permitido. */
 export const RMA_ITEM_ETAPAS_SAIDA = [
   "AGUARDANDO_ENVIO",
+  "NAO_APROVADO",
+] as const;
+
+/** Troca por peça nova: manutenção, liberação ou recusa comercial — não em aguardando envio. */
+export const RMA_ITEM_ETAPAS_TROCA = [
+  "AGUARDANDO_MANUTENCAO",
+  "AGUARDANDO_LIBERACAO",
   "NAO_APROVADO",
 ] as const;
 

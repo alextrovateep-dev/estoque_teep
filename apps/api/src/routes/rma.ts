@@ -51,6 +51,7 @@ import {
   listarRma,
   listarUsuariosParaDestinatarioRma,
   marcarManutencaoRealizadaRmaItem,
+  voltarManutencaoRmaItem,
   marcarSemManutencaoRma,
   aprovarSemCobrancaRma,
   notificarLaudosRma,
@@ -356,6 +357,24 @@ rmaRouter.post(
     try {
       res.json(
         await marcarManutencaoRealizadaRmaItem(
+          req.user!,
+          req.params.id,
+          req.params.itemId
+        )
+      );
+    } catch (e) {
+      next(e);
+    }
+  }
+);
+
+rmaRouter.post(
+  "/:id/itens/:itemId/voltar-manutencao",
+  requirePermissao("rma"),
+  async (req: AuthedRequest, res, next) => {
+    try {
+      res.json(
+        await voltarManutencaoRmaItem(
           req.user!,
           req.params.id,
           req.params.itemId

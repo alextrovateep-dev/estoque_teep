@@ -432,6 +432,42 @@ async function main() {
   );
   ok("liberação → AGUARDANDO_ENVIO");
 
+  await req(`/rma/${processo.id}/trocar`, {
+    method: "POST",
+    token,
+    body: {
+      itemId,
+      origemFilialId: pln!.id,
+      numeroSerieBoa: snBoa,
+      destinoDescarteFilialId: desc!.id,
+      nfSaidaNumero: "SMOKE-NF-RET",
+      observacao: "Smoke: troca indevida em envio",
+    },
+    expectStatus: 400,
+  });
+  ok("troca recusada em aguardando envio");
+
+  const aposVolta = await req<{
+    itens: Array<{ id: string; etapa?: string; status: string }>;
+  }>(`/rma/${processo.id}/itens/${itemId}/voltar-manutencao`, {
+    method: "POST",
+    token,
+  });
+  const itemVolta = aposVolta.itens.find((i) => i.id === itemId);
+  if (itemVolta?.etapa !== "AGUARDANDO_MANUTENCAO") {
+    fail(
+      `esperado AGUARDANDO_MANUTENCAO após voltar, veio ${itemVolta?.etapa}`,
+      itemVolta
+    );
+  }
+  ok("voltar manutenção → AGUARDANDO_MANUTENCAO");
+
+  await req(`/rma/${processo.id}/itens/${itemId}/manutencao-realizada`, {
+    method: "POST",
+    token,
+  });
+  ok("manutenção realizada de novo → AGUARDANDO_LIBERACAO (troca permitida)");
+
   const aposTroca = await req<{
     status: string;
     itens: Array<{
