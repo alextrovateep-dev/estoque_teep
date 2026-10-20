@@ -55,6 +55,20 @@ function formatDataMovimentoSp(d: Date): string {
   }).format(d);
 }
 
+/** Linha(s) de N/S enviados — um ou vários. */
+export function linhaSeriesSaida(numeros: string[]): string | null {
+  const nums = [
+    ...new Set(
+      numeros
+        .map((n) => String(n || "").trim())
+        .filter(Boolean)
+    ),
+  ].sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
+  if (nums.length === 0) return null;
+  if (nums.length === 1) return `Número de série: ${nums[0]}`;
+  return `Números de série:\n${nums.map((n) => `• ${n}`).join("\n")}`;
+}
+
 /** Agenda disparos a partir de dataMovimento (calendário America/Sao_Paulo). */
 export async function agendarAlertasRetorno(
   tx: Prisma.TransactionClient,
@@ -240,6 +254,11 @@ export async function processarAlertasRetornoVencidos(): Promise<{
               filial: { select: { sigla: true, nome: true } },
               tipo: { select: { nome: true } },
               usuario: { select: { nome: true } },
+              series: {
+                include: {
+                  unidadeSerie: { select: { numeroSerie: true } },
+                },
+              },
             },
           },
         },
@@ -254,15 +273,25 @@ export async function processarAlertasRetornoVencidos(): Promise<{
         "http://localhost:3000"
       ).replace(/\/$/, "");
       const titulo = `Retorno pendente · ${m.produto.codigo}`;
+      const seriesRel = (m.series || []).map(
+        (s) => s.unidadeSerie?.numeroSerie || ""
+      );
+      const seriesJson = Array.isArray(m.seriesInformadas)
+        ? (m.seriesInformadas as unknown[]).map((s) => String(s))
+        : [];
+      const linhaSn = linhaSeriesSaida(
+        seriesRel.some(Boolean) ? seriesRel : seriesJson
+      );
       const mensagem = [
-        `Já se passaram ${agenda.dias} dias e ainda há quantidade em aberto do movimento de ${m.tipo.nome}.`,
+        `Já se passaram ${agenda.dias} dias e ainda há quantidade em aberto (${m.tipo.nome}).`,
         `Produto: ${m.produto.codigo} — ${m.produto.descricao}`,
+        linhaSn,
         [
-          `Qtd saída: ${Number(m.quantidade)}`,
+          `Quantidade saída: ${Number(m.quantidade)}`,
           `Ainda em aberto: ${restante}`,
           m.cliente ? `Cliente: ${m.cliente.nome}` : null,
           `Estoque: ${m.filial.sigla} (${m.filial.nome})`,
-          `Movimento ${m.id.slice(0, 8)} em ${formatDataMovimentoSp(m.dataMovimento)}`,
+          `Data da saída: ${formatDataMovimentoSp(m.dataMovimento)}`,
           m.notaFiscalNumero ? `NF: ${m.notaFiscalNumero}` : null,
         ]
           .filter(Boolean)
@@ -304,7 +333,6 @@ export async function processarAlertasRetornoVencidos(): Promise<{
         if (emails.length > 0) {
           const prepared = await buildAlertaEmail({
             type: "ALERTA_RETORNO_MOVIMENTACAO",
-            destinatarioNome: "Financeiro",
             mensagem,
             titulo,
           });

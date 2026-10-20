@@ -53,6 +53,16 @@ describe("responsável no corpo do e-mail", () => {
     assert.ok(!/<p[^>]*><\/p>/.test(html));
   });
 
+  it("alerta de retorno não cita Financeiro e traz as séries", () => {
+    const type = "ALERTA_RETORNO_MOVIMENTACAO";
+    const vars = sampleVarsFor(type);
+    const { text } = renderEmailFromTemplate(defaultEmailTemplate(type), vars);
+    assert.ok(text.startsWith("Olá,"));
+    assert.ok(!text.includes("Financeiro"));
+    assert.ok(text.includes("SN-DEMO-001"));
+    assert.ok(text.includes("SN-DEMO-002"));
+  });
+
   it("conta sem responsável não deixa bloco em branco", () => {
     const { text } = renderEmailFromTemplate(
       defaultEmailTemplate("ACESSO_SENHA_PROVISORIA"),

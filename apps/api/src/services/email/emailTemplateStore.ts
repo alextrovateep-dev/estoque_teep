@@ -106,7 +106,9 @@ export function renderEmailFromTemplate(
 ): PreparedTransactionalEmail {
   const subject = applyVars(def.subject, vars, false).trim();
   // Var opcional vazia (ex.: responsável) não deve deixar bloco em branco.
-  const text = applyVars(def.bodyText, vars, false).replace(/\n{3,}/g, "\n\n");
+  const text = applyVars(def.bodyText, vars, false)
+    .replace(/^Olá\s+,/gm, "Olá,")
+    .replace(/\n{3,}/g, "\n\n");
   const titulo =
     vars.titulo?.trim() ||
     (ALERTA_EMAIL_TYPES.includes(def.type as (typeof ALERTA_EMAIL_TYPES)[number])
@@ -289,12 +291,13 @@ export function sampleVarsFor(type: EmailType): Record<string, string> {
   }
   if (type === "ALERTA_RETORNO_MOVIMENTACAO") {
     return {
-      nome: "Financeiro",
+      nome: "",
       titulo: "Retorno pendente · DEMO-01",
       mensagem: [
-        "Já se passaram 30 dias e ainda há quantidade em aberto do movimento de Empréstimo.",
+        "Já se passaram 30 dias e ainda há quantidade em aberto (Empréstimo).",
         "Produto: DEMO-01 — Sensor TEEP",
-        "Qtd saída: 2\nAinda em aberto: 2\nCliente: Cliente Demo\nEstoque: PLN (Paulínia)\nMovimento a1b2c3d4 em 01/07/2026",
+        "Números de série:\n• SN-DEMO-001\n• SN-DEMO-002",
+        "Quantidade saída: 2\nAinda em aberto: 2\nCliente: Cliente Demo\nEstoque: PLN (Paulínia)\nData da saída: 01/07/2026\nNF: 12345",
         "Confira se o equipamento já voltou ou providencie o retorno.",
         quem,
         `Abrir movimentação: ${appUrl}/movimentacoes/a1b2c3d4-0000-4000-8000-000000000001`,
