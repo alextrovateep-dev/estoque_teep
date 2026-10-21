@@ -1064,12 +1064,6 @@ function NovoLancamentoForm() {
               );
               return;
             }
-            if (linha.serieStatus.some((st) => st === "checking")) {
-              setError(
-                `Item ${i + 1} (${prod.codigo}): aguarde a validação das séries`
-              );
-              return;
-            }
             seriesPayload = filled;
           } else if (pedeSerie) {
             // Fallback: séries informadas via lista

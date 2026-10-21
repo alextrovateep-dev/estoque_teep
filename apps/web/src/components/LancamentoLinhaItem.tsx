@@ -558,6 +558,7 @@ export function LancamentoLinhaItem({
           foraPadrao={usaSerieForaPadrao}
           onChangeSerie={(i, valor) => onSerieChange(i, valor)}
           onStatusSerie={(i, status, msg) => {
+            if (status === "checking") return;
             const cur = linhaRef.current;
             const serieStatus = [...cur.serieStatus];
             const serieMsgs = [...cur.serieMsgs];
@@ -584,6 +585,7 @@ export function LancamentoLinhaItem({
             if (validarNoEstoque) void validarSerieCampo(i, full);
           }}
           onStatusSerie={(i, status, msg) => {
+            if (status === "checking") return;
             const cur = linhaRef.current;
             const serieStatus = [...cur.serieStatus];
             const serieMsgs = [...cur.serieMsgs];
