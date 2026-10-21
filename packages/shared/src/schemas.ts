@@ -640,6 +640,8 @@ export const createMovimentacaoSchema = z
     quantidade: z.coerce.number().positive().optional(),
     /** Números de série (obrigatório se produto.controlaSerie) */
     series: seriesArraySchema,
+    /** Entrada de S/N antigo: não exige o formato cadastrado do produto. */
+    serieForaPadrao: z.boolean().optional(),
     precoUnitario: z.coerce.number().min(0).optional(),
     observacao: z.string().max(2000).optional().nullable(),
     /** Número da NF — uso em tipos com cliente/fornecedor */
@@ -698,6 +700,7 @@ export const createMovimentacaoSchema = z
           produtoId: z.string().uuid(),
           quantidade: z.coerce.number().positive(),
           series: seriesArraySchema,
+          serieForaPadrao: z.boolean().optional(),
         })
       )
       .min(1)

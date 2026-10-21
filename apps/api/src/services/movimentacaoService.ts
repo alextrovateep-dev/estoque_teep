@@ -217,13 +217,20 @@ export async function criarMovimentacao(
     clienteId?: string | null;
     quantidade?: number;
     series?: string[];
+    /** Entrada de S/N antigo (não exige o formato do cadastro). */
+    serieForaPadrao?: boolean;
     precoUnitario?: number;
     observacao?: string | null;
     notaFiscalNumero?: string | null;
     notaFiscalArquivo?: string | null;
     guiaTransporte?: string | null;
     creditoDestino?: "IMEDIATO" | "AGUARDAR_RECEBIMENTO";
-    itens?: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    itens?: Array<{
+      produtoId: string;
+      quantidade: number;
+      series?: string[];
+      serieForaPadrao?: boolean;
+    }>;
     alertaEmails?: string[];
     movimentacaoOrigemId?: string | null;
     /** Agrupa linhas multi-SKU (uso interno / resposta) */
@@ -404,6 +411,7 @@ export async function criarMovimentacao(
         produtoId: input.produtoId,
         quantidade: input.quantidade,
         series: input.series,
+        serieForaPadrao: input.serieForaPadrao,
       },
     ];
   } else {
@@ -498,6 +506,7 @@ export async function criarMovimentacao(
                 serieLivre,
                 ehRetorno: Boolean(tipo.ehRetornoDeId),
               }),
+              foraPadrao: Boolean(item.serieForaPadrao),
             });
           }
         }
@@ -547,6 +556,7 @@ export async function criarMovimentacao(
           produtoId: item.produtoId,
           quantidade: item.quantidade,
           series: item.series,
+          serieForaPadrao: item.serieForaPadrao,
           itens: undefined,
           grupoLancamentoId: grupoId,
           // Evita marcar pedido SEPARADO no meio do grupo multi-SKU
@@ -604,6 +614,7 @@ export async function criarMovimentacao(
     produtoId: itensLancamento[0]!.produtoId,
     quantidade: itensLancamento[0]!.quantidade,
     series: itensLancamento[0]!.series,
+    serieForaPadrao: itensLancamento[0]!.serieForaPadrao,
     itens: undefined,
   };
 
@@ -883,6 +894,7 @@ export async function criarMovimentacao(
             serieLivre,
             ehRetorno: Boolean(tipo.ehRetornoDeId || movimentacaoOrigemId),
           }),
+          foraPadrao: Boolean(input.serieForaPadrao),
         });
       }
     }
@@ -960,6 +972,7 @@ export async function criarMovimentacao(
             serieLivre,
             ehRetorno: Boolean(tipo.ehRetornoDeId || movimentacaoOrigemId),
           }),
+          foraPadrao: Boolean(input.serieForaPadrao),
         });
       } else if (serieLivre) {
         await aplicarSeriesSaidaLivre(tx, {
@@ -1164,6 +1177,8 @@ export async function aprovarMovimentacao(user: AuthUser, id: string) {
               mov.tipo.ehRetornoDeId || mov.movimentacaoOrigemId
             ),
           }),
+          // Já conferidas na criação (padrão ou S/N antigo).
+          foraPadrao: true,
         });
       } else if (mov.operacao === "SAIDA") {
         const aplicar = usaSerieLivre(regraSerieAprov)

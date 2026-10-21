@@ -241,6 +241,7 @@ function NovoLancamentoForm() {
   const [uploadingTransfAnexo, setUploadingTransfAnexo] = useState(false);
   const [quantidade, setQuantidade] = useState("1");
   const [series, setSeries] = useState<string[]>([]);
+  const [serieForaPadrao, setSerieForaPadrao] = useState(false);
   const [linhas, setLinhas] = useState<LancamentoLinha[]>(() => [
     newLancamentoLinha(),
   ]);
@@ -322,6 +323,7 @@ function NovoLancamentoForm() {
     setCodigo("");
     setSugestoes([]);
     setSeries([]);
+    setSerieForaPadrao(false);
     setSaldoOrigem(null);
     setSaldoDestino(null);
     setSaldosComponentesOrigem({});
@@ -650,6 +652,7 @@ function NovoLancamentoForm() {
   useEffect(() => {
     if (isRetorno) return;
     setSeries([]);
+    setSerieForaPadrao(false);
   }, [produto?.id, isRetorno]);
 
   /** Qty primeiro → N caixas (entrada, retorno, transferência com árvore). */
@@ -956,6 +959,7 @@ function NovoLancamentoForm() {
           quantidade: number;
           series?: string[];
           controlaSerie: boolean;
+          serieForaPadrao?: boolean;
         }> = [];
 
         for (let i = 0; i < linhas.length; i++) {
@@ -1054,6 +1058,18 @@ function NovoLancamentoForm() {
               );
               return;
             }
+            if (linha.serieStatus.some((st) => st === "err")) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): há série inválida`
+              );
+              return;
+            }
+            if (linha.serieStatus.some((st) => st === "checking")) {
+              setError(
+                `Item ${i + 1} (${prod.codigo}): aguarde a validação das séries`
+              );
+              return;
+            }
             seriesPayload = filled;
           } else if (pedeSerie) {
             // Fallback: séries informadas via lista
@@ -1082,6 +1098,7 @@ function NovoLancamentoForm() {
             quantidade: qtdNum,
             series: seriesPayload,
             controlaSerie: pedeSerie,
+            serieForaPadrao: Boolean(linha.serieForaPadrao),
           });
         }
 
@@ -1096,11 +1113,13 @@ function NovoLancamentoForm() {
           body.produtoId = only.produtoId;
           body.quantidade = only.quantidade;
           if (only.series) body.series = only.series;
+          if (only.serieForaPadrao) body.serieForaPadrao = true;
         } else {
           body.itens = resolved.map((r) => ({
             produtoId: r.produtoId,
             quantidade: r.quantidade,
             ...(r.series ? { series: r.series } : {}),
+            ...(r.serieForaPadrao ? { serieForaPadrao: true } : {}),
           }));
         }
       } else {
@@ -1172,6 +1191,7 @@ function NovoLancamentoForm() {
             return;
           }
           body.series = filled;
+          if (serieForaPadrao) body.serieForaPadrao = true;
         } else if (pedeSerie) {
           if (series.length === 0) {
             setError("Informe os números de série deste produto");
@@ -2580,23 +2600,63 @@ function NovoLancamentoForm() {
                   }}
                 />
               ) : (
-              <SerieCamposPrefixo
-                key={produto.id}
-                codigoProduto={produto.codigo}
-                produtoId={produto.id}
-                config={produto.configuracaoSerie}
-                series={series}
-                validarNascimento={!isRetorno}
-                validarComoRetorno={isRetorno}
-                onChangeSerie={(i, full) => {
-                  setSeries((prev) => {
-                    const next = [...prev];
-                    while (next.length < i + 1) next.push("");
-                    next[i] = full;
-                    return next;
-                  });
-                }}
-              />
+              <>
+                {!isRetorno && tipo?.operacao === "ENTRADA" ? (
+                  <label className="flex items-start gap-2 rounded-md border border-emerald-200/80 bg-white/70 px-2.5 py-2 text-xs text-slate-700">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={serieForaPadrao}
+                      onChange={(e) => setSerieForaPadrao(e.target.checked)}
+                    />
+                    <span>
+                      <span className="font-medium text-slate-800">
+                        Inserir número de série fora do padrão
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-slate-500">
+                        Peças antigas com o mesmo código, mas S/N diferente do
+                        formato atual. O campo fica livre para digitação.
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
+                {serieForaPadrao &&
+                !isRetorno &&
+                tipo?.operacao === "ENTRADA" ? (
+                  <SerieCamposLivres
+                    series={series}
+                    produtoId={produto.id}
+                    validarNascimento
+                    foraPadrao
+                    onChangeSerie={(i, valor) => {
+                      setSeries((prev) => {
+                        const next = [...prev];
+                        while (next.length < i + 1) next.push("");
+                        next[i] = valor;
+                        return next;
+                      });
+                    }}
+                  />
+                ) : (
+                  <SerieCamposPrefixo
+                    key={produto.id}
+                    codigoProduto={produto.codigo}
+                    produtoId={produto.id}
+                    config={produto.configuracaoSerie}
+                    series={series}
+                    validarNascimento={!isRetorno}
+                    validarComoRetorno={isRetorno}
+                    onChangeSerie={(i, full) => {
+                      setSeries((prev) => {
+                        const next = [...prev];
+                        while (next.length < i + 1) next.push("");
+                        next[i] = full;
+                        return next;
+                      });
+                    }}
+                  />
+                )}
+              </>
               )
             ) : null}
 

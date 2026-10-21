@@ -222,6 +222,7 @@ seriesRouter.post(
           produtoId: String(req.body?.produtoId || ""),
           numero: String(req.body?.numero || "").trim(),
           retorno: Boolean(req.body?.retorno),
+          foraPadrao: Boolean(req.body?.foraPadrao),
         })
       );
     } catch (e) {

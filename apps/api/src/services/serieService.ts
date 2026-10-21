@@ -59,8 +59,10 @@ export function assertQuantidadeInteiraSerie(quantidade: number, seriesLen: numb
 export async function assertFormatoSeriesNascimento(
   tx: Tx,
   produtoId: string,
-  series: string[]
+  series: string[],
+  opts?: { foraPadrao?: boolean }
 ) {
+  if (opts?.foraPadrao) return;
   const produto = await tx.produto.findUnique({
     where: { id: produtoId },
     include: { configuracaoSerie: true },
@@ -303,6 +305,8 @@ export async function aplicarSeriesEntrada(
     quantidade: number;
     /** Se true, reativa SAIDO → EM_ESTOQUE (retorno). Se false, rejeita série já existente. */
     permitirReativarSaido?: boolean;
+    /** S/N antigo: não exige o formato cadastrado do produto. */
+    foraPadrao?: boolean;
   }
 ) {
   const series = normalizarSeries(opts.series);
@@ -319,7 +323,9 @@ export async function aplicarSeriesEntrada(
       if (!existente) nascimento.push(numeroSerie);
     }
     if (nascimento.length > 0) {
-      await assertFormatoSeriesNascimento(tx, opts.produtoId, nascimento);
+      await assertFormatoSeriesNascimento(tx, opts.produtoId, nascimento, {
+        foraPadrao: opts.foraPadrao,
+      });
     }
   }
 
@@ -770,6 +776,7 @@ export async function validarSeriesEntradaNovas(
     series: string[];
     quantidade: number;
     permitirReativarSaido?: boolean;
+    foraPadrao?: boolean;
   }
 ) {
   const series = normalizarSeries(opts.series);
@@ -785,7 +792,9 @@ export async function validarSeriesEntradaNovas(
       if (!existente) nascimento.push(numeroSerie);
     }
     if (nascimento.length > 0) {
-      await assertFormatoSeriesNascimento(tx, opts.produtoId, nascimento);
+      await assertFormatoSeriesNascimento(tx, opts.produtoId, nascimento, {
+        foraPadrao: opts.foraPadrao,
+      });
     }
   }
 
@@ -821,7 +830,12 @@ export async function validarSeriesEntradaNovas(
 /** Tela de lançamento: nascimento (série nova) ou retorno (reativa SAIDO). */
 export async function validarNumeroSerieParaEntrada(
   tx: Tx,
-  opts: { produtoId: string; numero: string; retorno?: boolean }
+  opts: {
+    produtoId: string;
+    numero: string;
+    retorno?: boolean;
+    foraPadrao?: boolean;
+  }
 ): Promise<{
   ok: boolean;
   numeroSerie: string;
@@ -842,7 +856,7 @@ export async function validarNumeroSerieParaEntrada(
   }
 
   let normalizado = numero;
-  if (!opts.retorno) {
+  if (!opts.retorno && !opts.foraPadrao) {
     const cfg = produto.configuracaoSerie;
     const conferencia = conferirSerieProduto(numero, {
       codigoProduto: produto.codigo,

@@ -177,6 +177,8 @@ describe("serieFormat", () => {
 
     it("recusa série de outro produto", () => {
       const r = conferirSerieProduto("ABC260007", produto);
+      // Série antiga fora do padrão deve ser recusada aqui; o lançamento
+      // só aceita com o flag serieForaPadrao na API.
       assert.equal(r.ok, false);
       assert.match(!r.ok ? r.motivo : "", /só dígitos/);
     });

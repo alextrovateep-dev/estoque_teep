@@ -37,6 +37,8 @@ export type LancamentoLinha = {
   series: string[];
   serieStatus: SerieCampoStatus[];
   serieMsgs: string[];
+  /** Entrada de S/N antigo: ignora o formato {codigo}{ano}{seq}. */
+  serieForaPadrao: boolean;
   saldo: number | null;
   alocacaoSerieId: string | null;
 };
@@ -95,6 +97,7 @@ export function newLancamentoLinha(
     series: partial?.series || [],
     serieStatus: partial?.serieStatus || [],
     serieMsgs: partial?.serieMsgs || [],
+    serieForaPadrao: partial?.serieForaPadrao ?? false,
     saldo: partial?.saldo ?? null,
     alocacaoSerieId: partial?.alocacaoSerieId || null,
   };
@@ -192,6 +195,7 @@ export function LancamentoLinhaItem({
       series: [],
       serieStatus: [],
       serieMsgs: [],
+      serieForaPadrao: false,
       alocacaoSerieId: null,
       saldo: null,
     });
@@ -246,6 +250,7 @@ export function LancamentoLinhaItem({
       series: [],
       serieStatus: [],
       serieMsgs: [],
+      serieForaPadrao: false,
       alocacaoSerieId: null,
     });
     return exact;
@@ -259,6 +264,7 @@ export function LancamentoLinhaItem({
       series: [],
       serieStatus: [],
       serieMsgs: [],
+      serieForaPadrao: false,
       alocacaoSerieId: null,
     });
   }
@@ -384,7 +390,11 @@ export function LancamentoLinhaItem({
   const mostrarCamposSerie =
     pedeSerie &&
     (validarSerieEstoque || modoSerieNascimento || usaSerieLivre);
-  const usaCamposSeriePrefixo = mostrarCamposSerie && !usaSerieLivre;
+  const mostraForaPadrao =
+    Boolean(linha.produto) && modoSerieNascimento && !usaSerieLivre;
+  const usaSerieForaPadrao = mostraForaPadrao && linha.serieForaPadrao;
+  const usaCamposSeriePrefixo =
+    mostrarCamposSerie && !usaSerieLivre && !usaSerieForaPadrao;
 
   return (
     <div
@@ -509,12 +519,54 @@ export function LancamentoLinhaItem({
         </div>
       )}
 
-      {usaSerieLivre && mostrarCamposSerie && qtdInt > 0 && linha.produto ? (
+      {mostraForaPadrao && mostrarCamposSerie ? (
+        <label className="mt-3 flex items-start gap-2 rounded-md border border-emerald-200/80 bg-white/70 px-2.5 py-2 text-xs text-slate-700">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={linha.serieForaPadrao}
+            onChange={(e) =>
+              onPatch({
+                serieForaPadrao: e.target.checked,
+                serieStatus: linha.series.map(() => "idle"),
+                serieMsgs: linha.series.map(() => ""),
+              })
+            }
+          />
+          <span>
+            <span className="font-medium text-slate-800">
+              Inserir número de série fora do padrão
+            </span>
+            <span className="mt-0.5 block text-[11px] text-slate-500">
+              Peças antigas com o mesmo código, mas S/N diferente do formato
+              atual. O campo fica livre para digitação.
+            </span>
+          </span>
+        </label>
+      ) : null}
+
+      {(usaSerieLivre || usaSerieForaPadrao) &&
+      mostrarCamposSerie &&
+      qtdInt > 0 &&
+      linha.produto ? (
         <SerieCamposLivres
           series={linha.series}
           serieStatus={linha.serieStatus}
           serieMsgs={linha.serieMsgs}
+          produtoId={usaSerieForaPadrao ? linha.produto.id : undefined}
+          validarNascimento={usaSerieForaPadrao && modoSerieNascimento}
+          foraPadrao={usaSerieForaPadrao}
           onChangeSerie={(i, valor) => onSerieChange(i, valor)}
+          onStatusSerie={(i, status, msg) => {
+            const cur = linhaRef.current;
+            const serieStatus = [...cur.serieStatus];
+            const serieMsgs = [...cur.serieMsgs];
+            while (serieStatus.length < i + 1) serieStatus.push("idle");
+            while (serieMsgs.length < i + 1) serieMsgs.push("");
+            serieStatus[i] = status;
+            serieMsgs[i] = msg;
+            onPatch({ serieStatus, serieMsgs });
+          }}
         />
       ) : usaCamposSeriePrefixo && qtdInt > 0 && linha.produto ? (
         <SerieCamposPrefixo
