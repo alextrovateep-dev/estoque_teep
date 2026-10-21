@@ -2927,8 +2927,16 @@ export default function RmaDetalhePage() {
                     <div className="block">
                       <span className="text-slate-600">Destino da peça boa</span>
                       <p className="mt-0.5 rounded border border-amber-200 bg-white px-2 py-1.5 font-medium text-slate-900">
-                        {row.filial.sigla} — {row.filial.nome}
+                        {row.cliente.nome}
+                        {row.cliente.documento
+                          ? ` · ${row.cliente.documento}`
+                          : ""}
                       </p>
+                      <span className="mt-0.5 block text-[10px] text-slate-500">
+                        A série sai da origem e vai ao cliente. No estoque ela
+                        passa por {row.filial.sigla} (RMA do processo) e a
+                        ruim vai ao descarte.
+                      </span>
                     </div>
                     <label className="block">
                       <span className="text-slate-600">Série substituta</span>
