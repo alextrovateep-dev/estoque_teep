@@ -981,7 +981,64 @@ export async function validarNumeroSerieParaEntrada(
 }
 
 /**
- * Estorno: reverte status das séries da movimentação original e vincula ao estorno.
+ * Estorno de ENTRADA que *criou* a unidade: apaga o S/N (rollback).
+ * Se a série já existia (saída/retorno), só volta a SAIDO.
+ */
+export function deveApagarUnidadeNoEstornoEntrada(opts: {
+  outrosMovimentos: number;
+  cargas: number;
+  rma: number;
+  transformacoes: number;
+}): boolean {
+  return (
+    opts.outrosMovimentos === 0 &&
+    opts.cargas === 0 &&
+    opts.rma === 0 &&
+    opts.transformacoes === 0
+  );
+}
+
+async function unidadeNasceuNestaEntrada(
+  tx: Tx,
+  unidadeSerieId: string,
+  movimentacaoOriginalId: string
+): Promise<boolean> {
+  const [outrosMovimentos, cargas, rma, transformacoes] = await Promise.all([
+    tx.movimentacaoSerie.count({
+      where: {
+        unidadeSerieId,
+        movimentacaoId: { not: movimentacaoOriginalId },
+      },
+    }),
+    tx.transferenciaItemSerie.count({ where: { unidadeSerieId } }),
+    tx.rmaItem.count({
+      where: {
+        OR: [
+          { unidadeSerieId },
+          { unidadeSerieSubstituicaoId: unidadeSerieId },
+        ],
+      },
+    }),
+    tx.produtoTransformacao.count({
+      where: {
+        OR: [
+          { unidadeSerieOrigemId: unidadeSerieId },
+          { unidadeSerieDestinoId: unidadeSerieId },
+        ],
+      },
+    }),
+  ]);
+  return deveApagarUnidadeNoEstornoEntrada({
+    outrosMovimentos,
+    cargas,
+    rma,
+    transformacoes,
+  });
+}
+
+/**
+ * Estorno: rollback das séries. Entrada que nasceu o S/N apaga a unidade;
+ * reativação de retorno volta a SAIDO; estorno de saída devolve ao estoque.
  */
 export async function aplicarSeriesEstorno(
   tx: Tx,
@@ -1003,13 +1060,24 @@ export async function aplicarSeriesEstorno(
     const u = link.unidadeSerie;
 
     if (opts.operacaoOriginal === "ENTRADA") {
-      // Estorno de entrada: unidade sai do estoque. Se foi criada aqui e não tem
-      // outro histórico, marca SAIDO; se era reativação de retorno, volta SAIDO.
       if (u.status !== SERIE_STATUS.EM_ESTOQUE || u.filialId !== opts.filialId) {
         throw new AppError(
           400,
           `Não é possível estornar: série ${u.numeroSerie} não está mais neste estoque`
         );
+      }
+      if (
+        await unidadeNasceuNestaEntrada(
+          tx,
+          u.id,
+          opts.movimentacaoOriginalId
+        )
+      ) {
+        await tx.movimentacaoSerie.deleteMany({
+          where: { unidadeSerieId: u.id },
+        });
+        await tx.unidadeSerie.delete({ where: { id: u.id } });
+        continue;
       }
       await tx.unidadeSerie.update({
         where: { id: u.id },
