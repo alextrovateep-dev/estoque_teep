@@ -116,7 +116,7 @@ const ITEM_STATUS: Record<string, string> = {
   EM_ESTOQUE: "Em estoque RMA",
   SEM_MANUTENCAO: "Sem manutenção",
   DEVOLVIDO: "Devolvido",
-  DESCARTADO: "Descartado / trocado",
+  DESCARTADO: "Descartado",
   CANCELADO: "Cancelado",
 };
 
@@ -232,7 +232,6 @@ export default function RmaDetalhePage() {
   const [filiais, setFiliais] = useState<FilialOpt[]>([]);
   const [rmaDefaults, setRmaDefaults] = useState<RmaDefaults | null>(null);
   const [origemFilialId, setOrigemFilialId] = useState("");
-  const [destinoDescarteId, setDestinoDescarteId] = useState("");
   const [serieBoa, setSerieBoa] = useState("");
   const [seriesDisp, setSeriesDisp] = useState<SerieOpt[]>([]);
   const [trocaObs, setTrocaObs] = useState("");
@@ -1150,12 +1149,6 @@ export default function RmaDetalhePage() {
         setRmaDefaults(defs);
       }
 
-      // Defaults vêm da API (env / flag estoqueRma / descarte) — sem estoque chumbado
-      const descarteId = defs.filialDescarteId || "";
-      setDestinoDescarteId(
-        descarteId && descarteId !== row?.filial.id ? descarteId : ""
-      );
-
       // Origem padrão: primeiro operacional dos defaults (já exclui RMA/descarte)
       const origemPadrao = (defs.filiaisOrigemTroca || []).find(
         (f) => f.id !== row?.filial.id
@@ -1232,29 +1225,12 @@ export default function RmaDetalhePage() {
       falhaLocal("Informe a série substituta");
       return;
     }
-    if (!destinoDescarteId) {
-      falhaLocal("Selecione o estoque de descarte");
-      return;
-    }
     if (!autorizadorId) {
       falhaLocal("Informe quem autorizou a troca");
       return;
     }
     if (!trocaProdutoId) {
       falhaLocal("Selecione o modelo da peça nova");
-      return;
-    }
-    const faltaDocs = !nfEnt.trim()
-      ? "Informe o número da NF de entrada"
-      : !anexoAtivoPorTipo(row?.anexos || [], "NF_ENTRADA")
-        ? "Anexe o arquivo da NF de entrada"
-        : !nfSai.trim()
-          ? "Informe o número da NF de retorno"
-          : !anexoAtivoPorTipo(row?.anexos || [], "NF_SAIDA")
-            ? "Anexe o arquivo da NF de retorno"
-            : "";
-    if (faltaDocs) {
-      falhaLocal(`${faltaDocs} antes de enviar ao cliente.`);
       return;
     }
     actingRef.current = true;
@@ -1272,14 +1248,13 @@ export default function RmaDetalhePage() {
           // Destino da peça boa = estoque RMA do processo (definido na abertura)
           destinoPreparacaoFilialId: row?.filial.id,
           numeroSerieBoa: serieBoa.trim(),
-          destinoDescarteFilialId: destinoDescarteId,
-          nfSaidaNumero: nfSai.trim() || undefined,
           observacao: trocaObs.trim() || undefined,
           substituicaoAutorizadaPorId: autorizadorId,
-          ...payloadFrete(),
         }),
       });
-      setMsg("Troca concluída — série boa enviada ao cliente; série ruim no descarte.");
+      setMsg(
+        `Troca concluída — peça boa amarrada ao RMA em ${row?.filial.sigla}; série original permanece no estoque RMA. Use Devolver para dar baixa ao cliente.`
+      );
       setTrocaItemId(null);
       setTrocaErro("");
     } catch (err) {
@@ -1380,7 +1355,10 @@ export default function RmaDetalhePage() {
   const podeEditarCliente =
     processoAberto &&
     !row.itens.some(
-      (i) => i.status === "DEVOLVIDO" || i.status === "DESCARTADO"
+      (i) =>
+        i.status === "DEVOLVIDO" ||
+        i.status === "DESCARTADO" ||
+        Boolean(i.unidadeSerieSubstituicao)
     );
   const clientesFiltrados = clientes
     .filter((c) => matchNomeOuDocumento(c.nome, c.documento, clienteQuery))
@@ -2339,17 +2317,15 @@ export default function RmaDetalhePage() {
               if (origemIds.size > 0) return origemIds.has(f.id);
               return true;
             });
-            // Descarte: ≠ processo e ≠ qualquer estoque RMA
-            const filiaisDescarte = filiais.filter(
-              (f) => f.id !== row.filial.id && !estoquesRmaIds.has(f.id)
-            );
             const descLimpa = descricaoProdutoLimpa(
               i.produto.codigo,
               i.produto.descricao
             );
-            const podeExcluir =
+            const noEstoqueRma =
               processoAberto &&
               (i.status === "EM_ESTOQUE" || i.status === "SEM_MANUTENCAO");
+            const jaTrocado = Boolean(i.unidadeSerieSubstituicao);
+            const podeExcluir = noEstoqueRma && !jaTrocado;
             const podeSemManutencao =
               podeExcluir &&
               (i.etapa === "AGUARDANDO_MANUTENCAO" ||
@@ -2363,8 +2339,12 @@ export default function RmaDetalhePage() {
               (RMA_ITEM_ETAPAS_TROCA as readonly string[]).includes(
                 i.etapa || ""
               );
+            const podeDevolverItem =
+              noEstoqueRma && ETAPAS_SAIDA.has(i.etapa || "");
             const podeAcoesSecundarias =
-              (canEditCobrancaItem && i.status !== "CANCELADO") || podeExcluir;
+              (canEditCobrancaItem && i.status !== "CANCELADO") ||
+              podeExcluir ||
+              podeDevolverItem;
             return (
               <li
                 key={i.id}
@@ -2574,7 +2554,7 @@ export default function RmaDetalhePage() {
                               Aprovar sem cobrança
                             </button>
                           )}
-                        {podeExcluir && ETAPAS_SAIDA.has(i.etapa || "") && (
+                        {podeDevolverItem && (
                           <>
                             <button
                               type="button"
@@ -2592,12 +2572,7 @@ export default function RmaDetalhePage() {
                             {podeTrocar && i.etapa !== "AGUARDANDO_ENVIO" && (
                               <button
                                 type="button"
-                                disabled={
-                                  acting ||
-                                  removerItemId !== null ||
-                                  Boolean(faltaDocsRetorno)
-                                }
-                                title={faltaDocsRetorno || undefined}
+                                disabled={acting || removerItemId !== null}
                                 onClick={() => void abrirTroca(i)}
                                 className="min-h-8 text-amber-800 underline disabled:opacity-50"
                               >
@@ -2901,9 +2876,14 @@ export default function RmaDetalhePage() {
                         </ul>
                       )}
                     </div>
-                    {rmaDefaults?.avisos && rmaDefaults.avisos.length > 0 && (
+                    {rmaDefaults?.avisos &&
+                      rmaDefaults.avisos.filter(
+                        (a) => !/DESCARTE|sigla DESC/i.test(a)
+                      ).length > 0 && (
                       <p className="rounded border border-amber-300 bg-amber-100/80 px-2 py-1 text-[10px] text-amber-950">
-                        {rmaDefaults.avisos.join(" · ")}
+                        {rmaDefaults.avisos
+                          .filter((a) => !/DESCARTE|sigla DESC/i.test(a))
+                          .join(" · ")}
                       </p>
                     )}
                     <label className="block">
@@ -2927,15 +2907,12 @@ export default function RmaDetalhePage() {
                     <div className="block">
                       <span className="text-slate-600">Destino da peça boa</span>
                       <p className="mt-0.5 rounded border border-amber-200 bg-white px-2 py-1.5 font-medium text-slate-900">
-                        {row.cliente.nome}
-                        {row.cliente.documento
-                          ? ` · ${row.cliente.documento}`
-                          : ""}
+                        {row.filial.sigla} — {row.filial.nome}
                       </p>
                       <span className="mt-0.5 block text-[10px] text-slate-500">
-                        A série sai da origem e vai ao cliente. No estoque ela
-                        passa por {row.filial.sigla} (RMA do processo) e a
-                        ruim vai ao descarte.
+                        Entra neste estoque RMA, amarrada ao item. A baixa ao
+                        cliente é no Devolver. A série original permanece aqui
+                        para lançamento posterior (descarte ou recuperação).
                       </span>
                     </div>
                     <label className="block">
@@ -2969,21 +2946,6 @@ export default function RmaDetalhePage() {
                       )}
                     </label>
                     <label className="block">
-                      <span className="text-slate-600">Descarte da série ruim</span>
-                      <select
-                        className="mt-0.5 w-full rounded border px-2 py-1.5"
-                        value={destinoDescarteId}
-                        onChange={(e) => setDestinoDescarteId(e.target.value)}
-                      >
-                        <option value="">Selecione…</option>
-                        {filiaisDescarte.map((f) => (
-                          <option key={f.id} value={f.id}>
-                            {f.sigla} — {f.nome}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block">
                       <span className="text-slate-600">Quem autorizou a troca *</span>
                       <select
                         className="mt-0.5 w-full rounded border px-2 py-1.5"
@@ -3007,13 +2969,12 @@ export default function RmaDetalhePage() {
                         maxLength={500}
                       />
                     </label>
-                    {(trocaErro || faltaDocsRetorno) && (
+                    {trocaErro && (
                       <p
                         role="alert"
                         className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-[11px] text-red-800"
                       >
-                        {trocaErro ||
-                          `${faltaDocsRetorno} antes de enviar ao cliente.`}
+                        {trocaErro}
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2 pt-1">
@@ -3024,15 +2985,9 @@ export default function RmaDetalhePage() {
                           !trocaProdutoId ||
                           !origemFilialId ||
                           !serieBoa.trim() ||
-                          !destinoDescarteId ||
-                          !autorizadorId ||
-                          Boolean(faltaDocsRetorno)
+                          !autorizadorId
                         }
-                        title={
-                          faltaDocsRetorno
-                            ? `${faltaDocsRetorno} antes de enviar ao cliente.`
-                            : "Transfere a série boa e envia ao cliente; a série ruim vai ao descarte"
-                        }
+                        title="Traz a série boa para o estoque RMA. A original permanece no RMA. A baixa ao cliente é no Devolver."
                         onClick={() => void confirmarTroca()}
                         className="rounded bg-amber-800 px-3 py-1.5 text-white disabled:opacity-50"
                       >
@@ -3057,7 +3012,7 @@ export default function RmaDetalhePage() {
                     </div>
                   </div>
                 )}
-                {i.observacao && i.status === "DESCARTADO" && (
+                {i.observacao && (
                   <p className="mt-1 text-xs text-slate-600">{i.observacao}</p>
                 )}
               </li>

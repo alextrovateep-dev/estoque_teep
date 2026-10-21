@@ -439,8 +439,8 @@ async function main() {
       itemId,
       origemFilialId: pln!.id,
       numeroSerieBoa: snBoa,
-      destinoDescarteFilialId: desc!.id,
       nfSaidaNumero: "SMOKE-NF-RET",
+      substituicaoAutorizadaPorId: comercialId,
       observacao: "Smoke: troca indevida em envio",
     },
     expectStatus: 400,
@@ -470,6 +470,7 @@ async function main() {
 
   const aposTroca = await req<{
     status: string;
+    filial?: { sigla: string };
     itens: Array<{
       id: string;
       status: string;
@@ -486,27 +487,29 @@ async function main() {
       itemId,
       origemFilialId: pln!.id,
       numeroSerieBoa: snBoa,
-      destinoDescarteFilialId: desc!.id,
-      nfSaidaNumero: "SMOKE-NF-RET",
+      substituicaoAutorizadaPorId: comercialId,
       observacao: "Smoke: trocado por peça boa",
     },
   });
   const item = aposTroca.itens.find((i) => i.id === itemId);
   if (!item) fail("item sumiu após troca", aposTroca);
-  if (item!.status !== "DESCARTADO") {
-    fail(`esperado DESCARTADO, veio ${item!.status}`, item);
+  if (item!.status !== "EM_ESTOQUE" && item!.status !== "SEM_MANUTENCAO") {
+    fail(`esperado ainda no RMA, veio ${item!.status}`, item);
   }
-  if (item!.etapa !== "FINALIZADO") {
-    fail(`esperado FINALIZADO, veio ${item!.etapa}`, item);
+  if (item!.etapa !== "AGUARDANDO_ENVIO") {
+    fail(`esperado AGUARDANDO_ENVIO, veio ${item!.etapa}`, item);
   }
-  if (!item!.movSaidaId || !item!.movDescarteId) {
-    fail("movSaidaId/movDescarteId ausentes", item);
+  if (item!.movSaidaId) {
+    fail("troca não deve dar baixa ao cliente", item);
+  }
+  if (item!.movDescarteId) {
+    fail("troca não deve mover a série original para descarte", item);
   }
   if (item!.unidadeSerieSubstituicao?.numeroSerie?.toUpperCase() !== snBoa) {
     fail("série substituta não batida", item);
   }
   ok(
-    `troca OK — ruim ${item!.unidadeSerie?.numeroSerie} → DESC; boa ${snBoa} ao cliente`
+    `troca OK — boa ${snBoa} amarrada ao RMA; original ${item!.unidadeSerie?.numeroSerie} permanece no estoque RMA`
   );
 
   const serieBoa = await req<{
@@ -519,10 +522,13 @@ async function main() {
   const boaRow = serieBoa.data?.find(
     (s) => s.numeroSerie.toUpperCase() === snBoa
   );
-  if (!boaRow || boaRow.status !== "SAIDO") {
-    fail(`série boa deveria estar SAIDO`, boaRow || serieBoa);
+  if (!boaRow || boaRow.status !== "EM_ESTOQUE") {
+    fail(`série boa deveria estar EM_ESTOQUE no RMA`, boaRow || serieBoa);
   }
-  ok(`série boa SAIDO`);
+  if (boaRow!.filial?.sigla !== "RMA") {
+    fail(`série boa deveria estar na filial RMA`, boaRow);
+  }
+  ok(`série boa EM_ESTOQUE no RMA (${boaRow!.filial?.sigla || "?"})`);
 
   const serieRuim = await req<{
     data: Array<{
@@ -535,17 +541,52 @@ async function main() {
     (s) => s.numeroSerie.toUpperCase() === snRuim
   );
   if (!ruimRow || ruimRow.status !== "EM_ESTOQUE") {
-    fail(`série ruim deveria estar EM_ESTOQUE no DESC`, ruimRow || serieRuim);
+    fail(`série original deveria permanecer EM_ESTOQUE no RMA`, ruimRow || serieRuim);
   }
-  if (ruimRow!.filial?.sigla !== "DESC") {
-    fail(`série ruim deveria estar na filial DESC`, ruimRow);
+  if (ruimRow!.filial?.sigla !== "RMA") {
+    fail(`série original deveria permanecer na filial RMA`, ruimRow);
   }
-  ok(`série ruim EM_ESTOQUE em DESC`);
+  ok(`série original EM_ESTOQUE em RMA`);
 
-  if (aposTroca.status !== "FECHADO") {
-    fail(`processo esperado FECHADO após retorno com NF, veio ${aposTroca.status}`, aposTroca);
+  if (aposTroca.status !== "ABERTO") {
+    fail(`processo esperado ABERTO após troca, veio ${aposTroca.status}`, aposTroca);
   }
-  ok("processo FECHADO após troca com NF de retorno");
+
+  const aposDevolver = await req<{
+    status: string;
+    itens: Array<{ id: string; status: string; etapa?: string }>;
+  }>(`/rma/${processo.id}/devolver`, {
+    method: "POST",
+    token,
+    body: {
+      itemIds: [itemId],
+      nfSaidaNumero: "SMOKE-NF-RET",
+    },
+  });
+  const itemDev = aposDevolver.itens.find((i) => i.id === itemId);
+  if (itemDev?.status !== "DEVOLVIDO") {
+    fail(`esperado DEVOLVIDO, veio ${itemDev?.status}`, itemDev);
+  }
+  ok("devolver após troca → baixa da peça boa ao cliente");
+
+  const boaDepois = await req<{
+    data: Array<{ numeroSerie: string; status: string }>;
+  }>(`/series?q=${encodeURIComponent(snBoa)}`, { token });
+  const boaOut = boaDepois.data?.find(
+    (s) => s.numeroSerie.toUpperCase() === snBoa
+  );
+  if (!boaOut || boaOut.status !== "SAIDO") {
+    fail(`série boa deveria estar SAIDO após devolver`, boaOut || boaDepois);
+  }
+  ok("série boa SAIDO após devolver");
+
+  if (aposDevolver.status !== "FECHADO") {
+    fail(
+      `processo esperado FECHADO após devolver, veio ${aposDevolver.status}`,
+      aposDevolver
+    );
+  }
+  ok("processo FECHADO após devolver");
 
   console.log("\n✅ Smoke RMA troca (por item) passou.\n");
 }

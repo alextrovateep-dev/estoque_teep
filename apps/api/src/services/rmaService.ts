@@ -106,6 +106,7 @@ const processoInclude = {
           numeroSerie: true,
           status: true,
           filialId: true,
+          produtoId: true,
           produto: { select: { id: true, codigo: true, descricao: true } },
         },
       },
@@ -250,7 +251,7 @@ async function tipoEntradaRma() {
   return t;
 }
 
-/** Tipo SAIDA marcado para devolver/trocar no RMA. */
+/** Tipo SAIDA marcado para devolver ao cliente no RMA. */
 async function tipoSaidaRma() {
   const t = await prisma.tipoMovimentacao.findFirst({
     where: {
@@ -268,7 +269,39 @@ async function tipoSaidaRma() {
   return t;
 }
 
-/** Saída RMA compartilhada (devolução e troca). */
+/** Série que sai do estoque RMA ao cliente (substituta, se houve troca). */
+function destinoSaidaClienteItem(item: {
+  produtoId: string;
+  produto: { codigo: string };
+  unidadeSerie?: { numeroSerie: string } | null;
+  unidadeSerieSubstituicao?: {
+    numeroSerie: string;
+    produtoId?: string;
+    produto?: { id: string } | null;
+  } | null;
+}): { produtoId: string; numeroSerie: string } {
+  const sub = item.unidadeSerieSubstituicao;
+  if (sub?.numeroSerie) {
+    const produtoId = sub.produtoId || sub.produto?.id;
+    if (!produtoId) {
+      throw new AppError(
+        400,
+        `Item ${item.produto.codigo} trocado sem produto da série substituta`
+      );
+    }
+    return { produtoId, numeroSerie: sub.numeroSerie };
+  }
+  const ns = item.unidadeSerie?.numeroSerie;
+  if (!ns) {
+    throw new AppError(
+      400,
+      `Item ${item.produto.codigo} sem número de série vinculado`
+    );
+  }
+  return { produtoId: item.produtoId, numeroSerie: ns };
+}
+
+/** Saída RMA compartilhada (devolução após manutenção ou após troca). */
 async function lancarSaidaRma(
   user: AuthUser,
   opts: {
@@ -1291,8 +1324,10 @@ export async function atualizarRmaCliente(
   if (proc.status !== "ABERTO") {
     throw new AppError(400, "Só é possível alterar o cliente em RMA aberto");
   }
-  const jaExpedido = proc.itens.some((i) =>
-    ["DEVOLVIDO", "DESCARTADO"].includes(i.status)
+  const jaExpedido = proc.itens.some(
+    (i) =>
+      ["DEVOLVIDO", "DESCARTADO"].includes(i.status) ||
+      Boolean(i.unidadeSerieSubstituicao)
   );
   if (jaExpedido) {
     throw new AppError(
@@ -1538,6 +1573,12 @@ export async function voltarManutencaoRmaItem(
       "Só itens ainda no estoque RMA podem voltar para manutenção"
     );
   }
+  if (item.unidadeSerieSubstituicao) {
+    throw new AppError(
+      400,
+      "Item já foi trocado — a peça boa está no estoque RMA. Use Devolver para enviar ao cliente"
+    );
+  }
   const etapasVolta = ["AGUARDANDO_LIBERACAO", "AGUARDANDO_ENVIO"] as const;
   if (!(etapasVolta as readonly string[]).includes(item.etapa || "")) {
     throw new AppError(
@@ -1699,14 +1740,23 @@ export async function adicionarRmaItens(
     throw new AppError(400, "Máximo de 50 itens por processo RMA");
   }
 
-  // Qualquer item não-cancelado do processo (evita reincluir série já devolvida/trocada)
+  // Qualquer item não-cancelado (evita reincluir série original ou substituta)
   const existentes = new Set(
     proc.itens
       .filter((i) => i.status !== "CANCELADO")
-      .map((i) =>
-        `${i.produtoId}::${(i.unidadeSerie?.numeroSerie || "").toLowerCase()}`
-      )
-      .filter((k) => !k.endsWith("::"))
+      .flatMap((i) => {
+        const keys: string[] = [];
+        const orig = i.unidadeSerie?.numeroSerie?.trim();
+        if (orig) keys.push(`${i.produtoId}::${orig.toLowerCase()}`);
+        const sub = i.unidadeSerieSubstituicao?.numeroSerie?.trim();
+        const subProdutoId =
+          i.unidadeSerieSubstituicao?.produtoId ||
+          i.unidadeSerieSubstituicao?.produto?.id;
+        if (sub && subProdutoId) {
+          keys.push(`${subProdutoId}::${sub.toLowerCase()}`);
+        }
+        return keys;
+      })
   );
   const vistas = new Set<string>();
   for (const sn of series) {
@@ -1785,6 +1835,12 @@ export async function removerRmaItem(
     throw new AppError(
       400,
       "Só é possível remover itens ainda no Estoque RMA (estorna a entrada)"
+    );
+  }
+  if (item.unidadeSerieSubstituicao) {
+    throw new AppError(
+      400,
+      "Item já foi trocado — a peça boa está no estoque RMA. Use Devolver para enviar ao cliente"
     );
   }
   if (!item.movEntradaId) {
@@ -2235,10 +2291,20 @@ export async function devolverRmaItens(
   }> = [];
   try {
     for (const item of itens) {
-      if (!item.unidadeSerie?.numeroSerie) {
+      const saidaItem = destinoSaidaClienteItem(item);
+      const serieNoRma = await prisma.unidadeSerie.findFirst({
+        where: {
+          produtoId: saidaItem.produtoId,
+          numeroSerie: { equals: saidaItem.numeroSerie, mode: "insensitive" },
+          status: "EM_ESTOQUE",
+          filialId: proc.filialId,
+        },
+        select: { id: true },
+      });
+      if (!serieNoRma) {
         throw new AppError(
           400,
-          `Item ${item.produto.codigo} sem número de série vinculado`
+          `Série ${saidaItem.numeroSerie} não está EM_ESTOQUE em ${proc.filial.sigla} para dar baixa ao cliente`
         );
       }
 
@@ -2265,11 +2331,11 @@ export async function devolverRmaItens(
       try {
         const mov = await lancarSaidaRma(user, {
           tipoSaidaId: tipoSaida.id,
-          produtoId: item.produtoId,
+          produtoId: saidaItem.produtoId,
           filialId: proc.filialId,
           clienteId: proc.clienteId,
           quantidade: Number(item.quantidade),
-          numeroSerie: item.unidadeSerie.numeroSerie,
+          numeroSerie: saidaItem.numeroSerie,
           notaFiscalNumero: nfSaida,
           notaFiscalArquivo: nfSaidaArquivo,
           observacao: notaRmaComObs(
@@ -2514,26 +2580,10 @@ export async function aprovarSemCobrancaRma(
   return obterRma(user, id);
 }
 
-function movSaidaDaTransferencia(transf: {
-  itens: Array<{
-    movimentacoes: Array<{ id: string; tipo: { operacao: string; nome: string } }>;
-  }>;
-}): string | null {
-  for (const item of transf.itens) {
-    const saida = item.movimentacoes.find(
-      (m) => m.tipo.operacao === "SAIDA" || /enviad/i.test(m.tipo.nome)
-    );
-    if (saida) return saida.id;
-  }
-  for (const item of transf.itens) {
-    if (item.movimentacoes[0]) return item.movimentacoes[0].id;
-  }
-  return null;
-}
-
 /**
- * Troca: traz série boa (transferência imediata origem → preparação),
- * expede ao cliente (Saída RMA), move série ruim para descarte (transferência).
+ * Troca: traz a série boa para o estoque RMA do processo (amarrada para o
+ * Devolver). A série original permanece no RMA — descarte ou recuperação
+ * é lançamento manual depois.
  */
 export async function trocarRmaItem(
   user: AuthUser,
@@ -2574,6 +2624,12 @@ export async function trocarRmaItem(
   assertEtapaPermiteTroca(item.etapa);
   if (!(ITEM_NO_RMA as readonly string[]).includes(item.status)) {
     throw new AppError(400, "Só itens ainda no estoque RMA podem ser trocados");
+  }
+  if (item.unidadeSerieSubstituicao) {
+    throw new AppError(
+      400,
+      "Item já foi trocado — a peça boa está no estoque RMA. Use Devolver para enviar ao cliente"
+    );
   }
   if (!item.unidadeSerie?.numeroSerie) {
     throw new AppError(400, "Item sem número de série vinculado");
@@ -2635,34 +2691,6 @@ export async function trocarRmaItem(
     );
   }
 
-  let destinoDescarteId = input.destinoDescarteFilialId;
-  if (!destinoDescarteId) {
-    const defs = await resolveRmaDefaults();
-    destinoDescarteId = defs.filialDescarteId ?? undefined;
-    if (!destinoDescarteId) {
-      throw new AppError(
-        400,
-        "Informe o estoque de descarte (ou configure RMA_FILIAL_DESCARTE_ID / cadastre a filial DESC)"
-      );
-    }
-  }
-  if (destinoDescarteId === proc.filialId) {
-    throw new AppError(400, "Estoque de descarte deve ser diferente do RMA");
-  }
-  const destDescarte = await prisma.filial.findFirst({
-    where: { id: destinoDescarteId, ativo: true },
-    select: { id: true, sigla: true, estoqueRma: true },
-  });
-  if (!destDescarte) {
-    throw new AppError(400, "Estoque de descarte inválido ou inativo");
-  }
-  if (destDescarte.estoqueRma) {
-    throw new AppError(
-      400,
-      "Estoque de descarte não pode ser um depósito marcado como RMA"
-    );
-  }
-
   // Valida séries antes do claim — evita marcar item e depois falhar
   const boaDisponivel = await prisma.unidadeSerie.findFirst({
     where: {
@@ -2695,27 +2723,18 @@ export async function trocarRmaItem(
     );
   }
 
-  const { numero: nfSaida, arquivo: nfSaidaArquivo } =
-    await exigirDocumentosParaEnvioCliente({
-      processoId,
-      nfEntradaAtual: proc.nfEntradaNumero,
-      nfSaidaAtual: proc.nfSaidaNumero,
-      nfSaidaInformada: input.nfSaidaNumero,
-    });
-
-  const tipoSaida = await tipoSaidaRma();
   const statusAnterior = item.status;
-  const etapaAnterior = item.etapa || "AGUARDANDO_ENVIO";
+  const etapaAnterior = item.etapa || "AGUARDANDO_MANUTENCAO";
 
   const claim = await prisma.rmaItem.updateMany({
     where: {
       id: item.id,
       status: { in: [...ITEM_NO_RMA] },
       etapa: { in: [...RMA_ITEM_ETAPAS_TROCA] },
+      unidadeSerieSubstituicaoId: null,
     },
     data: {
-      status: "DESCARTADO",
-      etapa: "FINALIZADO",
+      etapa: "AGUARDANDO_ENVIO",
       observacao: input.observacao?.trim() || item.observacao,
     },
   });
@@ -2724,14 +2743,11 @@ export async function trocarRmaItem(
   }
 
   let transfPrepId: string | null = null;
-  let transfDescId: string | null = null;
-  let movSaidaId: string | null = null;
-  let movDescarteId: string | null = null;
   let unidadeSerieBoaId: string | null = null;
 
   try {
-    // 1) Série boa: origem operacional → preparação (RMA)
-    // bypassFilialOperador: quem tem permissão RMA pode puxar peça boa de outro estoque
+    // Série boa: origem operacional → estoque RMA (baixa ao cliente no Devolver).
+    // A série original permanece no RMA para lançamento posterior (descarte ou recuperação).
     const prep = await criarTransferenciaImediata(
       user,
       {
@@ -2759,88 +2775,29 @@ export async function trocarRmaItem(
     if (!boa) {
       throw new AppError(400, "Série substituta não encontrada após transferência");
     }
-    unidadeSerieBoaId = boa.id;
-
-    // 2) Expedir série boa ao cliente (Saída RMA)
-    const saida = await lancarSaidaRma(user, {
-      tipoSaidaId: tipoSaida.id,
-      produtoId: produtoIdBoa,
-      filialId: destinoPrepId,
-      clienteId: proc.clienteId,
-      quantidade: 1,
-      numeroSerie: serieBoa,
-      notaFiscalNumero: nfSaida,
-      notaFiscalArquivo: nfSaidaArquivo,
-      observacao: `Troca RMA ${processoId.slice(0, 8)} — substitui ${serieRuim}`,
-      alertaEmails: emailsAlertaDoProcessoRma(proc, user.email),
-    });
-    movSaidaId = saida.id;
-
-    // 3) Série ruim: RMA → descarte
-    const desc = await criarTransferenciaImediata(
-      user,
-      {
-        origemFilialId: proc.filialId,
-        destinoFilialId: destinoDescarteId,
-        guiaTransporte: `RMA-descarte ${processoId.slice(0, 8)}`,
-        itens: [
-          {
-            produtoId: item.produtoId,
-            quantidade: 1,
-            series: [serieRuim],
-          },
-        ],
-      },
-      { bypassFilialOperador: true }
-    );
-    transfDescId = desc.transferencia.id;
-    movDescarteId = movSaidaDaTransferencia(desc.transferencia);
-    if (!movDescarteId) {
+    if (boa.filialId !== destinoPrepId || boa.status !== "EM_ESTOQUE") {
       throw new AppError(
-        500,
-        "Transferência de descarte sem movimentação de saída — confira o estoque"
+        400,
+        `Série substituta deveria estar EM_ESTOQUE em ${proc.filial.sigla}`
       );
     }
+    unidadeSerieBoaId = boa.id;
 
     await prisma.rmaItem.update({
       where: { id: item.id },
       data: {
-        status: "DESCARTADO",
-        movSaidaId,
-        movDescarteId,
+        etapa: "AGUARDANDO_ENVIO",
         unidadeSerieSubstituicaoId: unidadeSerieBoaId,
         substituicaoAutorizadaPorId: autorizador.id,
         observacao:
           input.observacao?.trim() ||
-          `Trocado: saiu ${serieBoa}; ${serieRuim} → descarte (autorizado por ${autorizador.nome})`,
+          `Trocado: ${serieBoa} amarrada ao RMA em ${proc.filial.sigla}; ${serieRuim} permanece no estoque RMA (autorizado por ${autorizador.nome})`,
       },
     });
   } catch (e) {
-    // Compensação (ordem inversa): saída RMA → descarte → preparação
     const motivo = `Compensação troca RMA ${processoId.slice(0, 8)}`;
     const falhas: string[] = [];
 
-    if (movSaidaId) {
-      try {
-        await estornarMovimentacao(user, movSaidaId, motivo, {
-          bypassPerfil: true,
-        });
-      } catch (err) {
-        falhas.push("saida");
-        console.error("[rma] falha compensar saída troca", err);
-      }
-    }
-    if (transfDescId) {
-      try {
-        await reverterTransferenciaImediata(user, transfDescId, {
-          bypassPerfil: true,
-          motivo,
-        });
-      } catch (err) {
-        falhas.push("descarte");
-        console.error("[rma] falha compensar descarte troca", err);
-      }
-    }
     if (transfPrepId) {
       try {
         await reverterTransferenciaImediata(user, transfPrepId, {
@@ -2858,8 +2815,6 @@ export async function trocarRmaItem(
       data: {
         status: statusAnterior,
         etapa: etapaAnterior,
-        movSaidaId: null,
-        movDescarteId: null,
         unidadeSerieSubstituicaoId: null,
         substituicaoAutorizadaPorId: null,
       },
@@ -2875,7 +2830,6 @@ export async function trocarRmaItem(
     throw e;
   }
 
-  await maybeFecharAposRetornoAoCliente(processoId, user.nome);
   return obterRma(user, processoId);
 }
 
@@ -2917,6 +2871,12 @@ export async function cancelarRma(
   const emEstoque = proc.itens.filter((i) =>
     (ITEM_NO_RMA as readonly string[]).includes(i.status)
   );
+  if (emEstoque.some((i) => i.unidadeSerieSubstituicao)) {
+    throw new AppError(
+      400,
+      "Há item já trocado no estoque RMA. Devolva ao cliente antes de cancelar (a peça boa não é a entrada original)"
+    );
+  }
 
   let cancelados = 0;
   try {

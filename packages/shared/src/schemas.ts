@@ -1333,8 +1333,9 @@ export const semManutencaoRmaSchema = z.object({
 });
 
 /**
- * Troca: série boa vem de estoque operacional → preparação (em geral RMA),
- * sai ao cliente; série ruim vai ao estoque de descarte via transferência.
+ * Troca: série boa vem de estoque operacional → estoque RMA do processo
+ * (amarrada para o Devolver). A série original permanece no RMA;
+ * descarte ou recuperação é lançamento posterior.
  */
 export const trocarRmaItemSchema = z.object({
   itemId: z.string().uuid(),
@@ -1342,11 +1343,11 @@ export const trocarRmaItemSchema = z.object({
   produtoIdSubstituto: z.string().uuid().optional(),
   /** Estoque de onde sai a série boa (PLN, TBO, …) */
   origemFilialId: z.string().uuid(),
-  /** Destino de preparação antes da expedição (default: filial do processo / RMA) */
+  /** Estoque RMA do processo — de onde a baixa ao cliente sai no Devolver */
   destinoPreparacaoFilialId: z.string().uuid().optional(),
   /** Número de série da peça substituta */
   numeroSerieBoa: z.string().trim().min(1).max(80),
-  /** Destino da série ruim (default: estoque sigla DESC, se existir) */
+  /** Ignorado — a série original permanece no RMA (compat de clientes antigos). */
   destinoDescarteFilialId: z.string().uuid().optional(),
   nfSaidaNumero: z.string().max(60).optional().nullable(),
   observacao: z.string().max(500).optional().nullable(),

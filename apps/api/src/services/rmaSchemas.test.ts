@@ -178,7 +178,6 @@ describe("trocarRmaItemSchema", () => {
       itemId: UUID_ITEM,
       origemFilialId: UUID_ORIGEM,
       numeroSerieBoa: "SN-BOA-001",
-      destinoDescarteFilialId: UUID_DESC,
       substituicaoAutorizadaPorId: UUID_A,
     });
     assert.equal(r.success, true);
