@@ -133,6 +133,19 @@ describe("saldosExport totais e filtros", () => {
     assert.equal(prefixo.length, 3);
   });
 
+  it("vários códigos separados por vírgula", () => {
+    const rows = [
+      row({ id: "1", codigo: "TMP-1144-W" }),
+      row({ id: "2", codigo: "TMP-1144-WE" }),
+      row({ id: "3", codigo: "TMP-1122" }),
+    ];
+    const out = filtrarSaldosExport(rows, { q: "TMP-1144-W, TMP-1122" });
+    assert.deepEqual(
+      out.map((r) => r.codigo).sort(),
+      ["TMP-1122", "TMP-1144-W"]
+    );
+  });
+
   it("busca q filtra só código/descrição do produto", () => {
     const rows = [
       row({

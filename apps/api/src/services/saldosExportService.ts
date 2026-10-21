@@ -5,8 +5,8 @@ import {
   estoqueMinimoNaFilial,
   isAbaixoMinimoNoEstoque,
   isAcimaMaximo,
-  matchSaldoProduto,
-  temCodigoProdutoExato,
+  matchSaldoProdutoLista,
+  tokensCodigoProduto,
 } from "@teep/shared";
 import { AuthUser } from "../middleware/auth";
 import { AppError } from "../middleware/error";
@@ -162,7 +162,7 @@ export function filtrarSaldosExport(
     if (alerta === "max" && !s.acimaMaximo) return false;
     if (alerta === "qualquer" && !(s.abaixoMinimo || s.acimaMaximo)) return false;
     if (!q) return true;
-    return matchSaldoProduto(s, q, temCodigoProdutoExato(rows, q));
+    return matchSaldoProdutoLista(s, q, rows);
   });
 }
 
@@ -183,18 +183,33 @@ async function selecionarIdsSaldos(opts: {
     conditions.push(Prisma.sql`p.categoria_id = ${opts.categoriaId}::uuid`);
   }
   if (opts.q) {
-    const exactCount = await prisma.produto.count({
-      where: { codigo: { equals: opts.q, mode: "insensitive" } },
-    });
-    if (exactCount > 0) {
-      conditions.push(
-        Prisma.sql`LOWER(p.codigo) = LOWER(${opts.q})`
-      );
-    } else {
-      const like = `%${opts.q}%`;
-      conditions.push(
-        Prisma.sql`(p.codigo ILIKE ${like} OR p.descricao ILIKE ${like})`
-      );
+    const tokens = tokensCodigoProduto(opts.q);
+    const ors: Prisma.Sql[] = [];
+    if (tokens.length > 0) {
+      const exactRows = await prisma.produto.findMany({
+        where: {
+          OR: tokens.map((t) => ({
+            codigo: { equals: t, mode: "insensitive" as const },
+          })),
+        },
+        select: { codigo: true },
+      });
+      const exactSet = new Set(exactRows.map((p) => p.codigo.toLowerCase()));
+      for (const t of tokens) {
+        if (exactSet.has(t.toLowerCase())) {
+          ors.push(Prisma.sql`LOWER(p.codigo) = LOWER(${t})`);
+        } else {
+          const like = `%${t}%`;
+          ors.push(
+            Prisma.sql`(p.codigo ILIKE ${like} OR p.descricao ILIKE ${like})`
+          );
+        }
+      }
+    }
+    if (ors.length === 1) {
+      conditions.push(ors[0]!);
+    } else if (ors.length > 1) {
+      conditions.push(Prisma.sql`(${Prisma.join(ors, " OR ")})`);
     }
   }
   if (opts.alerta === "min") {

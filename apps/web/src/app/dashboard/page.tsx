@@ -10,9 +10,16 @@ import {
   localUnidadeSerie,
   UNIDADE_SERIE_STATUS_LABEL,
 } from "@/lib/serieLabels";
-import { matchSaldoProduto, temCodigoProdutoExato } from "@teep/shared";
+import {
+  aplicarCodigoProdutoLista,
+  juntarCodigosProduto,
+  matchSaldoProdutoLista,
+  tokenDigitandoCodigoProduto,
+  tokensCodigoProduto,
+  tokensCodigoProdutoTravados,
+} from "@teep/shared";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 /** Saudação por horário local (calendário do browser). */
 function saudacaoPorHora(date = new Date()): "Bom dia" | "Boa tarde" | "Boa noite" {
@@ -122,6 +129,7 @@ export default function DashboardPage() {
   const [produtoQ, setProdutoQ] = useState("");
   const [produtoFiltro, setProdutoFiltro] = useState("");
   const [produtoOpen, setProdutoOpen] = useState(false);
+  const produtoInputRef = useRef<HTMLInputElement>(null);
   const [categoriaId, setCategoriaId] = useState("");
   const [filialTabelaId, setFilialTabelaId] = useState("");
   const [soAlertas, setSoAlertas] = useState(false);
@@ -255,7 +263,6 @@ export default function DashboardPage() {
   const saldosFiltrados = useMemo(() => {
     if (!data) return [];
     const q = produtoFiltro.trim();
-    const codigoExato = temCodigoProdutoExato(data.saldos, q);
     return data.saldos.filter((s) => {
       if (categoriaId && s.categoriaId !== categoriaId) return false;
       if (filialTabelaId && s.filialId !== filialTabelaId) return false;
@@ -272,7 +279,7 @@ export default function DashboardPage() {
         );
         if (!match) return false;
       }
-      return matchSaldoProduto(s, q, codigoExato);
+      return matchSaldoProdutoLista(s, q, data.saldos);
     });
   }, [
     data,
@@ -288,8 +295,14 @@ export default function DashboardPage() {
   /** Sugestões a partir de todos os saldos carregados (não encolhe a tabela ao digitar). */
   const produtoSugestoes = useMemo(() => {
     if (!data) return [];
-    const q = produtoQ.trim().toLowerCase();
-    if (!q) return [];
+    const trecho = tokenDigitandoCodigoProduto(produtoQ).toLowerCase();
+    const jaEscolhidos = new Set(
+      tokensCodigoProdutoTravados(produtoQ, data.saldos).map((c) =>
+        c.toLowerCase()
+      )
+    );
+    const aposVirgula = /[,;]\s*$/.test(produtoQ);
+    if (!trecho && !aposVirgula) return [];
     const seen = new Set<string>();
     const out: { codigo: string; descricao: string }[] = [];
     for (const s of data.saldos) {
@@ -297,9 +310,11 @@ export default function DashboardPage() {
       if (filialTabelaId && s.filialId !== filialTabelaId) continue;
       if (soAlertas && !(s.abaixoMinimo || s.acimaMaximo)) continue;
       if (seen.has(s.codigo)) continue;
+      if (jaEscolhidos.has(s.codigo.toLowerCase())) continue;
       const match =
-        s.codigo.toLowerCase().includes(q) ||
-        s.descricao.toLowerCase().includes(q);
+        !trecho ||
+        s.codigo.toLowerCase().includes(trecho) ||
+        s.descricao.toLowerCase().includes(trecho);
       if (!match) continue;
       seen.add(s.codigo);
       out.push({ codigo: s.codigo, descricao: s.descricao });
@@ -321,14 +336,24 @@ export default function DashboardPage() {
     !(isOpsManager && filialId);
 
   function aplicarProduto(valor: string) {
-    const v = valor.trim();
-    setProdutoQ(v);
-    setProdutoFiltro(v);
+    const joined = juntarCodigosProduto(tokensCodigoProduto(valor));
+    setProdutoFiltro(joined);
+    setProdutoQ(joined ? `${joined}, ` : "");
     setProdutoOpen(false);
   }
 
   function selecionarProduto(codigo: string) {
-    aplicarProduto(codigo);
+    const next = aplicarCodigoProdutoLista(produtoQ, codigo);
+    setProdutoQ(next);
+    setProdutoFiltro(juntarCodigosProduto(tokensCodigoProduto(next)));
+    setProdutoOpen(true);
+    requestAnimationFrame(() => {
+      const el = produtoInputRef.current;
+      if (!el) return;
+      el.focus();
+      const pos = next.length;
+      el.setSelectionRange(pos, pos);
+    });
   }
 
   function limparProduto() {
@@ -653,19 +678,17 @@ export default function DashboardPage() {
                 </span>
                 <div className="flex gap-1">
                   <input
+                    ref={produtoInputRef}
                     value={produtoQ}
                     onChange={(e) => {
                       const v = e.target.value;
                       setProdutoQ(v);
                       setProdutoOpen(true);
-                      // Enquanto digita, não filtra a tabela (evita “pulo” da tela).
-                      if (
-                        produtoFiltro &&
-                        v.trim().toLowerCase() !==
-                          produtoFiltro.trim().toLowerCase()
-                      ) {
-                        setProdutoFiltro("");
-                      }
+                      setProdutoFiltro(
+                        juntarCodigosProduto(
+                          tokensCodigoProdutoTravados(v, data?.saldos)
+                        )
+                      );
                     }}
                     onFocus={() => setProdutoOpen(true)}
                     onBlur={() => setTimeout(() => setProdutoOpen(false), 150)}
@@ -678,11 +701,11 @@ export default function DashboardPage() {
                         setProdutoOpen(false);
                       }
                     }}
-                    placeholder="Digite e escolha um código…"
+                    placeholder="Código, vírgula, outro código…"
                     className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                     autoComplete="off"
                     aria-autocomplete="list"
-                    aria-expanded={produtoOpen && !!produtoQ.trim()}
+                    aria-expanded={produtoOpen && produtoSugestoes.length > 0}
                   />
                   {(produtoQ || produtoFiltro) && (
                     <button
@@ -695,7 +718,9 @@ export default function DashboardPage() {
                     </button>
                   )}
                 </div>
-                {produtoOpen && produtoQ.trim() && (
+                {produtoOpen &&
+                  (tokenDigitandoCodigoProduto(produtoQ) ||
+                    /[,;]\s*$/.test(produtoQ)) && (
                   <ul className="absolute z-40 mt-1 max-h-56 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg">
                     {produtoSugestoes.length === 0 ? (
                       <li className="px-3 py-2 text-sm text-slate-500">
