@@ -270,6 +270,7 @@ export function LancamentoLinhaItem({
   }
 
   function sequenciaPronta(valor: string, produto: LancamentoProduto): boolean {
+    if (linhaRef.current.serieForaPadrao) return valor.trim().length > 0;
     const tamanho = clampTamanhoSequencial(
       produto.configuracaoSerie?.tamanhoSequencial
     );
@@ -391,7 +392,7 @@ export function LancamentoLinhaItem({
     pedeSerie &&
     (validarSerieEstoque || modoSerieNascimento || usaSerieLivre);
   const mostraForaPadrao =
-    Boolean(linha.produto) && modoSerieNascimento && !usaSerieLivre;
+    Boolean(linha.produto) && mostrarCamposSerie && !usaSerieLivre;
   const usaSerieForaPadrao = mostraForaPadrao && linha.serieForaPadrao;
   const usaCamposSeriePrefixo =
     mostrarCamposSerie && !usaSerieLivre && !usaSerieForaPadrao;
@@ -557,6 +558,9 @@ export function LancamentoLinhaItem({
           validarNascimento={usaSerieForaPadrao && modoSerieNascimento}
           foraPadrao={usaSerieForaPadrao}
           onChangeSerie={(i, valor) => onSerieChange(i, valor)}
+          onBlurSerie={(i, valor) => {
+            if (validarNoEstoque) void validarSerieCampo(i, valor);
+          }}
           onStatusSerie={(i, status, msg) => {
             if (status === "checking") return;
             const cur = linhaRef.current;

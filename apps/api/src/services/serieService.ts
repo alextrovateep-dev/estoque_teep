@@ -1228,11 +1228,14 @@ export async function aplicarSeriesMontagemNascimento(
     series: string[];
     quantidade: number;
     imediato: boolean;
+    foraPadrao?: boolean;
   }
 ) {
   const series = normalizarSeries(opts.series);
   assertQuantidadeInteiraSerie(opts.quantidade, series.length);
-  await assertFormatoSeriesNascimento(tx, opts.produtoId, series);
+  await assertFormatoSeriesNascimento(tx, opts.produtoId, series, {
+    foraPadrao: opts.foraPadrao,
+  });
 
   const reservadas = await seriesReservadasPendentes(tx, opts.produtoId);
   const emPendTransf = await seriesEmTransferenciaPendente(tx, opts.produtoId);

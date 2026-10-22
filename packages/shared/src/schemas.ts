@@ -788,6 +788,7 @@ export const createTransferenciaItemSchema = z.object({
   produtoId: z.string().uuid(),
   quantidade: z.coerce.number().positive(),
   series: seriesArraySchema,
+  serieForaPadrao: z.boolean().optional(),
 });
 
 export const createTransferenciaSchema = z.object({

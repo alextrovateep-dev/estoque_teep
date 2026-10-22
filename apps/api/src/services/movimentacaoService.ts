@@ -341,6 +341,7 @@ export async function criarMovimentacao(
           produtoId: input.produtoId,
           quantidade: input.quantidade,
           series: input.series,
+          serieForaPadrao: input.serieForaPadrao,
         },
       ];
     }

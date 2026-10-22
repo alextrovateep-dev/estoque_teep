@@ -336,7 +336,12 @@ export async function criarTransferencia(
       arquivo: string;
       label?: string | null;
     }>;
-    itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    itens: Array<{
+      produtoId: string;
+      quantidade: number;
+      series?: string[];
+      serieForaPadrao?: boolean;
+    }>;
     /** Tipo com baixaPorArvore: baixa BOM na origem e entra só o pai no destino */
     baixaPorArvore?: boolean;
     /** `TipoMovimentacao.controleSerie` do tipo escolhido no lançamento */
@@ -360,7 +365,12 @@ export async function criarTransferenciaImediata(
       arquivo: string;
       label?: string | null;
     }>;
-    itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    itens: Array<{
+      produtoId: string;
+      quantidade: number;
+      series?: string[];
+      serieForaPadrao?: boolean;
+    }>;
     baixaPorArvore?: boolean;
     controleSerieTipo?: string | null;
   },
@@ -386,7 +396,12 @@ export async function criarTransferenciaPendenteAprovacao(
       arquivo: string;
       label?: string | null;
     }>;
-    itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    itens: Array<{
+      produtoId: string;
+      quantidade: number;
+      series?: string[];
+      serieForaPadrao?: boolean;
+    }>;
     baixaPorArvore?: boolean;
     controleSerieTipo?: string | null;
   },
@@ -408,7 +423,12 @@ async function criarTransferenciaInterna(
       arquivo: string;
       label?: string | null;
     }>;
-    itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    itens: Array<{
+      produtoId: string;
+      quantidade: number;
+      series?: string[];
+      serieForaPadrao?: boolean;
+    }>;
     baixaPorArvore?: boolean;
     controleSerieTipo?: string | null;
   },
@@ -590,6 +610,7 @@ async function criarTransferenciaInterna(
         produto,
         quantidade,
         series,
+        serieForaPadrao: item.serieForaPadrao,
         exigeSerie,
         origemFilialId,
         destinoFilialId: input.destinoFilialId,
@@ -659,6 +680,7 @@ async function aplicarEfeitosItemTransferencia(
     produto: ProdutoMini;
     quantidade: number;
     series?: string[];
+    serieForaPadrao?: boolean;
     /** Regra do tipo + produto; default = produto.controlaSerie */
     exigeSerie?: boolean;
     origemFilialId: string;
@@ -810,6 +832,7 @@ async function aplicarEfeitosItemTransferencia(
         series: opts.series || [],
         quantidade: opts.quantidade,
         imediato: opts.imediato,
+        foraPadrao: Boolean(opts.serieForaPadrao),
       });
     } else {
       await aplicarSeriesTransferenciaEnvio(tx, {
@@ -1853,7 +1876,12 @@ export async function criarTransferenciaViaApiLegada(
     guiaTransporte?: string | null;
     creditoDestino?: "IMEDIATO" | "AGUARDAR_RECEBIMENTO";
     observacao?: string | null;
-    itens: Array<{ produtoId: string; quantidade: number; series?: string[] }>;
+    itens: Array<{
+      produtoId: string;
+      quantidade: number;
+      series?: string[];
+      serieForaPadrao?: boolean;
+    }>;
   }
 ) {
   const credito = input.creditoDestino || "AGUARDAR_RECEBIMENTO";

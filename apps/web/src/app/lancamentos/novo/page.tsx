@@ -2595,7 +2595,9 @@ function NovoLancamentoForm() {
                 />
               ) : (
               <>
-                {!isRetorno && tipo?.operacao === "ENTRADA" ? (
+                {!isRetorno &&
+                (tipo?.operacao === "ENTRADA" ||
+                  tipo?.operacao === "TRANSFERENCIA") ? (
                   <label className="flex items-start gap-2 rounded-md border border-emerald-200/80 bg-white/70 px-2.5 py-2 text-xs text-slate-700">
                     <input
                       type="checkbox"
@@ -2616,7 +2618,8 @@ function NovoLancamentoForm() {
                 ) : null}
                 {serieForaPadrao &&
                 !isRetorno &&
-                tipo?.operacao === "ENTRADA" ? (
+                (tipo?.operacao === "ENTRADA" ||
+                  tipo?.operacao === "TRANSFERENCIA") ? (
                   <SerieCamposLivres
                     series={series}
                     produtoId={produto.id}
