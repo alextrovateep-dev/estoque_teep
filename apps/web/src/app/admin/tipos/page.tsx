@@ -4,7 +4,7 @@ import { api } from "@/lib/api";
 import { tipoUsaBaixaArvore } from "@teep/shared";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ReactNode, Suspense, useEffect, useState } from "react";
+import { ReactNode, Suspense, useEffect, useMemo, useState } from "react";
 
 type Tipo = {
   id: string;
@@ -89,6 +89,7 @@ export default function TiposPage() {
 function TiposPageInner() {
   const searchParams = useSearchParams();
   const [lista, setLista] = useState<Tipo[]>([]);
+  const [busca, setBusca] = useState("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
 
@@ -104,6 +105,32 @@ function TiposPageInner() {
       setError(e instanceof Error ? e.message : "Erro ao carregar")
     );
   }, [searchParams]);
+
+  const filtrados = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return lista;
+    return lista.filter((t) => {
+      const origemNome = t.ehRetornoDeId
+        ? lista.find((x) => x.id === t.ehRetornoDeId)?.nome
+        : null;
+      const hay = [
+        t.codigo,
+        t.nome,
+        t.descricao,
+        operacaoLabel(t.operacao),
+        t.filial?.sigla,
+        t.filial?.nome,
+        t.filialDestino?.sigla,
+        t.filialDestino?.nome,
+        origemNome,
+        t.ativo ? "ativo" : "inativo",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [lista, busca]);
 
   async function toggle(t: Tipo) {
     setError("");
@@ -144,12 +171,26 @@ function TiposPageInner() {
         </p>
       )}
 
-      <section className="mt-6">
+      <div className="mt-4">
+        <input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar por código, nome, tipo ou estoque…"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-brand/15"
+          autoComplete="off"
+        />
+      </div>
+
+      <section className="mt-4">
         {lista.length === 0 ? (
           <p className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
             Nenhuma operação cadastrada. Use{" "}
             <span className="font-medium text-slate-700">Cadastrar</span> para
             criar Compra, Venda, etc.
+          </p>
+        ) : filtrados.length === 0 ? (
+          <p className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+            Nenhum resultado para a busca.
           </p>
         ) : (
         <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -166,7 +207,7 @@ function TiposPageInner() {
               </tr>
             </thead>
             <tbody>
-              {lista.map((t) => {
+              {filtrados.map((t) => {
                 const origemNome = t.ehRetornoDeId
                   ? lista.find((x) => x.id === t.ehRetornoDeId)?.nome
                   : null;
