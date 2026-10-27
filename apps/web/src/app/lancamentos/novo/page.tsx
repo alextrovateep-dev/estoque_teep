@@ -12,7 +12,8 @@ import { SerieCamposLivres } from "@/components/SerieCamposLivres";
 import { SerieCamposPrefixo } from "@/components/SerieCamposPrefixo";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
+import { FormEvent, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { matchNomeOuDocumento } from "@/lib/documento";
 import {
   exigeSerieNoLancamento,
   formatQtyUnidade,
@@ -92,7 +93,16 @@ type SaidaAberta = {
   tipo: { id: string; nome: string; codigo?: string | null };
 };
 type Filial = { id: string; nome: string; sigla: string };
-type Cliente = { id: string; nome: string; tipo: string };
+type Cliente = {
+  id: string;
+  nome: string;
+  tipo: string;
+  documento?: string | null;
+};
+
+function labelCliente(c: Cliente): string {
+  return `${c.nome} (${c.tipo})`;
+}
 type Produto = {
   id: string;
   codigo: string;
@@ -221,6 +231,8 @@ function NovoLancamentoForm() {
   const [creditoDestino, setCreditoDestino] =
     useState<CreditoDestino>("AGUARDAR_RECEBIMENTO");
   const [clienteId, setClienteId] = useState("");
+  const [clienteQuery, setClienteQuery] = useState("");
+  const [clienteOpen, setClienteOpen] = useState(false);
   const [notaFiscalNumero, setNotaFiscalNumero] = useState("");
   const [notaFiscalArquivo, setNotaFiscalArquivo] = useState<string | null>(
     null
@@ -256,6 +268,17 @@ function NovoLancamentoForm() {
   const [prefillLoading, setPrefillLoading] = useState(
     Boolean(retornoDeId || wantsTransf)
   );
+
+  const clientesFiltrados = useMemo(() => {
+    const q = clienteQuery.trim();
+    if (!q) return [];
+    return clientes
+      .filter((c) =>
+        matchNomeOuDocumento(c.nome, c.documento, q) ||
+        c.tipo.toLowerCase().includes(q.toLowerCase())
+      )
+      .slice(0, 50);
+  }, [clientes, clienteQuery]);
 
   const tipo = tipos.find((t) => t.id === tipoId);
   const isTransf = tipo?.operacao === "TRANSFERENCIA";
@@ -307,6 +330,8 @@ function NovoLancamentoForm() {
     if (retornoPrefill || transferPrefill) return;
     // Ao trocar o tipo, limpa campos específicos para não vazar estado
     setClienteId("");
+    setClienteQuery("");
+    setClienteOpen(false);
     setNotaFiscalNumero("");
     setNotaFiscalArquivo(null);
     setAlertaEmails([]);
@@ -329,6 +354,14 @@ function NovoLancamentoForm() {
     setSaldosComponentesOrigem({});
     setLinhas([newLancamentoLinha()]);
   }, [tipoId, retornoPrefill, transferPrefill]);
+
+  useEffect(() => {
+    if (!clienteId) return;
+    const c = clientes.find((x) => x.id === clienteId);
+    if (!c) return;
+    const label = labelCliente(c);
+    setClienteQuery((q) => (q === label ? q : label));
+  }, [clienteId, clientes]);
 
   useEffect(() => {
     Promise.all([
@@ -1822,25 +1855,91 @@ function NovoLancamentoForm() {
 
         {precisaCliente && (
           <>
-            <label className="block">
-              <span className="mb-1 block text-sm font-medium">
-                Cliente / Fornecedor
-              </span>
-              <select
-                required
-                disabled={camposTravados}
-                className="w-full rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
-                value={clienteId}
-                onChange={(e) => setClienteId(e.target.value)}
+            <div className="relative">
+              <label
+                htmlFor="lanc-cliente"
+                className="mb-1 block text-sm font-medium"
               >
-                <option value="">Selecione</option>
-                {clientes.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nome} ({c.tipo})
-                  </option>
-                ))}
-              </select>
-            </label>
+                Cliente / Fornecedor
+              </label>
+              <div className="flex gap-1">
+                <input
+                  id="lanc-cliente"
+                  disabled={camposTravados}
+                  className="w-full min-w-0 rounded-lg border px-3 py-3 disabled:bg-slate-50 disabled:text-slate-600"
+                  value={clienteQuery}
+                  onChange={(e) => {
+                    setClienteQuery(e.target.value);
+                    setClienteId("");
+                    setClienteOpen(true);
+                  }}
+                  onFocus={() => setClienteOpen(true)}
+                  onBlur={() => setTimeout(() => setClienteOpen(false), 180)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    const first = clientesFiltrados[0];
+                    if (first && !clienteId) {
+                      setClienteId(first.id);
+                      setClienteQuery(labelCliente(first));
+                      setClienteOpen(false);
+                    }
+                  }}
+                  placeholder="Buscar por nome ou CNPJ…"
+                  autoComplete="off"
+                />
+                {(clienteId || clienteQuery) && !camposTravados ? (
+                  <button
+                    type="button"
+                    title="Limpar"
+                    onClick={() => {
+                      setClienteId("");
+                      setClienteQuery("");
+                      setClienteOpen(false);
+                    }}
+                    className="shrink-0 rounded-lg border px-3 text-slate-500 hover:bg-slate-50"
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+              {clienteOpen && !clienteId && !camposTravados ? (
+                <ul className="absolute z-30 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-white shadow-lg">
+                  {!clienteQuery.trim() ? (
+                    <li className="px-3 py-2 text-sm text-slate-500">
+                      Digite o nome ou CNPJ para buscar
+                    </li>
+                  ) : clientesFiltrados.length === 0 ? (
+                    <li className="px-3 py-2 text-sm text-slate-500">
+                      Nenhum cadastro encontrado
+                    </li>
+                  ) : (
+                    clientesFiltrados.map((c) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setClienteId(c.id);
+                            setClienteQuery(labelCliente(c));
+                            setClienteOpen(false);
+                          }}
+                        >
+                          <span className="block font-medium text-slate-800">
+                            {c.nome}
+                          </span>
+                          <span className="block text-xs text-slate-500">
+                            {c.tipo}
+                            {c.documento ? ` · ${c.documento}` : ""}
+                          </span>
+                        </button>
+                      </li>
+                    ))
+                  )}
+                </ul>
+              ) : null}
+            </div>
 
             {isRetorno && (
               <div className="block">
