@@ -330,7 +330,10 @@ export function ClienteCadastroForm({
       bairro: nullish(form.bairro),
       cidade: nullish(form.cidade),
       estado: nullish(form.estado)?.toUpperCase() || null,
-      responsavelComercialId: form.responsavelComercialId || null,
+      responsavelComercialId:
+        form.tipo === "FORNECEDOR"
+          ? null
+          : form.responsavelComercialId || null,
     };
     try {
       if (editId) {
@@ -413,7 +416,15 @@ export function ClienteCadastroForm({
             <select
               className="w-full rounded-lg border px-3 py-2 text-sm"
               value={form.tipo}
-              onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+              onChange={(e) => {
+                const tipo = e.target.value;
+                setForm({
+                  ...form,
+                  tipo,
+                  responsavelComercialId:
+                    tipo === "FORNECEDOR" ? "" : form.responsavelComercialId,
+                });
+              }}
             >
               <option value="CLIENTE">CLIENTE</option>
               <option value="FORNECEDOR">FORNECEDOR</option>
@@ -511,6 +522,7 @@ export function ClienteCadastroForm({
           </label>
         </div>
 
+        {form.tipo !== "FORNECEDOR" ? (
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-slate-600">
             Responsável comercial (RMA)
@@ -534,6 +546,7 @@ export function ClienteCadastroForm({
             Pré-preenche o comercial na abertura de RMA deste cliente.
           </span>
         </label>
+        ) : null}
 
         <div className="grid gap-2 md:grid-cols-[8rem_1fr_5rem]">
           <label className="block">

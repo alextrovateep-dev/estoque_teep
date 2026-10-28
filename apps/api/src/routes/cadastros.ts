@@ -1673,6 +1673,9 @@ cadastrosRouter.post(
           throw new AppError(409, "CNPJ/documento já cadastrado");
         }
       }
+      if (data.tipo === "FORNECEDOR") {
+        data.responsavelComercialId = null;
+      }
       await assertResponsavelComercialCliente(data.responsavelComercialId);
       const criado = await prisma.cliente.create({
         data,
@@ -1727,6 +1730,10 @@ cadastrosRouter.patch(
         if (dup) {
           throw new AppError(409, "CNPJ/documento já cadastrado");
         }
+      }
+      const tipoFinal = data.tipo ?? existing.tipo;
+      if (tipoFinal === "FORNECEDOR") {
+        data.responsavelComercialId = null;
       }
       if ("responsavelComercialId" in data) {
         await assertResponsavelComercialCliente(data.responsavelComercialId);
