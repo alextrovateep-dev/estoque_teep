@@ -232,11 +232,15 @@ export default function RmaDetalhePage() {
   const [filiais, setFiliais] = useState<FilialOpt[]>([]);
   const [rmaDefaults, setRmaDefaults] = useState<RmaDefaults | null>(null);
   const [origemFilialId, setOrigemFilialId] = useState("");
+  const [origemOpen, setOrigemOpen] = useState(false);
   const [serieBoa, setSerieBoa] = useState("");
+  const [serieOpen, setSerieOpen] = useState(false);
   const [seriesDisp, setSeriesDisp] = useState<SerieOpt[]>([]);
   const [trocaObs, setTrocaObs] = useState("");
   const [trocaErro, setTrocaErro] = useState("");
   const [autorizadorId, setAutorizadorId] = useState("");
+  const [autorizadorQuery, setAutorizadorQuery] = useState("");
+  const [autorizadorOpen, setAutorizadorOpen] = useState(false);
   const [trocaProdutoId, setTrocaProdutoId] = useState("");
   const [trocaProdutoQuery, setTrocaProdutoQuery] = useState("");
   const [trocaProdutoSugestoes, setTrocaProdutoSugestoes] = useState<
@@ -1132,8 +1136,12 @@ export default function RmaDetalhePage() {
     setTrocaProdutoSugestoes([]);
     setTrocaProdutoOpen(false);
     setSerieBoa("");
+    setSerieOpen(false);
     setTrocaObs("");
     setAutorizadorId("");
+    setAutorizadorQuery("");
+    setAutorizadorOpen(false);
+    setOrigemOpen(false);
     setSeriesDisp([]);
     try {
       let ativas = filiais;
@@ -2317,6 +2325,32 @@ export default function RmaDetalhePage() {
               if (origemIds.size > 0) return origemIds.has(f.id);
               return true;
             });
+            const origemSel = filiaisOrigem.find(
+              (f) => f.id === origemFilialId
+            );
+            const autorizadorSel = destTodos.find(
+              (u) => u.id === autorizadorId
+            );
+            const qSerie = serieBoa.trim().toUpperCase();
+            const seriesFiltradas = seriesDisp
+              .filter(
+                (s) =>
+                  !qSerie || s.numeroSerie.toUpperCase().includes(qSerie)
+              )
+              .slice(0, 80);
+            const serieExata = seriesDisp.some(
+              (s) => s.numeroSerie.toUpperCase() === qSerie
+            );
+            const autorizadoresFiltrados = destTodos
+              .filter((u) => {
+                const q = autorizadorQuery.trim().toLowerCase();
+                if (!q || autorizadorId) return true;
+                return (
+                  u.nome.toLowerCase().includes(q) ||
+                  u.email.toLowerCase().includes(q)
+                );
+              })
+              .slice(0, 50);
             const descLimpa = descricaoProdutoLimpa(
               i.produto.codigo,
               i.produto.descricao
@@ -2846,6 +2880,9 @@ export default function RmaDetalhePage() {
                           value={trocaProdutoQuery}
                           onChange={(e) => onTrocaProdutoQuery(e.target.value)}
                           onFocus={() => setTrocaProdutoOpen(true)}
+                          onBlur={() =>
+                            setTimeout(() => setTrocaProdutoOpen(false), 150)
+                          }
                           placeholder="Buscar por código ou descrição"
                           autoComplete="off"
                         />
@@ -2857,7 +2894,8 @@ export default function RmaDetalhePage() {
                               <button
                                 type="button"
                                 className="w-full px-2 py-1.5 text-left hover:bg-amber-50"
-                                onClick={() => {
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
                                   setTrocaProdutoId(p.id);
                                   setTrocaProdutoQuery(
                                     `${p.codigo} — ${p.descricao}`
@@ -2886,24 +2924,54 @@ export default function RmaDetalhePage() {
                           .join(" · ")}
                       </p>
                     )}
-                    <label className="block">
+                    <div className="relative">
                       <span className="text-slate-600">Origem da peça boa</span>
-                      <select
-                        className="mt-0.5 w-full rounded border px-2 py-1.5"
-                        value={origemFilialId}
-                        onChange={(e) => {
-                          setOrigemFilialId(e.target.value);
-                          setSerieBoa("");
-                        }}
+                      <button
+                        type="button"
+                        className="mt-0.5 flex w-full items-center justify-between gap-2 rounded border bg-white px-2 py-1.5 text-left"
+                        onClick={() => setOrigemOpen((v) => !v)}
+                        onBlur={() =>
+                          setTimeout(() => setOrigemOpen(false), 150)
+                        }
                       >
-                        <option value="">Selecione…</option>
-                        {filiaisOrigem.map((f) => (
-                          <option key={f.id} value={f.id}>
-                            {f.sigla} — {f.nome}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        <span
+                          className={
+                            origemSel ? "text-slate-900" : "text-slate-400"
+                          }
+                        >
+                          {origemSel
+                            ? `${origemSel.sigla} — ${origemSel.nome}`
+                            : "Selecione…"}
+                        </span>
+                        <span className="shrink-0 text-slate-400">▾</span>
+                      </button>
+                      {origemOpen ? (
+                        <ul className="absolute z-20 mt-0.5 max-h-44 w-full overflow-auto rounded border bg-white shadow">
+                          {filiaisOrigem.length === 0 ? (
+                            <li className="px-2 py-1.5 text-slate-500">
+                              Nenhum estoque de origem disponível
+                            </li>
+                          ) : (
+                            filiaisOrigem.map((f) => (
+                              <li key={f.id}>
+                                <button
+                                  type="button"
+                                  className="w-full px-2 py-1.5 text-left hover:bg-amber-50"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    setOrigemFilialId(f.id);
+                                    setSerieBoa("");
+                                    setOrigemOpen(false);
+                                  }}
+                                >
+                                  {f.sigla} — {f.nome}
+                                </button>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      ) : null}
+                    </div>
                     <div className="block">
                       <span className="text-slate-600">Destino da peça boa</span>
                       <p className="mt-0.5 rounded border border-amber-200 bg-white px-2 py-1.5 font-medium text-slate-900">
@@ -2915,51 +2983,110 @@ export default function RmaDetalhePage() {
                         para lançamento posterior (descarte ou recuperação).
                       </span>
                     </div>
-                    <label className="block">
+                    <div className="relative">
                       <span className="text-slate-600">Série substituta</span>
-                      {seriesDisp.length > 0 ? (
-                        <select
-                          className="mt-0.5 w-full rounded border px-2 py-1.5 font-mono"
-                          value={serieBoa}
-                          onChange={(e) => setSerieBoa(e.target.value)}
-                        >
-                          <option value="">Selecione…</option>
-                          {seriesDisp.map((s) => (
-                            <option key={s.id} value={s.numeroSerie}>
-                              {s.numeroSerie}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          className="mt-0.5 w-full rounded border px-2 py-1.5 font-mono"
-                          placeholder="Digite o S/N"
-                          value={serieBoa}
-                          onChange={(e) => setSerieBoa(e.target.value)}
-                        />
-                      )}
+                      <input
+                        className="mt-0.5 w-full rounded border px-2 py-1.5 font-mono"
+                        placeholder={
+                          seriesDisp.length > 0
+                            ? "Buscar ou digitar o S/N"
+                            : "Digite o S/N"
+                        }
+                        value={serieBoa}
+                        onChange={(e) => {
+                          setSerieBoa(e.target.value);
+                          setSerieOpen(true);
+                        }}
+                        onFocus={() => setSerieOpen(true)}
+                        onBlur={() =>
+                          setTimeout(() => setSerieOpen(false), 150)
+                        }
+                        autoComplete="off"
+                      />
+                      {serieOpen &&
+                      seriesDisp.length > 0 &&
+                      !serieExata ? (
+                        <ul className="absolute z-20 mt-0.5 max-h-44 w-full overflow-auto rounded border bg-white shadow">
+                          {seriesFiltradas.length === 0 ? (
+                            <li className="px-2 py-1.5 text-slate-500">
+                              Nenhuma série nesta busca — pode digitar o S/N
+                            </li>
+                          ) : (
+                            seriesFiltradas.map((s) => (
+                              <li key={s.id}>
+                                <button
+                                  type="button"
+                                  className="w-full px-2 py-1.5 text-left font-mono hover:bg-amber-50"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    setSerieBoa(s.numeroSerie);
+                                    setSerieOpen(false);
+                                  }}
+                                >
+                                  {s.numeroSerie}
+                                </button>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      ) : null}
                       {origemFilialId && seriesDisp.length === 0 && (
                         <span className="mt-0.5 block text-[10px] text-slate-500">
                           Nenhuma série listada neste estoque — digite o S/N
                           manualmente
                         </span>
                       )}
-                    </label>
-                    <label className="block">
-                      <span className="text-slate-600">Quem autorizou a troca *</span>
-                      <select
+                    </div>
+                    <div className="relative">
+                      <span className="text-slate-600">
+                        Quem autorizou a troca *
+                      </span>
+                      <input
                         className="mt-0.5 w-full rounded border px-2 py-1.5"
-                        value={autorizadorId}
-                        onChange={(e) => setAutorizadorId(e.target.value)}
-                      >
-                        <option value="">Selecione…</option>
-                        {destTodos.map((u) => (
-                          <option key={u.id} value={u.id}>
-                            {u.nome}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        placeholder="Buscar por nome…"
+                        value={
+                          autorizadorId && autorizadorSel
+                            ? autorizadorSel.nome
+                            : autorizadorQuery
+                        }
+                        onChange={(e) => {
+                          setAutorizadorQuery(e.target.value);
+                          setAutorizadorId("");
+                          setAutorizadorOpen(true);
+                        }}
+                        onFocus={() => setAutorizadorOpen(true)}
+                        onBlur={() =>
+                          setTimeout(() => setAutorizadorOpen(false), 150)
+                        }
+                        autoComplete="off"
+                      />
+                      {autorizadorOpen && !autorizadorId ? (
+                        <ul className="absolute z-20 mt-0.5 max-h-44 w-full overflow-auto rounded border bg-white shadow">
+                          {autorizadoresFiltrados.length === 0 ? (
+                            <li className="px-2 py-1.5 text-slate-500">
+                              Nenhum usuário encontrado
+                            </li>
+                          ) : (
+                            autorizadoresFiltrados.map((u) => (
+                              <li key={u.id}>
+                                <button
+                                  type="button"
+                                  className="w-full px-2 py-1.5 text-left hover:bg-amber-50"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    setAutorizadorId(u.id);
+                                    setAutorizadorQuery(u.nome);
+                                    setAutorizadorOpen(false);
+                                  }}
+                                >
+                                  {u.nome}
+                                </button>
+                              </li>
+                            ))
+                          )}
+                        </ul>
+                      ) : null}
+                    </div>
                     <label className="block">
                       <span className="text-slate-600">Observação (opcional)</span>
                       <input
