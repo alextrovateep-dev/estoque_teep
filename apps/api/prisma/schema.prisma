@@ -918,7 +918,7 @@ model PedidoVenda {
   rastreio           String?  @db.VarChar(80)
   nfNumero           String?  @map("nf_numero") @db.VarChar(60)
   nfArquivo          String?  @map("nf_arquivo") @db.VarChar(255)
-  /// LOCACAO | CONTRATO_ASSISTENCIA
+  /// LOCACAO | CONTRATO_ASSISTENCIA | DEMONSTRACAO
   tipoContrato       String?  @map("tipo_contrato") @db.VarChar(30)
   dataPrevistaEntrega DateTime? @map("data_prevista_entrega") @db.Date
   /// null = ainda não informado

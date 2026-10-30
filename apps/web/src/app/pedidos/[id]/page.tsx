@@ -13,6 +13,7 @@ import {
   PEDIDO_ANEXO_TIPO_LABELS,
   PEDIDO_ANEXO_TIPOS,
   PEDIDO_STATUS_LABELS,
+  isPedidoTipoContrato,
   PEDIDO_TIPO_CONTRATO,
   PEDIDO_TIPO_CONTRATO_LABELS,
   formatYmdBr,
@@ -451,7 +452,7 @@ export default function PedidoDetalhePage() {
         setNfNumero(p.nfNumero || "");
         setNfArquivo(p.nfArquivo || "");
         setTipoContrato(
-          p.tipoContrato === "LOCACAO" || p.tipoContrato === "CONTRATO_ASSISTENCIA"
+          p.tipoContrato && isPedidoTipoContrato(p.tipoContrato)
             ? p.tipoContrato
             : ""
         );

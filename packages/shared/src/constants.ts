@@ -62,11 +62,16 @@ export function isPedidoStatus(v: string): v is PedidoStatus {
 }
 
 /** Tipo de contrato escolhido na hora de separar o pedido. */
-export const PEDIDO_TIPO_CONTRATO = ["LOCACAO", "CONTRATO_ASSISTENCIA"] as const;
+export const PEDIDO_TIPO_CONTRATO = [
+  "LOCACAO",
+  "CONTRATO_ASSISTENCIA",
+  "DEMONSTRACAO",
+] as const;
 export type PedidoTipoContrato = (typeof PEDIDO_TIPO_CONTRATO)[number];
 export const PEDIDO_TIPO_CONTRATO_LABELS: Record<PedidoTipoContrato, string> = {
   LOCACAO: "Locação",
   CONTRATO_ASSISTENCIA: "Contrato assistência",
+  DEMONSTRACAO: "Demonstração",
 };
 export function isPedidoTipoContrato(v: string): v is PedidoTipoContrato {
   return (PEDIDO_TIPO_CONTRATO as readonly string[]).includes(v);

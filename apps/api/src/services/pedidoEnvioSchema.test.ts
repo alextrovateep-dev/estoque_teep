@@ -92,6 +92,17 @@ describe("separarPedidoSchema", () => {
     });
     assert.equal(r.success, true);
   });
+
+  it("aceita demonstração com data", () => {
+    const r = separarPedidoSchema.safeParse({
+      filialId: uuid,
+      destinatarioIds: [uuid],
+      tipoContrato: "DEMONSTRACAO",
+      dataPrevistaEntrega: "2026-10-15",
+      itens: [{ id: uuid, quantidade: 1 }],
+    });
+    assert.equal(r.success, true);
+  });
 });
 
 describe("mensagemBloqueioEnvioPedidoLocacao", () => {
